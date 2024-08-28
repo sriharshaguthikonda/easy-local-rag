@@ -29,6 +29,9 @@ import edge_tts
 import asyncio
 import nest_asyncio
 
+from dotenv import load_dotenv
+
+
 # Constants
 EMBEDDINGS_DIR = "Embeddings"
 model = "mxbai-embed-large"
@@ -269,9 +272,15 @@ def ollama_chat(
  ######   ##     ##  #######   ##### ## 
 """
 
+# Load environment variables from .env file
+load_dotenv()
+
+# Retrieve API key from environment variables
+api_key = os.getenv("GROQ_API_KEY")
+
 # Initialize Groq client
 client = Groq(
-    api_key="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",
+    api_key=api_key,
 )
 
 

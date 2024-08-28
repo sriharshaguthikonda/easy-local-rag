@@ -12,3 +12,5 @@ vault.txt
 Vault_json_creation_from_HTMLs.py
 volumes/
 asset/
+
+.env
