@@ -35,7 +35,9 @@ def init_chromadb():
     collection_name = "html_chunks"
 
     try:
-        collection = client.get_or_create_collection(name=collection_name)
+        collection = client.get_or_create_collection(
+            name="cosine_HTML_chunks", metadata={"hnsw:space": "cosine"}
+        )
     except Exception as e:
         print(f"An error occurred: {e}")
         collection = None
