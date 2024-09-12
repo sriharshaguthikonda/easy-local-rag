@@ -39,7 +39,8 @@ model = "mxbai-embed-large"
 groq_model = "llama-3.1-70b-versatile"
 ollama_model = "phi-3"
 
-collection_name = "html_chunks"
+# collection_name = "html_chunks"
+collection_name = "cosine_HTML_chunks"
 
 # ANSI escape codes for colors
 PINK = "\033[95m"
