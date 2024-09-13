@@ -42,3 +42,5 @@ docker run -p 8000:3000 -e MILVUS_URL=172.22.240.1:19530 zilliz/attu:v2.4
 
 grok_api_key
 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
+
+forfiles /S /M \* /C "cmd /c if @fsize gtr 52428800 echo @path"
