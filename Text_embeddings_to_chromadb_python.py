@@ -16,7 +16,6 @@ Here are some general steps if you choose to use WSL:
 Alternatively, you can continue using Docker on Windows as a workaround until native support becomes available.
 """
 
-"""
 import os
 import csv
 import json
@@ -111,9 +110,8 @@ def main():
 if __name__ == "__main__":
     main()
 
+
 """
-
-
 import os
 import csv
 import json
@@ -269,3 +267,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
