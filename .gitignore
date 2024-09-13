@@ -1,14 +1,16 @@
 # Ignore CSV files
 *.csv
+*.json
 
 # Ignore directories
-chroma/
-Embeddings/
-volumes/
 asset/
+chroma/
+config/
+Embeddings/
+
+volumes/
 
 # Ignore specific files
-nomic-embed-text_Backup_vault.json
 output.mp3
 output1.wav
 semantic_vault.json
@@ -24,9 +26,6 @@ Vault_json_creation_from_HTMLs.py
 
 
 # Ignore large files
-C:/Users/deletable/OneDrive/easy-local-rag/nomic-embed-text_Backup_vault.json
-C:/Users/deletable/OneDrive/easy-local-rag/semantic_vault.json
-C:/Users/deletable/OneDrive/easy-local-rag/vault.json
 C:/Users/deletable/OneDrive/easy-local-rag/.git/objects/1b/b2547ab1374481905e02632304bb9ed0560100
 C:/Users/deletable/OneDrive/easy-local-rag/asset/Decoder.pt
 C:/Users/deletable/OneDrive/easy-local-rag/asset/GPT.pt
