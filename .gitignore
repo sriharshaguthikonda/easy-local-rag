@@ -5,14 +5,17 @@
 *.txt
 *.sqlite3
 *.bin
+*.pickle
+*.sst
+*.wal
+
 
 # Ignore directories
-asset/
-chroma/
-config/
-Embeddings/
-
-volumes/
+asset/*
+chroma/*
+config/*
+Embeddings/*
+volumes/*
 
 # Ignore specific files
 output.mp3
