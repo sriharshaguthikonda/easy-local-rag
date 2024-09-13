@@ -14,27 +14,9 @@ Here are some general steps if you choose to use WSL:
 4. **Run Milvus**: Once everything is set up, you can run Milvus using the provided scripts in the distribution.
 
 Alternatively, you can continue using Docker on Windows as a workaround until native support becomes available.
-
-
-
-""" """
-TODO: Milvus does not currently have native support for running directly on Windows without using Docker or WSL. The Milvus development team has indicated that they do not plan to add support for Windows directly at this time【9†source】【10†source】.
-
-If you want to install Milvus without Docker, you would typically need to use a Linux environment. However, if you want to run Milvus natively on Windows, your best option is to use Windows Subsystem for Linux (WSL) to create a Linux environment within Windows【9†source】【10†source】.
-
-Here are some general steps if you choose to use WSL:
-
-1. **Install WSL**: Enable WSL and install a Linux distribution from the Microsoft Store.
-
-2. **Install Milvus Dependencies**: Use the Linux terminal in WSL to install necessary dependencies like `etcd` and `MinIO`.
-
-3. **Install Milvus**: Follow the [Milvus documentation](https://milvus.io/docs/install_standalone-docker.md) for Linux installation, modifying any steps as necessary for the WSL environment.
-
-4. **Run Milvus**: Once everything is set up, you can run Milvus using the provided scripts in the distribution.
-
-Alternatively, you can continue using Docker on Windows as a workaround until native support becomes available.
 """
 
+"""
 import os
 import csv
 import json
@@ -129,8 +111,9 @@ def main():
 if __name__ == "__main__":
     main()
 
-
 """
+
+
 import os
 import csv
 import json
@@ -221,7 +204,7 @@ def init_chromadb():
     return collection
 
 
-def read_csv_in_batches(output_csv_path, batch_size=2000):
+def read_csv_in_batches(output_csv_path, batch_size=20000):
     with open(output_csv_path, "r", encoding="utf-8") as csvfile:
         csvreader = csv.reader(csvfile)
         header = next(csvreader)
@@ -237,7 +220,7 @@ def read_csv_in_batches(output_csv_path, batch_size=2000):
             yield batch
 
 
-def insert_batches_to_chromadb(collection, csv_path, batch_size=10000):
+def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
     for batch in read_csv_in_batches(csv_path, batch_size):
         ids = []
         metadatas = []
@@ -256,6 +239,7 @@ def insert_batches_to_chromadb(collection, csv_path, batch_size=10000):
             modification_time = float(row[3])  # Ensure it's a float
             embedding_str = row[4]
             embedding = json.loads(embedding_str)  # Ensure it's a list of floats
+
             ids.append(chunk_id)
             metadatas.append(
                 {
@@ -285,4 +269,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-"""
