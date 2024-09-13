@@ -7,8 +7,8 @@ from tqdm import tqdm
 import winsound
 
 semantic_vault_path = "semantic_vault.json"
-embeddings_path = "Embeddings\\PubMedBert_vault_embeddings.txt"
-output_csv_path = "Pubmed_combined_data.csv"
+embeddings_path = "Embeddings\\mxbai-embed-large_vault_embeddings.txt"
+output_csv_path = "combined_data.csv"
 
 
 # Function to load JSON file
