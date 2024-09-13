@@ -31,6 +31,9 @@ import nest_asyncio
 
 from dotenv import load_dotenv
 
+import torch
+from transformers import AutoTokenizer, AutoModel
+
 
 # Constants
 EMBEDDINGS_DIR = "Embeddings"
@@ -40,7 +43,7 @@ groq_model = "llama-3.1-70b-versatile"
 ollama_model = "phi-3"
 
 # collection_name = "html_chunks"
-collection_name = "cosine_HTML_chunks"
+collection_name = "Pubmed_cosine_HTML_chunks"
 
 # ANSI escape codes for colors
 PINK = "\033[95m"
@@ -379,6 +382,30 @@ def split_sentence(response):
 
 
 """
+######## ##     ## ########  ######## ########  
+##       ###   ### ##     ## ##       ##     ## 
+##       #### #### ##     ## ##       ##     ## 
+######   ## ### ## ########  ######   ##     ## 
+##       ##     ## ##     ## ##       ##     ## 
+##       ##     ## ##     ## ##       ##     ## 
+######## ##     ## ########  ######## ########  
+"""
+
+
+# Initialize PubMedBERT tokenizer and model
+tokenizer = AutoTokenizer.from_pretrained(
+    "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext"
+)
+model = AutoModel.from_pretrained(
+    "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext"
+)
+
+# Move model to GPU if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+
+"""
  ######   #######  ##    ## ######## ######## ##     ## ######## 
 ##    ## ##     ## ###   ##    ##    ##        ##   ##     ##    
 ##       ##     ## ####  ##    ##    ##         ## ##      ##    
@@ -395,12 +422,23 @@ def get_relevant_context(rewritten_input, top_k=5):
     try:
         relevant_context = ""
 
-        # Encode the rewritten input
-        input_embedding = ollama.embeddings(
-            model=model,
-            prompt=rewritten_input,
-            keep_alive=-1,
-        )["embedding"]
+        # Tokenize the rewritten input using PubMedBERT
+        inputs = tokenizer(
+            rewritten_input,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+            max_length=512,
+        ).to(device)
+
+        # Generate the embeddings using PubMedBERT
+        with torch.no_grad():
+            outputs = model(**inputs)
+
+        # Take the mean of the hidden states to create a single embedding vector
+        input_embedding = (
+            torch.mean(outputs.last_hidden_state, dim=1).squeeze().tolist()
+        )
 
         # Perform similarity search
         search_result = collection.query(

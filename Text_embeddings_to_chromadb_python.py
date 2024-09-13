@@ -24,6 +24,9 @@ import chromadb
 from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 import winsound
 
+# collection_name = "html_chunks"
+collection_name = "Pubmed_cosine_HTML_chunks"
+
 
 def init_chromadb():
     client = chromadb.PersistentClient(
@@ -31,12 +34,9 @@ def init_chromadb():
         tenant=DEFAULT_TENANT,
         database=DEFAULT_DATABASE,
     )
-
-    collection_name = "html_chunks"
-
     try:
         collection = client.get_or_create_collection(
-            name="cosine_HTML_chunks", metadata={"hnsw:space": "cosine"}
+            name=collection_name, metadata={"hnsw:space": "cosine"}
         )
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -99,7 +99,7 @@ def insert_batches_to_chromadb(collection, csv_path, batch_size=10000):
 
 
 def main():
-    csv_path = "combined_data.csv"
+    csv_path = "Pubmed_combined_data.csv"
     collection = init_chromadb()
     if collection:
         insert_batches_to_chromadb(collection, csv_path)
