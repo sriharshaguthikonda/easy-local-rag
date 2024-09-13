@@ -14,6 +14,9 @@ Here are some general steps if you choose to use WSL:
 4. **Run Milvus**: Once everything is set up, you can run Milvus using the provided scripts in the distribution.
 
 Alternatively, you can continue using Docker on Windows as a workaround until native support becomes available.
+
+TODO: you have to run the
+
 """
 
 import os
@@ -23,9 +26,11 @@ from tqdm import tqdm
 import chromadb
 from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 import winsound
+import threading
+from queue import Queue
 
 
-collection_name = "Pubmed_cosine_HTML_chunks"
+collection_name = "Pubmed_HTML_chunks"
 
 
 def init_chromadb():
@@ -37,7 +42,7 @@ def init_chromadb():
 
     try:
         collection = client.get_or_create_collection(
-            name=collection_name, metadata={"hnsw:space": "cosine"}
+            name=collection_name,  # metadata={"hnsw:space": "cosine"}
         )
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -46,8 +51,9 @@ def init_chromadb():
     return collection
 
 
-def read_csv_in_batches(csv_path, batch_size=20000):
-    with open(csv_path, "r", encoding="utf-8") as csvfile:
+def read_csv_in_batches(output_csv_path, batch_size, queue):
+    """Reads the CSV in batches and adds them to a shared queue."""
+    with open(output_csv_path, "r", encoding="utf-8") as csvfile:
         csvreader = csv.reader(csvfile)
         header = next(csvreader)
 
@@ -55,15 +61,22 @@ def read_csv_in_batches(csv_path, batch_size=20000):
         for row in tqdm(csvreader, desc="Reading CSV"):
             batch.append(row)
             if len(batch) == batch_size:
-                yield batch
+                queue.put(batch)  # Add the batch to the queue
                 batch = []
 
         if batch:
-            yield batch
+            queue.put(batch)  # Add the final batch to the queue
+
+    queue.put(None)  # Signal that reading is done
 
 
-def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
-    for batch in read_csv_in_batches(csv_path, batch_size):
+def insert_batches_to_chromadb(collection, queue):
+    """Inserts batches from the shared queue into ChromaDB."""
+    while True:
+        batch = queue.get()
+        if batch is None:
+            break  # Stop when reading thread signals completion
+
         ids = []
         metadatas = []
         embeddings = []
@@ -97,13 +110,41 @@ def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
             print(f"Inserted {len(ids)} records to ChromaDB")
         except Exception as e:
             print(f"An error occurred while adding documents: {e}")
+        finally:
+            queue.task_done()
+
+
+def run_multithreaded_process(csv_path, collection, batch_size, queue_size=2):
+    queue = Queue(maxsize=queue_size)
+
+    # Create threads for reading and inserting
+    reader_thread = threading.Thread(
+        target=read_csv_in_batches, args=(csv_path, batch_size, queue)
+    )
+    inserter_thread = threading.Thread(
+        target=insert_batches_to_chromadb, args=(collection, queue)
+    )
+
+    # Start threads
+    reader_thread.start()
+    inserter_thread.start()
+
+    # Wait for threads to finish
+    reader_thread.join()
+    inserter_thread.join()
+
+    print("Completed processing")
+
+
+# Example Usage:
+# collection = get_chroma_collection()  # Assuming you have a ChromaDB collection object
 
 
 def main():
     csv_path = "Pubmed_processed_data.csv"
     collection = init_chromadb()
     if collection:
-        insert_batches_to_chromadb(collection, csv_path)
+        run_multithreaded_process(csv_path, collection, batch_size=5460)
         winsound.Beep(1000, 500)  # Frequency: 1000 Hz, Duration: 500 ms
 
 
