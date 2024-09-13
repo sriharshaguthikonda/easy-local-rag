@@ -445,6 +445,7 @@ def get_relevant_context(rewritten_input, top_k=5):
             query_embeddings=[input_embedding],
             n_results=top_k,
             include=["metadatas"],  # Fields to return in the search results
+            # where={"distances": {"$lt": 0.1}},
         )
 
         # Extract relevant context
