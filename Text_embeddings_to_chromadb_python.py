@@ -16,8 +16,6 @@ Here are some general steps if you choose to use WSL:
 Alternatively, you can continue using Docker on Windows as a workaround until native support becomes available.
 """
 
-"""
-
 import os
 import csv
 import json
@@ -110,9 +108,7 @@ if __name__ == "__main__":
     main()
 
 
-
 """
-
 import os
 import csv
 import json
@@ -125,9 +121,7 @@ from queue import Queue
 
 collection_name = "html_chunks"
 
-
 def preprocess_csv_in_batches(csv_path, queue, batch_size):
-    """Preprocesses the CSV file and sends the preprocessed data to the queue in batches."""
     unique_ids = set()
     duplicate_counter = {}
     batch = []
@@ -145,17 +139,10 @@ def preprocess_csv_in_batches(csv_path, queue, batch_size):
 
             if chunk_id in unique_ids:
                 if duplicate_counter.get(chunk_id) is None:
-                    duplicate_counter[chunk_id] = [
-                        (text, file_name, modification_time, embedding_str)
-                    ]
+                    duplicate_counter[chunk_id] = [(text, file_name, modification_time, embedding_str)]
                 else:
                     found = False
-                    for (
-                        stored_text,
-                        stored_file_name,
-                        stored_mod_time,
-                        stored_embedding,
-                    ) in duplicate_counter[chunk_id]:
+                    for stored_text, stored_file_name, stored_mod_time, stored_embedding in duplicate_counter[chunk_id]:
                         if stored_text == text:
                             found = True
                             break
@@ -164,14 +151,10 @@ def preprocess_csv_in_batches(csv_path, queue, batch_size):
                         serial_number = len(duplicate_counter[chunk_id]) + 1
                         new_chunk_id = f"{chunk_id}_{serial_number}"
                         row[0] = new_chunk_id  # Update the chunk ID in the row
-                        duplicate_counter[chunk_id].append(
-                            (text, file_name, modification_time, embedding_str)
-                        )
+                        duplicate_counter[chunk_id].append((text, file_name, modification_time, embedding_str))
             else:
                 unique_ids.add(chunk_id)
-                duplicate_counter[chunk_id] = [
-                    (text, file_name, modification_time, embedding_str)
-                ]
+                duplicate_counter[chunk_id] = [(text, file_name, modification_time, embedding_str)]
 
             batch.append(row)
             if len(batch) == batch_size:
@@ -185,7 +168,6 @@ def preprocess_csv_in_batches(csv_path, queue, batch_size):
 
 
 def read_csv_in_batches(queue, batch_size, processing_queue):
-    """Reads from the preprocessing queue in batches and adds them to the processing queue."""
     current_batch = []
     while True:
         rows = queue.get()
@@ -205,7 +187,6 @@ def read_csv_in_batches(queue, batch_size, processing_queue):
 
 
 def insert_batches_to_chromadb(collection, processing_queue):
-    """Inserts batches from the processing queue into ChromaDB."""
     while True:
         batch = processing_queue.get()
         if batch == None:
@@ -230,13 +211,11 @@ def insert_batches_to_chromadb(collection, processing_queue):
             embedding = json.loads(embedding_str)  # Ensure it's a list of floats
 
             ids.append(chunk_id)
-            metadatas.append(
-                {
-                    "text": text,
-                    "file_name": file_name,
-                    "modification_time": modification_time,
-                }
-            )
+            metadatas.append({
+                "text": text,
+                "file_name": file_name,
+                "modification_time": modification_time,
+            })
             embeddings.append(embedding)
 
         try:
@@ -253,21 +232,19 @@ def run_multithreaded_process(csv_path, collection, batch_size=5460, queue_size=
     processing_queue = Queue(maxsize=queue_size)
 
     # Create threads for preprocessing, reading in batches, and inserting into ChromaDB
-    preprocess_thread = threading.Thread(
-        target=preprocess_csv_in_batches, args=(csv_path, preprocess_queue, batch_size)
-    )
-    reader_thread = threading.Thread(
-        target=read_csv_in_batches,
-        args=(preprocess_queue, batch_size, processing_queue),
-    )
-    inserter_thread = threading.Thread(
-        target=insert_batches_to_chromadb, args=(collection, processing_queue)
-    )
+    preprocess_thread = threading.Thread(target=preprocess_csv_in_batches, args=(csv_path, preprocess_queue, batch_size))
+    reader_thread = threading.Thread(target=read_csv_in_batches, args=(preprocess_queue, batch_size, processing_queue))
+    inserter_thread = threading.Thread(target=insert_batches_to_chromadb, args=(collection, processing_queue))
 
     # Start threads
     preprocess_thread.start()
     reader_thread.start()
     inserter_thread.start()
+
+    # Wait for threads to finish
+    preprocess_thread.join()
+    reader_thread.join()
+    inserter_thread.join()
 
     print("Completed processing")
 
@@ -280,7 +257,7 @@ def init_chromadb():
     )
     try:
         collection = client.get_or_create_collection(
-            name=collection_name,  # metadata={"hnsw:space": "cosine"}
+            name=collection_name, metadata={"hnsw:space": "cosine"}
         )
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -299,3 +276,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
