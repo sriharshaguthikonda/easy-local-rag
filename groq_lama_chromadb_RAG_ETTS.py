@@ -3,6 +3,9 @@ import argparse
 import ollama
 from groq import Groq
 
+import httpcore  # Import httpcore to handle connection-related errors
+import socket  # Import socket to handle network-related errors
+
 import io
 from pydub import AudioSegment
 from pydub.playback import play
@@ -25,6 +28,8 @@ from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 
 import speech_recognition as sr
 import edge_tts
+import pyttsx4  # Import pyttsx4 for offline TTS
+
 
 import asyncio
 import nest_asyncio
@@ -32,12 +37,18 @@ import nest_asyncio
 from dotenv import load_dotenv
 
 
+from groq_lama_chromadb_RAG_ETTS_keyboard import handle_media_keys, control_flags
+
+# Start the media key handler in a separate thread
+threading.Thread(target=handle_media_keys, daemon=True).start()
+
+
 # Constants
 EMBEDDINGS_DIR = "Embeddings"
 model = "mxbai-embed-large"
 # groq_model="llama3-70b-8192"
 groq_model = "llama-3.1-70b-versatile"
-ollama_model = "phi-3"
+ollama_model = "llama3.2:latest"
 
 collection_name = "html_chunks"
 
@@ -69,33 +80,71 @@ RESET_COLOR = "\033[0m"
 # Apply the nest_asyncio patch
 nest_asyncio.apply()
 
+from threading import Event
 
-# Function to process the queue
-def process_TTS_Audio_play_queue(TTS_Audio_play_queue):
+# Add Events for playback control
+pause_event = Event()  # Used to pause and resume playback
+stop_event = Event()  # Used to stop playback
+
+
+def process_TTS_Audio_play_queue():
+    global control_flags
     while True:
         audio_fp = TTS_Audio_play_queue.get()
-        audio_fp.seek(0)
+
+        # Check stop flag
+        if control_flags["stop"]:
+            TTS_Audio_play_queue.queue.clear()  # Clear the queue
+            control_flags["stop"] = False
+            stop_event.set()  # Signal to stop playback
+            continue
 
         sound = AudioSegment.from_file(audio_fp, format="mp3")
+        playback = threading.Thread(target=play, args=(sound,), daemon=True)
+        playback.start()
 
-        # Play the adjusted audio
-        play(sound)
+        # Monitor for pause/resume/next while playback is active
+        while playback.is_alive():
+            if control_flags["pause"]:
+                print("Playback paused")
+                pause_event.clear()  # Block further playback
+                pause_event.wait()  # Wait until resume is triggered
+
+            if control_flags["next"]:
+                print("Skipping to the next audio")
+                control_flags["next"] = False
+                break  # Break playback loop for the current file
+
         TTS_Audio_play_queue.task_done()
+
+
+# Function to process the queue
+def process_TTS_queue():
+    while True:
+        sentence = TTS_queue.get()
+        if sentence is None:  # Sentinel value to stop the worker
+            break
+        asyncio.run(text_to_speech(sentence, speed=1.2))
+        TTS_queue.task_done()
 
 
 # Queue for sentences
 TTS_Audio_play_queue = queue.Queue()
 
 # Start the worker thread
-worker_thread = threading.Thread(
-    target=process_TTS_Audio_play_queue, args=(TTS_Audio_play_queue,), daemon=True
-)
-worker_thread.start()
+threading.Thread(target=process_TTS_Audio_play_queue, daemon=True).start()
+
+# Queue for sentences
+TTS_queue = queue.Queue()
+
+# Start the worker thread
+threading.Thread(target=process_TTS_queue, daemon=True).start()
 
 
 # Function to convert text to speech using edge-tts and play using pydub with speed adjustment
 async def text_to_speech(text, speed=1.2, volume=1, voice="en-GB-MiaNeural"):
     try:
+        # Online TTS using edge-tts
         rate = "+" + str(int((speed - 1) * 100)) + "%"
         communicate = edge_tts.Communicate(text, voice, rate=rate)
         audio_bytes = b""
@@ -112,20 +161,33 @@ async def text_to_speech(text, speed=1.2, volume=1, voice="en-GB-MiaNeural"):
         audio_fp = io.BytesIO(audio_bytes)
         audio_fp.seek(0)
 
+        # Place the audio data in the playback queue
         TTS_Audio_play_queue.put(audio_fp)
 
     except Exception as e:
-        print(f"Error occurred during playback: {e}")
+        print(f"Error occurred during online TTS playback: {e}")
+        print("Falling back to offline TTS...")
+        fallback_offline_tts(text, speed, volume)
 
 
-# Function to process the queue
-def process_TTS_queue(TTS_queue):
-    while True:
-        sentence = TTS_queue.get()
-        if sentence is None:  # Sentinel value to stop the worker
-            break
-        asyncio.run(text_to_speech(sentence, speed=1.2))
-        TTS_queue.task_done()
+# Offline TTS fallback using pyttsx4
+def fallback_offline_tts(text, speed=1, volume=1):
+    try:
+        # Initialize pyttsx4 engine
+        engine = pyttsx4.init()
+
+        # Set the speed (words per minute)
+        engine.setProperty("rate", int(200 * speed))
+
+        # Set the volume (0.0 to 1.0)
+        engine.setProperty("volume", volume)
+
+        # Speak the text
+        engine.say(text)
+        engine.runAndWait()
+
+    except Exception as e:
+        print(f"Offline TTS failed: {e}")
 
 
 """
@@ -181,15 +243,35 @@ def chat_with_model(
     conversation_history,
 ):
     try:
+        # Attempt to call Groq's model
         response = groq_chat(
             user_input, system_message, groq_model, conversation_history
         )
     except Exception as e:
-        if "Groq API limit reached" in str(e):
-            response = ollama_chat(
-                user_input, system_message, ollama_model, conversation_history
-            )
+        # Log the error and traceback for debugging
+        print(f"Groq failed with error: {str(e)}")
+        # Attempt to call Ollama's model
+        response = ollama_chat(
+            user_input, system_message, ollama_model, conversation_history
+        )
+        return response  # Return the response from Ollama
+
+        # Check for specific known errors (connection issues)
+        if isinstance(e, (httpcore.ConnectError, socket.gaierror)):
+            print("Connection error with Groq detected. Redirecting to Ollama...")
+            try:
+                # Attempt to call Ollama's model
+                response = ollama_chat(
+                    user_input, system_message, ollama_model, conversation_history
+                )
+                return response  # Return the response from Ollama
+            except Exception as ollama_error:
+                # If Ollama also fails, log the error
+                print(f"Ollama fallback failed with error: {str(ollama_error)}")
+
+                raise ollama_error  # Raise the error for handling
         else:
+            # If it's an unknown error, re-raise it
             raise e
 
     return response
@@ -236,25 +318,38 @@ def ollama_chat(
         keep_alive=-1,
     )
 
-    # Queue for sentences
-    TTS_queue = queue.Queue()
-
-    # Start the worker thread
-    worker_thread = threading.Thread(
-        target=process_TTS_queue, args=(TTS_queue,), daemon=True
-    )
-    worker_thread.start()
-
     response = ""
+
+    current_sentence = ""
+    word_buffer = ""  # To accumulate small chunks of words
+
     for chunk in stream:
         print(NEON_GREEN + chunk["message"]["content"], end="", flush=True)
-        chunk_text = chunk["message"]["content"]
-        response = f"{response}{chunk_text}"
+        if not chunk.get("message") or not chunk["message"].get("content"):
+            continue
 
-        if any(delimiter in response for delimiter in ".;,!?"):
-            response = response[1:]  # Remove the first character
-            sentence, response = split_sentence(response)
-            TTS_queue.put(sentence)
+        chunk_text = chunk["message"]["content"].replace(
+            "\n", " "
+        )  # Remove unintended newlines
+
+        # Accumulate the chunk text
+        word_buffer += chunk_text
+
+        # Process the buffer when it contains a sentence-ending punctuation
+        sentence_endings = ".!? "
+        if word_buffer and any(word_buffer.endswith(end) for end in sentence_endings):
+            current_sentence += word_buffer
+            word_buffer = ""  # Reset buffer after processing
+
+            # If a coherent chunk or sentence is formed, send it to TTS
+            if any(current_sentence.endswith(end) for end in sentence_endings):
+                # Strip markdown-like symbols for TTS
+                stripped_text = re.sub(r"[\*_]", "", current_sentence)
+
+                # Send text to TTS immediately
+                if stripped_text:
+                    TTS_queue.put(stripped_text)  # Send to TTS queue
+                    current_sentence = ""  # Reset after sending to TTS
 
     # Print the response
     print(RESET_COLOR + "\n")
@@ -325,27 +420,35 @@ def groq_chat(
         stream=True,
     )
 
-    # Queue for sentences
-    TTS_queue = queue.Queue()
-
-    # Start the worker thread
-    worker_thread = threading.Thread(
-        target=process_TTS_queue, args=(TTS_queue,), daemon=True
-    )
-    worker_thread.start()
-
     response = ""
+
+    current_sentence = ""
+    word_buffer = ""  # To accumulate small chunks of words
+
     print(NEON_GREEN)
     for chunk in stream:
         print(chunk.choices[0].delta.content, end="")
         chunk_text = chunk.choices[0].delta.content
-        response = f"{response}{chunk_text}"
 
-        #        if any(delimiter in response for delimiter in ".;!?"):
-        if any(delimiter in response for delimiter in ".:!?"):
-            response = response[1:]  # Remove the first character
-            sentence, response = split_sentence(response)
-            TTS_queue.put(sentence)
+        if chunk_text is not None:
+            # Accumulate the chunk text
+            word_buffer += chunk_text
+
+        # Process the buffer when it contains a sentence-ending punctuation
+        sentence_endings = ".!?,"
+        if word_buffer and any(word_buffer.endswith(end) for end in sentence_endings):
+            current_sentence += word_buffer
+            word_buffer = ""  # Reset buffer after processing
+
+            # If a coherent chunk or sentence is formed, send it to TTS
+            if any(current_sentence.endswith(end) for end in sentence_endings):
+                # Strip markdown-like symbols for TTS
+                stripped_text = re.sub(r"[\*_]", "", current_sentence)
+
+                # Send text to TTS immediately
+                if stripped_text:
+                    TTS_queue.put(stripped_text)  # Send to TTS queue
+                    current_sentence = ""  # Reset after sending to TTS
 
     # Print the response
     print(RESET_COLOR + "\n")
@@ -364,17 +467,26 @@ def groq_chat(
 """
 
 
-# Define the function to split sentences
+# Define the function to split sentences with the condition
 def split_sentence(response):
-    # delimiters = r"[.,;!?]"  # Add more delimiters if needed
-    delimiters = r"[\n]"  # Add more delimiters if needed
-
+    delimiters = r"[.,;!?]"  # Delimiters for splitting
+    # Split the response based on delimiters
     sentences = re.split(delimiters, response, maxsplit=1)
+
+    # If we have more than one part after the split
     if len(sentences) > 1:
-        sentence, response = sentences[0], sentences[1]
+        sentence, remaining_response = sentences[0], sentences[1]
+
+        # Check if the sentence has 10 words or more
+        if len(sentence.split()) < 5:
+            # If the sentence is too short, don't split
+            sentence = sentence + remaining_response
+            remaining_response = ""
     else:
-        sentence, response = sentences[0], ""
-    return sentence, response
+        # No split happened, just return the original response
+        sentence, remaining_response = sentences[0], ""
+
+    return sentence.strip(), remaining_response.strip()
 
 
 """
@@ -516,6 +628,7 @@ def main():
     # Start the Ollama server in a separate thread
     ollama_thread = threading.Thread(target=check_and_start_ollama, daemon=True)
     ollama_thread.start()
+    threading.Thread(target=handle_media_keys, daemon=True).start()
 
     client = chromadb.PersistentClient(
         settings=Settings(),
