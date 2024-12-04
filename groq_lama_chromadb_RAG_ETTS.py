@@ -55,6 +55,10 @@ BOLD = "\033[1m"
 RESET_COLOR = "\033[0m"
 
 
+# additional_unique_files
+# varriable is int the get_relevant_context function
+
+
 """
 ######## ########  ######  
    ##       ##    ##    ## 
@@ -120,11 +124,15 @@ async def text_to_speech(text, speed=1.2, volume=1, voice="en-GB-MiaNeural"):
 
 # Function to process the queue
 def process_TTS_queue(TTS_queue):
+    global dont_read_tts
     while True:
         sentence = TTS_queue.get()
         if sentence is None:  # Sentinel value to stop the worker
             break
-        asyncio.run(text_to_speech(sentence, speed=1.2))
+        if dont_read_tts:
+            dont_read_tts = False  # Reset the flag after skipping
+        else:
+            asyncio.run(text_to_speech(sentence, speed=1.2))
         TTS_queue.task_done()
 
 
@@ -213,6 +221,7 @@ def ollama_chat(
     ollama_model,
     conversation_history,
 ):
+    global just_query_file_search
     # Get relevant context from Milvus
     relevant_context = get_relevant_context(user_input, top_k=5)
 
@@ -228,36 +237,42 @@ def ollama_chat(
     # Create a message history including the system message and the conversation history
     messages = [{"role": "system", "content": system_message}, *conversation_history]
 
-    # Send the completion request to the Ollama model with stream=True
-    stream = ollama.chat(
-        model=ollama_model,
-        messages=messages,
-        stream=True,
-        keep_alive=-1,
-    )
+    if just_query_file_search is False:
+        just_query_file_search = True
 
-    # Queue for sentences
-    TTS_queue = queue.Queue()
+        # Send the completion request to the Ollama model with stream=True
+        stream = ollama.chat(
+            model=ollama_model,
+            messages=messages,
+            stream=True,
+            keep_alive=-1,
+        )
 
-    # Start the worker thread
-    worker_thread = threading.Thread(
-        target=process_TTS_queue, args=(TTS_queue,), daemon=True
-    )
-    worker_thread.start()
+        # Queue for sentences
+        TTS_queue = queue.Queue()
 
-    response = ""
-    for chunk in stream:
-        print(NEON_GREEN + chunk["message"]["content"], end="", flush=True)
-        chunk_text = chunk["message"]["content"]
-        response = f"{response}{chunk_text}"
+        # Start the worker thread
+        worker_thread = threading.Thread(
+            target=process_TTS_queue, args=(TTS_queue,), daemon=True
+        )
+        worker_thread.start()
 
-        if any(delimiter in response for delimiter in ".;,!?"):
-            response = response[1:]  # Remove the first character
-            sentence, response = split_sentence(response)
-            TTS_queue.put(sentence)
+        response = ""
+        for chunk in stream:
+            print(NEON_GREEN + chunk["message"]["content"], end="", flush=True)
+            chunk_text = chunk["message"]["content"]
+            response = f"{response}{chunk_text}"
 
-    # Print the response
-    print(RESET_COLOR + "\n")
+            if any(delimiter in response for delimiter in ".;,!?"):
+                response = response[1:]  # Remove the first character
+                sentence, response = split_sentence(response)
+                TTS_queue.put(sentence)
+
+        # Print the response
+        print(RESET_COLOR + "\n")
+
+    else:
+        pass
 
     return response
 
@@ -290,6 +305,9 @@ def groq_chat(
     groq_model,
     conversation_history,
 ):
+    global just_query_file_search
+    response = ""
+
     # Get relevant context from Milvus
     relevant_context = get_relevant_context(user_input, top_k=5)
 
@@ -309,46 +327,52 @@ def groq_chat(
         {"role": "user", "content": user_input},
     ]
 
-    stream = client.chat.completions.create(
-        # Required parameters
-        messages=messages,
-        model=groq_model,
-        temperature=1,
-        # The maximum number of tokens to generate. Requests can use up to
-        # 2048 tokens shared between prompt and completion.
-        max_tokens=7999,
-        # Controls diversity via nucleus sampling: 0.5 means half of all
-        # likelihood-weighted options are considered.
-        top_p=1,
-        stop="",
-        # If set, partial message deltas will be sent.
-        stream=True,
-    )
+    if just_query_file_search is False:
+        just_query_file_search = True
 
-    # Queue for sentences
-    TTS_queue = queue.Queue()
+        stream = client.chat.completions.create(
+            # Required parameters
+            messages=messages,
+            model=groq_model,
+            temperature=1,
+            # The maximum number of tokens to generate. Requests can use up to
+            # 2048 tokens shared between prompt and completion.
+            max_tokens=7999,
+            # Controls diversity via nucleus sampling: 0.5 means half of all
+            # likelihood-weighted options are considered.
+            top_p=1,
+            stop="",
+            # If set, partial message deltas will be sent.
+            stream=True,
+        )
 
-    # Start the worker thread
-    worker_thread = threading.Thread(
-        target=process_TTS_queue, args=(TTS_queue,), daemon=True
-    )
-    worker_thread.start()
+        # Queue for sentences
+        TTS_queue = queue.Queue()
 
-    response = ""
-    print(NEON_GREEN)
-    for chunk in stream:
-        print(chunk.choices[0].delta.content, end="")
-        chunk_text = chunk.choices[0].delta.content
-        response = f"{response}{chunk_text}"
+        # Start the worker thread
+        worker_thread = threading.Thread(
+            target=process_TTS_queue, args=(TTS_queue,), daemon=True
+        )
+        worker_thread.start()
 
-        #        if any(delimiter in response for delimiter in ".;!?"):
-        if any(delimiter in response for delimiter in ".:!?"):
-            response = response[1:]  # Remove the first character
-            sentence, response = split_sentence(response)
-            TTS_queue.put(sentence)
+        response = ""
+        print(NEON_GREEN)
+        for chunk in stream:
+            print(chunk.choices[0].delta.content, end="")
+            chunk_text = chunk.choices[0].delta.content
+            response = f"{response}{chunk_text}"
 
-    # Print the response
-    print(RESET_COLOR + "\n")
+            #        if any(delimiter in response for delimiter in ".;!?"):
+            if any(delimiter in response for delimiter in ".:!?"):
+                response = response[1:]  # Remove the first character
+                sentence, response = split_sentence(response)
+                TTS_queue.put(sentence)
+
+        # Print the response
+        print(RESET_COLOR + "\n")
+
+    else:
+        pass
 
     return response
 
@@ -388,9 +412,7 @@ def split_sentence(response):
 """
 
 
-def get_relevant_context(rewritten_input, top_k=5):
-    # global collection
-
+def get_relevant_context(rewritten_input, top_k=5, additional_unique_files=10):
     try:
         relevant_context = ""
 
@@ -404,18 +426,20 @@ def get_relevant_context(rewritten_input, top_k=5):
         # Perform similarity search
         search_result = collection.query(
             query_embeddings=[input_embedding],
-            n_results=top_k,
+            n_results=top_k + additional_unique_files,
             include=["metadatas"],  # Fields to return in the search results
         )
 
-        # Extract relevant context
+        # Extract relevant context (top_k)
         if search_result:
-            all_titles = [item["text"] for item in search_result["metadatas"][0]]
+            top_results = search_result["metadatas"][0][:top_k]
+            all_titles = [item["text"] for item in top_results]
             relevant_context = "\n\n".join(all_titles)
 
+        # Start a worker thread to print relevant context and unique filenames
         worker_thread = threading.Thread(
             target=print_relevant_context,
-            args=(search_result,),
+            args=(search_result, top_k, additional_unique_files),
             daemon=True,
         )
 
@@ -428,22 +452,32 @@ def get_relevant_context(rewritten_input, top_k=5):
         return "answer this yourself!"
 
 
-def print_relevant_context(search_result):
+def print_relevant_context(search_result, top_k, additional_unique_files):
     print("Context Pulled from Documents: \n\n")
+    unique_files = set()
+    count = 0
 
     for item in search_result["metadatas"][0]:
         file_path = item["file_name"]
-        # Replace backslashes in file_path to make it clickable using raw string
-        clickable_file_path = urljoin("file:", Path(file_path).as_uri())
-        print(
-            YELLOW  # Yellow color
-            + item["text"]
-            + "\n"
-            + BLUE  # Blue color
-            + clickable_file_path
-            + RESET_COLOR  # Reset color
-            + "\n\n"
-        )
+        if file_path not in unique_files:
+            unique_files.add(file_path)
+            count += 1
+
+            # Replace backslashes in file_path to make it clickable using raw string
+            clickable_file_path = urljoin("file:", Path(file_path).as_uri())
+            print(
+                YELLOW  # Yellow color
+                + item["text"]
+                + "\n"
+                + BLUE  # Blue color
+                + clickable_file_path
+                + RESET_COLOR  # Reset color
+                + "\n\n"
+            )
+
+            if count >= top_k + additional_unique_files:
+                break
+
         # Open the file in the default web browser
         # webbrowser.open(file_path)
 
@@ -500,9 +534,13 @@ def start_ollama_server():
 
 
 def main():
-    global collection
+    global collection, conversation_history, dont_read_tts, just_query_file_search
     # Reset conversation history
-    global conversation_history
+
+    system_message = "You are a helpful assistant. You will give precise and concise answers from the given context. if the context doesnot have the answer then give it from your knowledge"
+
+    dont_read_tts = False
+    just_query_file_search = False
 
     parser = argparse.ArgumentParser(description="Ollama Chat")
     parser.add_argument(
@@ -539,17 +577,26 @@ def main():
         if user_input.lower() == "exit" or user_input.lower() == "quit":
             break
 
-        system_message = "You are a helpful assistant. You will give precise and concise answers from the given context. if the context doesnot have the answer then give it from your knowledge"
+        # Strip out the extra "ssss" and "qqqq" from the user input
+        stripped_input = re.sub(r"s{4,}", "", user_input.lower())
+        stripped_input = re.sub(r"q{4,}", "", stripped_input)
+        stripped_input = stripped_input.strip()
+
+        # Check and set flags
+        dont_read_tts = bool(re.search(r"s{4,}", user_input.lower()))
+        just_query_file_search = bool(re.search(r"q{4,}", user_input.lower()))
 
         # Interact with the Ollama model
-        if user_input:
+        if stripped_input:
             chat_with_model(
-                user_input,
+                stripped_input,
                 system_message,
                 groq_model,
                 ollama_model,
                 conversation_history=conversation_history,
             )
+
+        # print("stripped_input :", stripped_input)
 
 
 if __name__ == "__main__":

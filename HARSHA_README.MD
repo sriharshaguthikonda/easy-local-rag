@@ -41,4 +41,13 @@ TODO attu for milvus
 docker run -p 8000:3000 -e MILVUS_URL=172.22.240.1:19530 zilliz/attu:v2.4
 
 grok_api_key
-GROQ_KEY_REMOVED
+
+q for query
+if input has > 4 "q"s like
+"what is dna qqqqqqqqqqqqqqqqq"
+it will only query
+
+s for silence
+if input has > 4 "s"s like
+"what is dna ssssssssssssssssssssssss"
+it will not do tts
