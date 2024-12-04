@@ -56,7 +56,7 @@ RESET_COLOR = "\033[0m"
 
 
 # additional_unique_files
-# varriable is int the get_relevant_context function
+# varriable is int the get_relevant_context/get_relevant_context_hybrid function
 
 
 """
@@ -223,7 +223,7 @@ def ollama_chat(
 ):
     global just_query_file_search
     # Get relevant context from Milvus
-    relevant_context = get_relevant_context(user_input, top_k=5)
+    relevant_context = get_relevant_context_hybrid(user_input, top_k=5)
 
     # Prepare the user's input by concatenating it with the relevant context
     if relevant_context:
@@ -309,7 +309,7 @@ def groq_chat(
     response = ""
 
     # Get relevant context from Milvus
-    relevant_context = get_relevant_context(user_input, top_k=5)
+    relevant_context = get_relevant_context_hybrid(user_input, top_k=5)
 
     # Prepare the user's input by concatenating it with the relevant context
     if relevant_context:
@@ -412,72 +412,88 @@ def split_sentence(response):
 """
 
 
-def get_relevant_context(rewritten_input, top_k=5, additional_unique_files=10):
+def get_relevant_context_hybrid(
+    rewritten_input,
+    top_k=5,
+    additional_unique_files=10,
+    keyword_match=True,
+):
     try:
         relevant_context = ""
 
-        # Encode the rewritten input
+        # Encode the rewritten input into an embedding
         input_embedding = ollama.embeddings(
             model=model,
             prompt=rewritten_input,
             keep_alive=-1,
         )["embedding"]
 
-        # Perform similarity search
+        # Perform vector similarity search
         search_result = collection.query(
             query_embeddings=[input_embedding],
             n_results=top_k + additional_unique_files,
-            include=["metadatas"],  # Fields to return in the search results
+            include=["documents", "metadatas", "distances"],
         )
 
-        # Extract relevant context (top_k)
+        # Extract top_k results for semantic relevance
         if search_result:
             top_results = search_result["metadatas"][0][:top_k]
-            all_titles = [item["text"] for item in top_results]
-            relevant_context = "\n\n".join(all_titles)
+            relevant_context = "\n\n".join([item["text"] for item in top_results])
 
-        # Start a worker thread to print relevant context and unique filenames
+        # Perform keyword matching if enabled
+        keyword_results = []
+        if keyword_match:
+            keywords = rewritten_input.lower().split()
+            keyword_results = [
+                meta
+                for meta in search_result["metadatas"][0]
+                if any(
+                    keyword in meta["text"].lower()
+                    or keyword in meta["file_name"].lower()
+                    for keyword in keywords
+                )
+            ]
+
+        # Combine and deduplicate results
+        unique_results = {
+            meta["file_name"]: meta
+            for meta in (search_result["metadatas"][0] + keyword_results)
+        }
+        combined_results = list(unique_results.values())
+
+        # Limit to the top_k + additional_unique_files and prepare the context
+        final_results = combined_results[: top_k + additional_unique_files]
+        relevant_context = "\n\n".join([meta["text"] for meta in final_results])
+
+        # Start a worker thread to print details of the results
         worker_thread = threading.Thread(
             target=print_relevant_context,
-            args=(search_result, top_k, additional_unique_files),
+            args=(final_results,),
             daemon=True,
         )
-
         worker_thread.start()
 
         return relevant_context
 
     except Exception as e:
         print(f"An error occurred: {e}")
-        return "answer this yourself!"
+        return "Answer this yourself!"
 
 
-def print_relevant_context(search_result, top_k, additional_unique_files):
-    print("Context Pulled from Documents: \n\n")
-    unique_files = set()
-    count = 0
+def print_relevant_context(results):
+    print("Context Pulled from Documents:\n")
+    for meta in results:
+        file_name = meta["file_name"]
+        modification_time = meta.get("modification_time", "Unknown")
+        text = meta["text"]
 
-    for item in search_result["metadatas"][0]:
-        file_path = item["file_name"]
-        if file_path not in unique_files:
-            unique_files.add(file_path)
-            count += 1
+        clickable_file_path = urljoin("file:", Path(file_name).as_uri())
 
-            # Replace backslashes in file_path to make it clickable using raw string
-            clickable_file_path = urljoin("file:", Path(file_path).as_uri())
-            print(
-                YELLOW  # Yellow color
-                + item["text"]
-                + "\n"
-                + BLUE  # Blue color
-                + clickable_file_path
-                + RESET_COLOR  # Reset color
-                + "\n\n"
-            )
-
-            if count >= top_k + additional_unique_files:
-                break
-
+        print(
+            f"{YELLOW}Text:{RESET_COLOR} {text}\n"
+            f"{BLUE}File Name:{clickable_file_path}\n{RESET_COLOR}"
+            f"{PINK}Modification Time: {modification_time}\n{RESET_COLOR}"
+        )
         # Open the file in the default web browser
         # webbrowser.open(file_path)
 
