@@ -24,7 +24,9 @@ import chromadb
 from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 
 import speech_recognition as sr
-import edge_tts
+
+# import edge_tts
+from gtts import gTTS
 
 import asyncio
 import nest_asyncio
@@ -78,17 +80,19 @@ RESET_COLOR = "\033[0m"
 nest_asyncio.apply()
 
 
-# Function to process the queue
+# Updated queue processing function
 def process_TTS_Audio_play_queue(TTS_Audio_play_queue):
     while True:
-        audio_fp = TTS_Audio_play_queue.get()
-        audio_fp.seek(0)
-
-        sound = AudioSegment.from_file(audio_fp, format="mp3")
-
-        # Play the adjusted audio
-        play(sound)
-        TTS_Audio_play_queue.task_done()
+        try:
+            audio_fp = TTS_Audio_play_queue.get()
+            if audio_fp is None:
+                break  # Exit loop if sentinel is encountered
+            audio_fp.seek(0)  # Reset pointer
+            audio = AudioSegment.from_file(audio_fp, format="mp3")
+            play(audio)  # Play the audio
+            TTS_Audio_play_queue.task_done()
+        except Exception as e:
+            print(f"Error occurred in queue processing: {e}")
 
 
 # Queue for sentences
@@ -102,28 +106,36 @@ worker_thread.start()
 
 
 # Function to convert text to speech using edge-tts and play using pydub with speed adjustment
-async def text_to_speech(text, speed=1.2, volume=1, voice="en-GB-MiaNeural"):
+async def text_to_speech_gtts(text, speed=1.2, volume=1.0, lang="en", tld="co.uk"):
     try:
-        rate = "+" + str(int((speed - 1) * 100)) + "%"
-        communicate = edge_tts.Communicate(text, voice, rate=rate)
-        audio_bytes = b""
+        if not text.strip():
+            raise ValueError("Text is empty. Cannot synthesize speech.")
 
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_bytes += chunk["data"]
+        loop = asyncio.get_event_loop()
+        audio_fp = await loop.run_in_executor(
+            None, generate_gtts_audio, text, lang, tld
+        )
 
-        if not audio_bytes:
-            raise ValueError(
-                "No audio was received. Please verify that your parameters are correct."
-            )
+        audio = AudioSegment.from_file(audio_fp, format="mp3")
+        audio = audio.speedup(playback_speed=speed)
+        audio = audio + (volume * 10)
 
-        audio_fp = io.BytesIO(audio_bytes)
-        audio_fp.seek(0)
+        processed_audio_fp = io.BytesIO()
+        audio.export(processed_audio_fp, format="mp3")
+        processed_audio_fp.seek(0)
 
-        TTS_Audio_play_queue.put(audio_fp)
+        TTS_Audio_play_queue.put(processed_audio_fp)
 
     except Exception as e:
-        print(f"Error occurred during playback: {e}")
+        print(f"Error during async TTS processing: {e}")
+
+
+def generate_gtts_audio(text, lang, tld):
+    tts = gTTS(text=text, lang=lang, tld=tld)
+    audio_fp = io.BytesIO()
+    tts.write_to_fp(audio_fp)
+    audio_fp.seek(0)
+    return audio_fp
 
 
 # Function to process the queue
@@ -136,7 +148,7 @@ def process_TTS_queue(TTS_queue):
         if dont_read_tts:
             dont_read_tts = False  # Reset the flag after skipping
         else:
-            asyncio.run(text_to_speech(sentence, speed=1.2))
+            asyncio.run(text_to_speech_gtts(sentence, speed=1.3))
         TTS_queue.task_done()
 
 
