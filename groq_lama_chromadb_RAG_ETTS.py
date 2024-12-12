@@ -32,11 +32,15 @@ import nest_asyncio
 from dotenv import load_dotenv
 
 
+import numpy as np
+
+
 # Constants
 EMBEDDINGS_DIR = "Embeddings"
 model = "mxbai-embed-large"
 # groq_model="llama3-70b-8192"
-groq_model = "llama-3.1-70b-versatile"
+# groq_model = "llama-3.1-70b-versatile"
+groq_model = "llama-3.3-70b-versatile"
 ollama_model = "phi-3"
 
 collection_name = "html_chunks"
@@ -337,7 +341,7 @@ def groq_chat(
             temperature=1,
             # The maximum number of tokens to generate. Requests can use up to
             # 2048 tokens shared between prompt and completion.
-            max_tokens=7999,
+            max_tokens=15000,
             # Controls diversity via nucleus sampling: 0.5 means half of all
             # likelihood-weighted options are considered.
             top_p=1,
@@ -402,6 +406,50 @@ def split_sentence(response):
 
 
 """
+########  ######## ##      ## ########  #### ######## ######## 
+##     ## ##       ##  ##  ## ##     ##  ##     ##    ##       
+##     ## ##       ##  ##  ## ##     ##  ##     ##    ##       
+########  ######   ##  ##  ## ########   ##     ##    ######   
+##   ##   ##       ##  ##  ## ##   ##    ##     ##    ##       
+##    ##  ##       ##  ##  ## ##    ##   ##     ##    ##       
+##     ## ########  ###  ###  ##     ## ####    ##    ######## 
+"""
+
+
+def rewrite_input_with_groq(original_input):
+    try:
+        # Ask Groq to rewrite the input to make it clearer and more precise
+        chat_completion = client.chat.completions.create(
+            messages=[
+                # Set an optional system message. This sets the behavior of the
+                # assistant and can be used to provide specific instructions for
+                # how it should behave throughout the conversation.
+                {
+                    "role": "system",
+                    "content": "you modify the given sentences so it can be used for generating and searching embeddings as best as possible",
+                },
+                # Set a user message for the assistant to respond to.
+                {
+                    "role": "user",
+                    "content": f"""Please rewrite the following to make it clearer and more precise in one sentence, keeping the original meaning: "{original_input}". Just respond with the rewritten sentence and nothing else""",
+                },
+            ],
+            model=groq_model,
+            temperature=0.7,
+            stream=False,
+        )
+
+        # Extract the rewritten input
+        rewritten_input = chat_completion.choices[0].message.content
+        print(rewritten_input)
+        return rewritten_input
+
+    except Exception as e:
+        print(f"An error occurred during rewriting: {e}")
+        return None
+
+
+"""
  ######   #######  ##    ## ######## ######## ##     ## ######## 
 ##    ## ##     ## ###   ##    ##    ##        ##   ##     ##    
 ##       ##     ## ####  ##    ##    ##         ## ##      ##    
@@ -413,13 +461,17 @@ def split_sentence(response):
 
 
 def get_relevant_context_hybrid(
-    rewritten_input,
+    user_input,
     top_k=5,
-    additional_unique_files=10,
+    additional_unique_files=5,
     keyword_match=True,
+    alpha=0.7,  # Weight for vector similarity
+    beta=0.3,  # Weight for keyword match
+    lambda_mmr=0.5,  # Balance parameter for MMR
 ):
     try:
         relevant_context = ""
+        rewritten_input = rewrite_input_with_groq(user_input)
 
         # Encode the rewritten input into an embedding
         input_embedding = ollama.embeddings(
@@ -431,39 +483,108 @@ def get_relevant_context_hybrid(
         # Perform vector similarity search
         search_result = collection.query(
             query_embeddings=[input_embedding],
-            n_results=top_k + additional_unique_files,
+            n_results=50,
             include=["documents", "metadatas", "distances"],
         )
 
-        # Extract top_k results for semantic relevance
-        if search_result:
-            top_results = search_result["metadatas"][0][:top_k]
-            relevant_context = "\n\n".join([item["text"] for item in top_results])
+        # Extract results with distances
+        vector_results = [
+            {
+                "meta": meta,
+                "vector_score": 1.0
+                - dist,  # Convert distance to similarity (assuming normalized)
+            }
+            for meta, dist in zip(
+                search_result["metadatas"][0], search_result["distances"][0]
+            )
+        ]
 
         # Perform keyword matching if enabled
         keyword_results = []
         if keyword_match:
             keywords = rewritten_input.lower().split()
-            keyword_results = [
-                meta
-                for meta in search_result["metadatas"][0]
-                if any(
-                    keyword in meta["text"].lower()
-                    or keyword in meta["file_name"].lower()
+
+            for meta in search_result["metadatas"][0]:
+                match_score = sum(
+                    meta["text"].lower().count(keyword)
+                    + meta["file_name"].lower().count(keyword)
                     for keyword in keywords
                 )
-            ]
+                if match_score > 0:
+                    keyword_results.append({"meta": meta, "keyword_score": match_score})
 
-        # Combine and deduplicate results
-        unique_results = {
-            meta["file_name"]: meta
-            for meta in (search_result["metadatas"][0] + keyword_results)
-        }
-        combined_results = list(unique_results.values())
+        # Normalize scores for both vector and keyword results
+        max_vector_score = max(
+            [res["vector_score"] for res in vector_results], default=1
+        )
+        max_keyword_score = max(
+            [res["keyword_score"] for res in keyword_results], default=1
+        )
 
-        # Limit to the top_k + additional_unique_files and prepare the context
-        final_results = combined_results[: top_k + additional_unique_files]
-        relevant_context = "\n\n".join([meta["text"] for meta in final_results])
+        for res in vector_results:
+            res["vector_score"] /= max_vector_score
+
+        for res in keyword_results:
+            res["keyword_score"] /= max_keyword_score
+
+        # Combine results using weighted scoring
+        combined_results = {}
+        for res in vector_results:
+            file_name = res["meta"]["file_name"]
+            combined_results[file_name] = {
+                "meta": res["meta"],
+                "final_score": alpha * res["vector_score"],
+            }
+
+        for res in keyword_results:
+            file_name = res["meta"]["file_name"]
+            if file_name in combined_results:
+                combined_results[file_name]["final_score"] += (
+                    beta * res["keyword_score"]
+                )
+            else:
+                combined_results[file_name] = {
+                    "meta": res["meta"],
+                    "final_score": beta * res["keyword_score"],
+                }
+
+        # Sort by final_score
+        sorted_results = sorted(
+            combined_results.values(), key=lambda x: x["final_score"], reverse=True
+        )
+
+        # Limit results to top_k
+        final_results = [res["meta"] for res in sorted_results[:top_k]]
+
+        # Use MMR to select additional_unique_files
+        remaining_results = [res for res in sorted_results[top_k:]]
+        selected_additional_files = []
+
+        for res in remaining_results:
+            max_similarity = max(
+                [
+                    np.dot(res["meta"]["embedding"], selected["meta"]["embedding"])
+                    for selected in selected_additional_files
+                ],
+                default=0,
+            )
+            mmr_score = (
+                lambda_mmr * res["final_score"] - (1 - lambda_mmr) * max_similarity
+            )
+            res["mmr_score"] = mmr_score
+
+        # Sort by MMR score to get the most relevant and diverse results
+        sorted_additional_files = sorted(
+            remaining_results, key=lambda x: x["mmr_score"], reverse=True
+        )
+
+        selected_additional_files = sorted_additional_files[:additional_unique_files]
+
+        # Combine the top_k and the selected additional unique files
+        final_results.extend([res["meta"] for res in selected_additional_files])
+
+        # Prepare relevant context
+        relevant_context = "\n\n".join([res["text"] for res in final_results])
 
         # Start a worker thread to print details of the results
         worker_thread = threading.Thread(
@@ -579,6 +700,8 @@ def main():
 
     # Get or create the collection
     collection = client.get_collection(collection_name)
+
+    get_relevant_context_hybrid(user_input="just testing dont respond")
 
     while True:
         user_input = input(
