@@ -26,7 +26,8 @@ from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 import speech_recognition as sr
 
 # import edge_tts
-from gtts import gTTS
+# from gtts import gTTS
+from TTS.api import TTS
 
 import asyncio
 import nest_asyncio
@@ -106,34 +107,47 @@ worker_thread.start()
 
 
 # Function to convert text to speech using edge-tts and play using pydub with speed adjustment
-async def text_to_speech_gtts(text, speed=1.2, volume=1.0, lang="en", tld="co.uk"):
+
+# Initialize the best TTS model
+tts_model = TTS(model_name="tts_models/en/ljspeech/vits")
+
+
+# Async text-to-speech function
+async def text_to_speech_coqui(text, speed=1.2, volume=1.0):
     try:
         if not text.strip():
             raise ValueError("Text is empty. Cannot synthesize speech.")
 
+        # Use run_in_executor to run the TTS synthesis synchronously
         loop = asyncio.get_event_loop()
-        audio_fp = await loop.run_in_executor(
-            None, generate_gtts_audio, text, lang, tld
-        )
+        audio_fp = await loop.run_in_executor(None, generate_coqui_audio, text)
 
-        audio = AudioSegment.from_file(audio_fp, format="mp3")
+        # Load audio using pydub and adjust speed and volume
+        audio = AudioSegment.from_file(audio_fp, format="wav")
         audio = audio.speedup(playback_speed=speed)
         audio = audio + (volume * 10)
 
+        # Export processed audio back to BytesIO
         processed_audio_fp = io.BytesIO()
         audio.export(processed_audio_fp, format="mp3")
         processed_audio_fp.seek(0)
 
+        # Add processed audio to playback queue (example queue: TTS_Audio_play_queue)
         TTS_Audio_play_queue.put(processed_audio_fp)
 
     except Exception as e:
         print(f"Error during async TTS processing: {e}")
 
 
-def generate_gtts_audio(text, lang, tld):
-    tts = gTTS(text=text, lang=lang, tld=tld)
+# Function to generate Coqui TTS audio
+def generate_coqui_audio(text):
+    # Generate speech
     audio_fp = io.BytesIO()
-    tts.write_to_fp(audio_fp)
+    tts_model.tts_to_file(text=text, file_path="temp_audio.wav")
+
+    # Load the generated audio back into a BytesIO object
+    with open("temp_audio.wav", "rb") as f:
+        audio_fp.write(f.read())
     audio_fp.seek(0)
     return audio_fp
 
