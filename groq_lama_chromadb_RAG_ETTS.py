@@ -148,7 +148,7 @@ def process_TTS_queue(TTS_queue):
         if dont_read_tts:
             dont_read_tts = False  # Reset the flag after skipping
         else:
-            asyncio.run(text_to_speech_gtts(sentence, speed=1.3))
+            asyncio.run(text_to_speech_gtts(sentence, speed=1.4))
         TTS_queue.task_done()
 
 
@@ -343,6 +343,43 @@ def groq_chat(
         {"role": "user", "content": user_input},
     ]
 
+    # Step 1: Calculate total tokens and adjust dynamically
+    max_tpm = 6000  # Token per minute limit
+    input_tokens = count_tokens(messages, groq_model)
+
+    # Ensure total tokens (input + response) stay within the TPM limit
+    available_tokens_for_response = max(max_tpm - input_tokens, 0)
+    max_response_tokens = min(15000, available_tokens_for_response)
+
+    if input_tokens > max_tpm:
+        # Step 2: Trim conversation history and user input
+        while input_tokens > max_tpm:
+            if conversation_history:
+                # Remove the oldest non-system message from conversation history
+                for i, msg in enumerate(conversation_history):
+                    if msg["role"] != "system":
+                        del conversation_history[i]
+                        break
+            else:
+                # Truncate user input if no more history can be removed
+                user_input = user_input[
+                    : len(user_input) - 20
+                ]  # Remove in chunks of 20 characters
+                messages[-1] = {"role": "user", "content": user_input}
+
+            # Recalculate total tokens
+            messages = [
+                {"role": "system", "content": system_message},
+                *conversation_history,
+                {"role": "user", "content": user_input},
+            ]
+            input_tokens = count_tokens(messages, groq_model)
+
+        # Update available tokens for response after adjustments
+        available_tokens_for_response = max(max_tpm - input_tokens, 0)
+        max_response_tokens = min(15000, available_tokens_for_response)
+
+    # Step 3: Send the request
     if just_query_file_search is False:
         just_query_file_search = True
 
@@ -351,14 +388,9 @@ def groq_chat(
             messages=messages,
             model=groq_model,
             temperature=1,
-            # The maximum number of tokens to generate. Requests can use up to
-            # 2048 tokens shared between prompt and completion.
-            max_tokens=15000,
-            # Controls diversity via nucleus sampling: 0.5 means half of all
-            # likelihood-weighted options are considered.
+            max_tokens=max_response_tokens,  # Dynamically adjusted
             top_p=1,
             stop="",
-            # If set, partial message deltas will be sent.
             stream=True,
         )
 
@@ -378,7 +410,6 @@ def groq_chat(
             chunk_text = chunk.choices[0].delta.content
             response = f"{response}{chunk_text}"
 
-            #        if any(delimiter in response for delimiter in ".;!?"):
             if any(delimiter in response for delimiter in ".:!?"):
                 response = response[1:]  # Remove the first character
                 sentence, response = split_sentence(response)
@@ -387,10 +418,30 @@ def groq_chat(
         # Print the response
         print(RESET_COLOR + "\n")
 
-    else:
-        pass
+    # Append the assistant's response to the conversation history
+    conversation_history.append({"role": "assistant", "content": response})
+
+    # Step 4: Trim conversation history for the next cycle if needed
+    while count_tokens(conversation_history, groq_model) > max_tpm:
+        for i, msg in enumerate(conversation_history):
+            if msg["role"] != "system":
+                del conversation_history[i]
+                break
 
     return response
+
+
+def count_tokens(messages, model="llama-3.3-70b-versatile"):
+    # Replace this with your token counting logic (or simple tokenizer if tiktoken is unavailable)
+    def simple_tokenizer(text):
+        import re
+
+        return re.findall(r"\w+|[^\s\w]", text)
+
+    total_tokens = 0
+    for message in messages:
+        total_tokens += len(simple_tokenizer(message["content"]))
+    return total_tokens
 
 
 """
@@ -713,7 +764,9 @@ def main():
     # Get or create the collection
     collection = client.get_collection(collection_name)
 
-    get_relevant_context_hybrid(user_input="just testing dont respond")
+    get_relevant_context_hybrid(
+        user_input="just loading ollama embeddings model and chromadb, dont respond"
+    )
 
     while True:
         user_input = input(
