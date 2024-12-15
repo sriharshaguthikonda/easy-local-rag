@@ -65,6 +65,85 @@ RESET_COLOR = "\033[0m"
 # varriable is int the get_relevant_context/get_relevant_context_hybrid function
 
 
+non_keywords = set(
+    [
+        "a",
+        "an",
+        "the",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "with",
+        "for",
+        "to",
+        "from",
+        "up",
+        "down",
+        "into",
+        "over",
+        "under",
+        "about",
+        "between",
+        "after",
+        "before",
+        "while",
+        "during",
+        "as",
+        "but",
+        "or",
+        "so",
+        "such",
+        "that",
+        "this",
+        "these",
+        "those",
+        "all",
+        "any",
+        "both",
+        "some",
+        "most",
+        "much",
+        "many",
+        "few",
+        "one",
+        "each",
+        "every",
+        "neither",
+        "either",
+        "who",
+        "whom",
+        "whose",
+        "what",
+        "which",
+        "where",
+        "when",
+        "why",
+        "how",
+        "it",
+        "its",
+        "itself",
+        "he",
+        "she",
+        "her",
+        "him",
+        "his",
+        "they",
+        "their",
+        "them",
+        "themselves",
+        "you",
+        "your",
+        "yourself",
+        "yourselves",
+        "we",
+        "our",
+        "ours",
+        "us",
+    ]
+)
+
 """
 ######## ########  ######  
    ##       ##    ##    ## 
@@ -349,7 +428,7 @@ def groq_chat(
 
     # Ensure total tokens (input + response) stay within the TPM limit
     available_tokens_for_response = max(max_tpm - input_tokens, 0)
-    max_response_tokens = min(15000, available_tokens_for_response)
+    max_response_tokens = min(6000, available_tokens_for_response)
 
     if input_tokens > max_tpm:
         # Step 2: Trim conversation history and user input
@@ -377,7 +456,7 @@ def groq_chat(
 
         # Update available tokens for response after adjustments
         available_tokens_for_response = max(max_tpm - input_tokens, 0)
-        max_response_tokens = min(15000, available_tokens_for_response)
+        max_response_tokens = min(6000, available_tokens_for_response)
 
     # Step 3: Send the request
     if just_query_file_search is False:
@@ -479,22 +558,26 @@ def split_sentence(response):
 """
 
 
-def rewrite_input_with_groq(original_input):
+def rewrite_input_and_generate_synonyms(original_input):
     try:
-        # Ask Groq to rewrite the input to make it clearer and more precise
+        # Single API call to get rewritten input, synonyms, and spelling variants
         chat_completion = client.chat.completions.create(
             messages=[
-                # Set an optional system message. This sets the behavior of the
-                # assistant and can be used to provide specific instructions for
-                # how it should behave throughout the conversation.
                 {
                     "role": "system",
-                    "content": "you modify the given sentences so it can be used for generating and searching embeddings as best as possible",
+                    "content": (
+                        "You are a helpful assistant. Your task is threefold: "
+                        "1) Rewrite the given input to make it clearer and more precise in one sentence while preserving its original meaning. "
+                        "2) Provide a list of synonyms for each keyword in the rewritten input. "
+                        "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword. "
+                        "Respond with the rewritten sentence followed by the synonyms and spelling variants in the format: "
+                        "'Rewritten: [sentence]' and 'Keywords: [word1: synonym1, synonym2; spelling variant1, spelling variant2; "
+                        "word2: synonym1, synonym2; spelling variant1, spelling variant2]'."
+                    ),
                 },
-                # Set a user message for the assistant to respond to.
                 {
                     "role": "user",
-                    "content": f"""Please rewrite the following to make it clearer and more precise in one sentence, keeping the original meaning: "{original_input}". Just respond with the rewritten sentence and nothing else""",
+                    "content": f"""Rewrite and generate synonyms and spelling variants for: "{original_input}".""",
                 },
             ],
             model=groq_model,
@@ -502,14 +585,56 @@ def rewrite_input_with_groq(original_input):
             stream=False,
         )
 
-        # Extract the rewritten input
-        rewritten_input = chat_completion.choices[0].message.content
-        print(rewritten_input)
-        return rewritten_input
+        # Parse the response
+        response_text = chat_completion.choices[0].message.content.strip()
+        print(f"Full Response:\n{response_text}")
+
+        # Extract rewritten sentence and keywords
+        rewritten_input = None
+        synonym_and_variant_dict = {}
+
+        if "Rewritten:" in response_text and "Keywords:" in response_text:
+            parts = response_text.split("Keywords:")
+            rewritten_input = parts[0].replace("Rewritten:", "").strip()
+            keywords_raw = parts[1].strip()
+
+            # Parse the keywords into a dictionary
+            for entry in keywords_raw.split(";"):
+                if ":" in entry:
+                    try:
+                        keyword, details = entry.split(":", 1)
+                        keyword = keyword.strip()
+                        details_split = [d.strip() for d in details.split(";")]
+
+                        # Separate synonyms and variants
+                        synonyms = [
+                            d
+                            for d in details_split
+                            if not d.startswith("no variants")
+                            and not d.startswith("spelling variant")
+                        ]
+                        spelling_variants = [
+                            d.replace("spelling variant", "").strip()
+                            for d in details_split
+                            if "spelling variant" in d
+                        ]
+
+                        # Handle "no synonyms available"
+                        if "no synonyms available" in details_split:
+                            synonyms = []
+
+                        synonym_and_variant_dict[keyword] = {
+                            "synonyms": synonyms,
+                            "spelling_variants": spelling_variants,
+                        }
+                    except ValueError:
+                        print(f"Skipping malformed entry: {entry}")
+
+        return rewritten_input, synonym_and_variant_dict
 
     except Exception as e:
-        print(f"An error occurred during rewriting: {e}")
-        return None
+        print(f"An error occurred: {e}")
+        return None, {}
 
 
 """
@@ -534,7 +659,7 @@ def get_relevant_context_hybrid(
 ):
     try:
         relevant_context = ""
-        rewritten_input = rewrite_input_with_groq(user_input)
+        rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(user_input)
 
         # Encode the rewritten input into an embedding
         input_embedding = ollama.embeddings(
@@ -565,9 +690,22 @@ def get_relevant_context_hybrid(
         # Perform keyword matching if enabled
         keyword_results = []
         if keyword_match:
-            keywords = rewritten_input.lower().split()
+            # Extract keywords and synonyms
+            keywords = [
+                word
+                for word in rewritten_input.lower().split()
+                if word not in non_keywords
+            ]
+
+            # Add synonyms to the keyword list
+            for key, synonyms in synonym_dict.items():
+                keywords.extend(synonyms)
+
+            # Use a set to remove duplicates
+            keywords = set(keywords)
 
             for meta in search_result["metadatas"][0]:
+                # Match against both original keywords and their synonyms
                 match_score = sum(
                     meta["text"].lower().count(keyword)
                     + meta["file_name"].lower().count(keyword)
