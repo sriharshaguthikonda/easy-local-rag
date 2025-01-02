@@ -45,6 +45,8 @@ model = "mxbai-embed-large"
 groq_model = "llama-3.3-70b-versatile"
 ollama_model = "phi-3"
 
+"""TODO: Update the collection name to match the one used in the monitor_file_changes_update_chromaDB.py script."""
+
 collection_name = "html_chunks"
 
 # ANSI escape codes for colors
@@ -227,7 +229,7 @@ def process_TTS_queue(TTS_queue):
         if dont_read_tts:
             dont_read_tts = False  # Reset the flag after skipping
         else:
-            asyncio.run(text_to_speech_gtts(sentence, speed=1.4))
+            asyncio.run(text_to_speech_gtts(sentence, volume=0.5, speed=1.4))
         TTS_queue.task_done()
 
 
@@ -462,37 +464,42 @@ def groq_chat(
     if just_query_file_search is False:
         just_query_file_search = True
 
-        stream = client.chat.completions.create(
-            # Required parameters
-            messages=messages,
-            model=groq_model,
-            temperature=1,
-            max_tokens=max_response_tokens,  # Dynamically adjusted
-            top_p=1,
-            stop="",
-            stream=True,
-        )
+        try:
+            stream = client.chat.completions.create(
+                # Required parameters
+                messages=messages,
+                model=groq_model,
+                temperature=1,
+                max_tokens=max_response_tokens,  # Dynamically adjusted
+                top_p=1,
+                stop="",
+                stream=True,
+            )
+            # Queue for sentences
+            TTS_queue = queue.Queue()
 
-        # Queue for sentences
-        TTS_queue = queue.Queue()
+            # Start the worker thread
+            worker_thread = threading.Thread(
+                target=process_TTS_queue, args=(TTS_queue,), daemon=True
+            )
+            worker_thread.start()
 
-        # Start the worker thread
-        worker_thread = threading.Thread(
-            target=process_TTS_queue, args=(TTS_queue,), daemon=True
-        )
-        worker_thread.start()
+            response = ""
+            print(NEON_GREEN)
+            for chunk in stream:
+                print(chunk.choices[0].delta.content, end="")
+                chunk_text = chunk.choices[0].delta.content
+                response = f"{response}{chunk_text}"
 
-        response = ""
-        print(NEON_GREEN)
-        for chunk in stream:
-            print(chunk.choices[0].delta.content, end="")
-            chunk_text = chunk.choices[0].delta.content
-            response = f"{response}{chunk_text}"
-
-            if any(delimiter in response for delimiter in ".:!?"):
-                response = response[1:]  # Remove the first character
-                sentence, response = split_sentence(response)
-                TTS_queue.put(sentence)
+                if any(delimiter in response for delimiter in ".:!?"):
+                    response = response[1:]  # Remove the first character
+                    sentence, response = split_sentence(response)
+                    TTS_queue.put(sentence)
+            # Process the stream here
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            # Handle the error or perform any necessary cleanup
+            # You can also log the error or take other actions as needed
 
         # Print the response
         print(RESET_COLOR + "\n")
@@ -566,7 +573,7 @@ def rewrite_input_and_generate_synonyms(original_input):
                 {
                     "role": "system",
                     "content": (
-                        "You are a helpful assistant. Your task is threefold: "
+                        "You are a helpful assistant working in medical context. Your task is threefold: "
                         "1) Rewrite the given input to make it clearer and more precise in one sentence while preserving its original meaning. "
                         "2) Provide a list of synonyms for each keyword in the rewritten input. "
                         "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword. "

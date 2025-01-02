@@ -25,14 +25,20 @@ from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 import winsound
 
 
+csv_path = "processed_data.csv"
+"""TODO: change this to the correct collection name  mother collection is html_chunks"""
+"""TODO: change this to the correct collection name  mother collection is html_chunks"""
+"""TODO: change this to the correct collection name  mother collection is html_chunks"""
+
+collection_name = "html_chunks_temp"
+
+
 def init_chromadb():
     client = chromadb.PersistentClient(
         settings=Settings(),
         tenant=DEFAULT_TENANT,
         database=DEFAULT_DATABASE,
     )
-
-    collection_name = "html_chunks"
 
     try:
         collection = client.get_or_create_collection(name=collection_name)
@@ -97,7 +103,6 @@ def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
 
 
 def main():
-    csv_path = "processed_data.csv"
     collection = init_chromadb()
     if collection:
         insert_batches_to_chromadb(collection, csv_path)
