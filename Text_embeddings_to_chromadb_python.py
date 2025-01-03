@@ -24,6 +24,14 @@ import chromadb
 from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 import winsound
 
+"""TODO 1: Update the `csv_path` variable to point to the location of your processed data CSV file."""
+"""TODO 1: Update the `csv_path` variable to point to the location of your processed data CSV file."""
+"""TODO 1: Update the `csv_path` variable to point to the location of your processed data CSV file."""
+
+
+csv_path = "processed_data.csv"
+collection_name = "html_chunks_temp"
+
 
 def init_chromadb():
     client = chromadb.PersistentClient(
@@ -32,10 +40,9 @@ def init_chromadb():
         database=DEFAULT_DATABASE,
     )
 
-    collection_name = "html_chunks"
-
     try:
         collection = client.get_or_create_collection(name=collection_name)
+
     except Exception as e:
         print(f"An error occurred: {e}")
         collection = None
@@ -97,8 +104,8 @@ def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
 
 
 def main():
-    csv_path = "processed_data.csv"
     collection = init_chromadb()
+
     if collection:
         insert_batches_to_chromadb(collection, csv_path)
         winsound.Beep(1000, 500)  # Frequency: 1000 Hz, Duration: 500 ms
