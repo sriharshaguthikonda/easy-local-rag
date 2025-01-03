@@ -870,7 +870,22 @@ def start_ollama_server():
 ##     ## ##     ## #### ##    ## 
 """
 
+# Make collection a global variable
+collection = None
 
+
+def initialize_collection():
+    global collection
+    client = chromadb.PersistentClient(
+        settings=Settings(),
+        tenant=DEFAULT_TENANT,
+        database=DEFAULT_DATABASE,
+    )
+    collection = client.get_collection(collection_name)
+    return collection
+
+
+# Modify main() to use initialize_collection
 def main():
     global collection, conversation_history, dont_read_tts, just_query_file_search
     # Reset conversation history
@@ -893,14 +908,7 @@ def main():
     ollama_thread = threading.Thread(target=check_and_start_ollama, daemon=True)
     ollama_thread.start()
 
-    client = chromadb.PersistentClient(
-        settings=Settings(),
-        tenant=DEFAULT_TENANT,
-        database=DEFAULT_DATABASE,
-    )
-
-    # Get or create the collection
-    collection = client.get_collection(collection_name)
+    collection = initialize_collection()
 
     get_relevant_context_hybrid(
         user_input="just loading ollama embeddings model and chromadb, dont respond"
@@ -940,6 +948,10 @@ def main():
 
         # print("stripped_input :", stripped_input)
 
+
+# Initialize collection when module is imported
+if collection is None:
+    collection = initialize_collection()
 
 if __name__ == "__main__":
     main()
