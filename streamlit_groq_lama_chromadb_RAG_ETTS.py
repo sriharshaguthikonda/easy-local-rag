@@ -37,11 +37,6 @@ from dotenv import load_dotenv
 import numpy as np
 
 
-"""TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
-"""TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
-"""TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
-
-
 # Constants
 EMBEDDINGS_DIR = "Embeddings"
 model = "mxbai-embed-large"
@@ -51,6 +46,7 @@ groq_model = "llama-3.3-70b-versatile"
 ollama_model = "phi-3"
 
 collection_name = "html_chunks_temp"
+
 
 # ANSI escape codes for colors
 PINK = "\033[95m"
@@ -232,7 +228,7 @@ def process_TTS_queue(TTS_queue):
         if dont_read_tts:
             dont_read_tts = False  # Reset the flag after skipping
         else:
-            asyncio.run(text_to_speech_gtts(sentence, volume=0.5, speed=1.4))
+            asyncio.run(text_to_speech_gtts(sentence, speed=1.4))
         TTS_queue.task_done()
 
 
@@ -467,42 +463,37 @@ def groq_chat(
     if just_query_file_search is False:
         just_query_file_search = True
 
-        try:
-            stream = client.chat.completions.create(
-                # Required parameters
-                messages=messages,
-                model=groq_model,
-                temperature=1,
-                max_tokens=max_response_tokens,  # Dynamically adjusted
-                top_p=1,
-                stop="",
-                stream=True,
-            )
-            # Queue for sentences
-            TTS_queue = queue.Queue()
+        stream = client.chat.completions.create(
+            # Required parameters
+            messages=messages,
+            model=groq_model,
+            temperature=1,
+            max_tokens=max_response_tokens,  # Dynamically adjusted
+            top_p=1,
+            stop="",
+            stream=True,
+        )
 
-            # Start the worker thread
-            worker_thread = threading.Thread(
-                target=process_TTS_queue, args=(TTS_queue,), daemon=True
-            )
-            worker_thread.start()
+        # Queue for sentences
+        TTS_queue = queue.Queue()
 
-            response = ""
-            print(NEON_GREEN)
-            for chunk in stream:
-                print(chunk.choices[0].delta.content, end="")
-                chunk_text = chunk.choices[0].delta.content
-                response = f"{response}{chunk_text}"
+        # Start the worker thread
+        worker_thread = threading.Thread(
+            target=process_TTS_queue, args=(TTS_queue,), daemon=True
+        )
+        worker_thread.start()
 
-                if any(delimiter in response for delimiter in ".:!?"):
-                    response = response[1:]  # Remove the first character
-                    sentence, response = split_sentence(response)
-                    TTS_queue.put(sentence)
-            # Process the stream here
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            # Handle the error or perform any necessary cleanup
-            # You can also log the error or take other actions as needed
+        response = ""
+        print(NEON_GREEN)
+        for chunk in stream:
+            print(chunk.choices[0].delta.content, end="")
+            chunk_text = chunk.choices[0].delta.content
+            response = f"{response}{chunk_text}"
+
+            if any(delimiter in response for delimiter in ".:!?"):
+                response = response[1:]  # Remove the first character
+                sentence, response = split_sentence(response)
+                TTS_queue.put(sentence)
 
         # Print the response
         print(RESET_COLOR + "\n")
@@ -576,7 +567,7 @@ def rewrite_input_and_generate_synonyms(original_input):
                 {
                     "role": "system",
                     "content": (
-                        "You are a helpful assistant working in medical context. Your task is threefold: "
+                        "You are a helpful assistant. Your task is threefold: "
                         "1) Rewrite the given input to make it clearer and more precise in one sentence while preserving its original meaning. "
                         "2) Provide a list of synonyms for each keyword in the rewritten input. "
                         "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword. "
@@ -805,7 +796,8 @@ def get_relevant_context_hybrid(
         )
         worker_thread.start()
 
-        return relevant_context
+        # Return both the context and the metadata
+        return relevant_context, final_results
 
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -880,7 +872,22 @@ def start_ollama_server():
 ##     ## ##     ## #### ##    ## 
 """
 
+# Make collection a global variable
+collection = None
 
+
+def initialize_collection():
+    global collection
+    client = chromadb.PersistentClient(
+        settings=Settings(),
+        tenant=DEFAULT_TENANT,
+        database=DEFAULT_DATABASE,
+    )
+    collection = client.get_collection(collection_name)
+    return collection
+
+
+# Modify main() to use initialize_collection
 def main():
     global collection, conversation_history, dont_read_tts, just_query_file_search
     # Reset conversation history
@@ -903,14 +910,7 @@ def main():
     ollama_thread = threading.Thread(target=check_and_start_ollama, daemon=True)
     ollama_thread.start()
 
-    client = chromadb.PersistentClient(
-        settings=Settings(),
-        tenant=DEFAULT_TENANT,
-        database=DEFAULT_DATABASE,
-    )
-
-    # Get or create the collection
-    collection = client.get_collection(collection_name)
+    collection = initialize_collection()
 
     get_relevant_context_hybrid(
         user_input="just loading ollama embeddings model and chromadb, dont respond"
@@ -950,6 +950,10 @@ def main():
 
         # print("stripped_input :", stripped_input)
 
+
+# Initialize collection when module is imported
+if collection is None:
+    collection = initialize_collection()
 
 if __name__ == "__main__":
     main()
