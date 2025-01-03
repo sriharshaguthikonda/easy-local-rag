@@ -61,34 +61,13 @@ collection = client.get_or_create_collection(name=collection_name)
 
 
 def is_file_in_chromadb(file_path, modification_time):
-    """
-    Check if the file is already in ChromaDB and if its modification time matches.
-    Returns (bool, bool): (is_file_present, is_modified)
-    """
-    try:
-        results = collection.get(where={"file_name": file_path}, include=["metadatas"])
+    """Check if the file is already in ChromaDB."""
 
-        if not results["metadatas"]:
-            return False, False
+    results = collection.get(where={"file_name": file_path})
+    print(len(results["metadatas"]))
+    # pprint.pprint(results)  # Debugging: Print the results to inspect the structure
 
-        # Get the modification time from the first metadata entry
-        db_modification_time = float(results["metadatas"][0]["modification_time"])
-
-        is_present = len(results["metadatas"]) > 0
-        is_modified = (
-            abs(db_modification_time - modification_time) > 0.1
-        )  # Small threshold for float comparison
-
-        logging.info(f"File {file_path}: present={is_present}, modified={is_modified}")
-        logging.info(
-            f"DB modification time: {db_modification_time}, Current modification time: {modification_time}"
-        )
-
-        return is_present, is_modified
-
-    except Exception as e:
-        logging.error(f"Error checking file in ChromaDB: {e}")
-        return False, False
+    return len(results["metadatas"]) > 1
 
 
 def get_existing_chunk_hashes(file_path, modification_time):
@@ -154,16 +133,6 @@ class FileChangeHandler(FileSystemEventHandler):
         """Process new or modified files."""
         try:
             modification_time = os.path.getmtime(file_path)
-            is_present, is_modified = is_file_in_chromadb(file_path, modification_time)
-
-            if is_present and not is_modified:
-                logging.info(
-                    f"File {file_path} is already in ChromaDB and hasn't been modified. Skipping."
-                )
-                return
-
-            if is_modified:
-                logging.info(f"File {file_path} has been modified. Updating chunks.")
 
             # Extract text and create chunks
             text = extract_text_from_html(file_path)
@@ -174,20 +143,6 @@ class FileChangeHandler(FileSystemEventHandler):
             chunks = split_into_chunks(text)
             chunk_ids = [generate_chunk_id(chunk["text"]) for chunk in chunks]
 
-            # If file was modified, we might want to remove old chunks
-            if is_modified:
-                try:
-                    old_results = collection.get(
-                        where={"file_name": file_path}, include=["ids"]
-                    )
-                    if old_results["ids"]:
-                        collection.delete(where={"file_name": file_path})
-                        logging.info(
-                            f"Deleted old chunks for modified file: {file_path}"
-                        )
-                except Exception as e:
-                    logging.error(f"Error deleting old chunks: {e}")
-
             # Check which chunks are missing from the database
             missing_chunk_ids = check_existing_chunks(collection, chunk_ids)
 
@@ -196,6 +151,13 @@ class FileChangeHandler(FileSystemEventHandler):
                     f"All chunks already exist in database for file: {file_path}"
                 )
                 return
+
+            # Filter chunks to only process missing ones
+            new_chunks = [
+                chunk
+                for chunk in chunks
+                if generate_chunk_id(chunk["text"]) in missing_chunk_ids
+            ]
 
             # Generate embeddings only for new chunks
             embeddings = []
@@ -288,9 +250,7 @@ def monitor_folder(folder_path):
 
 if __name__ == "__main__":
     # Specify the folder you want to monitor
-    FOLDER_TO_MONITOR = (
-        r"C:\Users\deletable\Downloads\deletable\Cummings Otolaryngology"
-    )
+    FOLDER_TO_MONITOR = r"C:\Users\deletable\Google Drive"
 
     # Start monitoring the folder
     monitor_folder(FOLDER_TO_MONITOR)
