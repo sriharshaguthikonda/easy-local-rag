@@ -1,0 +1,35 @@
+TODO
+
+
+ when updating the chromadb with modified files, there will be lot of redundant chunks 
+ 
+ this is a problem which will  increase the size of chroma db database significantly
+ 
+ do you think this can be solved by alignment.?
+
+  do you have any other better ideas?
+
+
+
+ first, if we check the file is modified and confirm that file is modified,
+
+
+second, we get all chunks for this file from the chroma db and 
+
+third  align  the current file with the chroma db chunks.
+
+fourth 
+
+
+   you can ask ideas how to identify the missing or find out the new chunks.
+
+
+ most of the chunks will match anyway
+
+
+ if some chunks partially match, we will remove the old chunks and add new chunks.
+
+
+
+
+     if there are extra chunks after all chunks match then we are going to push those chunks

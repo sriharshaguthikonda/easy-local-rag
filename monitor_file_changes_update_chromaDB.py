@@ -5,7 +5,12 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import nltk
 import pynvml
-
+from difflib import SequenceMatcher
+from typing import Dict, List, Tuple, Set
+from dataclasses import dataclass
+import numpy as np
+import colorama
+from colorama import Fore, Back, Style
 
 import pprint
 
@@ -46,10 +51,68 @@ from chromadb.config import Settings
 
 vault_embeddings = []
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+# Initialize colorama
+colorama.init()
+
+
+# Enhanced color constants
+class LogColors:
+    INFO = Fore.CYAN
+    DEBUG = Fore.BLUE
+    WARNING = Fore.YELLOW
+    ERROR = Fore.RED
+    CRITICAL = Fore.RED + Back.WHITE
+    SUCCESS = Fore.GREEN
+    PROCESSING = Fore.MAGENTA
+    HEADER = Fore.WHITE + Back.BLUE
+    RESET = Style.RESET_ALL
+
+
+class ColoredLogger:
+    def __init__(self, name):
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(logging.DEBUG)
+
+        # Create console handler with custom formatter
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.DEBUG)
+
+        formatter = logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        )
+        console_handler.setFormatter(formatter)
+        self.logger.addHandler(console_handler)
+
+    def debug(self, msg):
+        self.logger.debug(f"{LogColors.DEBUG}{msg}{LogColors.RESET}")
+
+    def info(self, msg):
+        self.logger.info(f"{LogColors.INFO}{msg}{LogColors.RESET}")
+
+    def warning(self, msg):
+        self.logger.warning(f"{LogColors.WARNING}{msg}{LogColors.RESET}")
+
+    def error(self, msg):
+        self.logger.error(f"{LogColors.ERROR}{msg}{LogColors.RESET}")
+
+    def critical(self, msg):
+        self.logger.critical(f"{LogColors.CRITICAL}{msg}{LogColors.RESET}")
+
+    def success(self, msg):
+        self.logger.info(f"{LogColors.SUCCESS}{msg}{LogColors.RESET}")
+
+    def processing(self, msg):
+        self.logger.info(f"{LogColors.PROCESSING}{msg}{LogColors.RESET}")
+
+    def header(self, msg):
+        self.logger.info(f"{LogColors.HEADER}{msg}{LogColors.RESET}")
+
+
+# Initialize logger
+logger = ColoredLogger("chunk_processor")
+
+# Replace existing logging configuration
+logging.basicConfig(level=logging.DEBUG)
 
 # Dictionary to store the last modification time of files
 file_mod_times = {}
@@ -92,6 +155,286 @@ def check_existing_chunks(collection, chunk_ids):
         return chunk_ids
 
 
+def calculate_chunk_similarity(chunk1, chunk2):
+    """Calculate similarity between two chunks using SequenceMatcher."""
+    return SequenceMatcher(None, chunk1, chunk2).ratio()
+
+
+def find_matching_chunks(new_chunk, existing_chunks, similarity_threshold=0.8):
+    """Find matching chunks from existing chunks based on similarity."""
+    matches = []
+    for existing_chunk in existing_chunks:
+        similarity = calculate_chunk_similarity(
+            new_chunk["text"], existing_chunk["text"]
+        )
+        if similarity >= similarity_threshold:
+            matches.append((existing_chunk, similarity))
+    return matches
+
+
+def get_existing_file_chunks(file_path):
+    """Retrieve all chunks for a specific file from ChromaDB."""
+    results = collection.get(where={"file_name": file_path})
+    return [
+        {"text": meta["text"], "id": id}
+        for meta, id in zip(results["metadatas"], results["ids"])
+    ]
+
+
+@dataclass
+class ChunkDiff:
+    to_add: List[dict]
+    to_remove: Set[str]
+    modified: List[Tuple[str, dict]]  # (old_id, new_chunk)
+
+
+def align_chunks(
+    new_chunks: List[dict],
+    existing_chunks: List[dict],
+    similarity_threshold: float = 0.85,
+) -> ChunkDiff:
+    """
+    Align new chunks with existing chunks and determine required changes.
+    Returns chunks to add, remove, and modify.
+    """
+    to_add = []
+    to_remove = set()
+    modified = []
+    matched_existing = set()
+
+    # First pass: Find exact and close matches
+    for new_chunk in new_chunks:
+        best_match = None
+        best_similarity = 0
+
+        for existing_chunk in existing_chunks:
+            if existing_chunk["id"] in matched_existing:
+                continue
+
+            similarity = calculate_chunk_similarity(
+                new_chunk["text"], existing_chunk["text"]
+            )
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match = existing_chunk
+
+        if best_similarity >= similarity_threshold:
+            matched_existing.add(best_match["id"])
+            if best_similarity < 0.95:  # Close but not exact match
+                modified.append((best_match["id"], new_chunk))
+        else:
+            to_add.append(new_chunk)
+
+    # Find unmatched existing chunks to remove
+    for existing_chunk in existing_chunks:
+        if existing_chunk["id"] not in matched_existing:
+            to_remove.add(existing_chunk["id"])
+
+    return ChunkDiff(to_add=to_add, to_remove=to_remove, modified=modified)
+
+
+def sequence_align_chunks(
+    new_chunks: List[dict],
+    existing_chunks: List[dict],
+    gap_penalty: float = -0.1,
+    match_threshold: float = 0.7,
+) -> List[Tuple[int, int, float]]:
+    """
+    Implements a modified Smith-Waterman algorithm for chunk alignment.
+    Returns list of (new_idx, existing_idx, similarity_score) tuples.
+    """
+    n = len(new_chunks)
+    m = len(existing_chunks)
+
+    # Initialize scoring matrix
+    score_matrix = np.zeros((n + 1, m + 1))
+    traceback = np.zeros((n + 1, m + 1, 2), dtype=int)
+
+    # Fill the scoring matrix
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            similarity = calculate_chunk_similarity(
+                new_chunks[i - 1]["text"], existing_chunks[j - 1]["text"]
+            )
+
+            # Calculate possible scores
+            match_score = score_matrix[i - 1][j - 1] + similarity
+            delete_score = score_matrix[i - 1][j] + gap_penalty
+            insert_score = score_matrix[i][j - 1] + gap_penalty
+
+            # Find best score
+            score_matrix[i][j] = max(0, match_score, delete_score, insert_score)
+
+            # Store traceback info
+            if score_matrix[i][j] == match_score:
+                traceback[i][j] = [i - 1, j - 1]
+            elif score_matrix[i][j] == delete_score:
+                traceback[i][j] = [i - 1, j]
+            else:
+                traceback[i][j] = [i, j - 1]
+
+    # Find alignments by traceback
+    alignments = []
+    while True:
+        current_max = np.unravel_index(score_matrix.argmax(), score_matrix.shape)
+        if score_matrix[current_max] == 0:
+            break
+
+        i, j = current_max
+        if score_matrix[i][j] >= match_threshold:
+            alignments.append((i - 1, j - 1, score_matrix[i][j]))
+
+        # Zero out region to find next best alignment
+        score_matrix[i - 1 : i + 2, j - 1 : j + 2] = 0
+
+    return sorted(alignments, key=lambda x: x[2], reverse=True)
+
+
+def process_aligned_chunks(
+    new_chunks: List[dict],
+    existing_chunks: List[dict],
+    alignments: List[Tuple[int, int, float]],
+) -> ChunkDiff:
+    """
+    Process aligned chunks to determine what needs to be added, removed, or modified.
+    """
+    used_new = set()
+    used_existing = set()
+    to_add = []
+    to_remove = set()
+    modified = []
+
+    # Process alignments in order of similarity score
+    for new_idx, existing_idx, score in alignments:
+        if new_idx in used_new or existing_idx in used_existing:
+            continue
+
+        used_new.add(new_idx)
+        used_existing.add(existing_idx)
+
+        if score < 0.95:  # Similar but not identical
+            modified.append((existing_chunks[existing_idx]["id"], new_chunks[new_idx]))
+
+    # Add unmatched new chunks
+    for i, chunk in enumerate(new_chunks):
+        if i not in used_new:
+            to_add.append(chunk)
+
+    # Remove unmatched existing chunks
+    for i, chunk in enumerate(existing_chunks):
+        if i not in used_existing:
+            to_remove.add(chunk["id"])
+
+    return ChunkDiff(to_add=to_add, to_remove=to_remove, modified=modified)
+
+
+def process_file(self, file_path):
+    """Process new or modified files with sequence alignment."""
+    try:
+        logger.header(f"Processing file: {file_path}")
+        modification_time = os.path.getmtime(file_path)
+
+        if (
+            file_path in file_mod_times
+            and file_mod_times[file_path] == modification_time
+        ):
+            logger.debug(f"File {file_path} hasn't been modified. Skipping.")
+            return
+
+        logger.processing("Extracting text from file...")
+        text = extract_text_from_html(file_path)
+        if not text:
+            logger.warning(f"No text extracted from {file_path}. Skipping.")
+            return
+
+        logger.processing("Creating chunks...")
+        new_chunks = split_into_chunks(text)
+        existing_chunks = get_existing_file_chunks(file_path)
+        logger.debug(
+            f"Found {len(new_chunks)} new chunks and {len(existing_chunks)} existing chunks"
+        )
+
+        logger.processing("Performing sequence alignment...")
+        alignments = sequence_align_chunks(new_chunks, existing_chunks)
+        diff = process_aligned_chunks(new_chunks, existing_chunks, alignments)
+
+        if diff.to_remove:
+            logger.warning(f"Removing {len(diff.to_remove)} outdated chunks")
+            collection.delete(ids=list(diff.to_remove))
+            logger.success(f"Successfully removed {len(diff.to_remove)} chunks")
+
+        chunks_to_embed = diff.to_add + [chunk for _, chunk in diff.modified]
+
+        if chunks_to_embed:
+            logger.processing(
+                f"Generating embeddings for {len(chunks_to_embed)} chunks..."
+            )
+            embeddings = []
+            processed_chunks = []
+
+            for i, chunk in enumerate(chunks_to_embed, 1):
+                logger.debug(f"Processing chunk {i}/{len(chunks_to_embed)}")
+                response = ollama.embeddings(
+                    model="mxbai-embed-large", prompt=chunk["text"]
+                )
+
+                if check_gpu_temperature() > 51:
+                    logger.warning(
+                        f"{LogColors.WARNING}GPU temperature critical. Pausing...{LogColors.RESET}"
+                    )
+                    time.sleep(30)
+                    continue
+
+                if "embedding" in response:
+                    embeddings.append(response["embedding"])
+                    processed_chunks.append(chunk)
+                    logger.debug(f"Successfully embedded chunk {i}")
+                else:
+                    logger.error(f"Failed to generate embedding for chunk {i}")
+
+            if processed_chunks:
+                logger.processing("Adding chunks to ChromaDB...")
+                ids = [generate_chunk_id(chunk["text"]) for chunk in processed_chunks]
+                metadatas = [
+                    {
+                        "text": chunk["text"],
+                        "file_name": file_path,
+                        "modification_time": modification_time,
+                    }
+                    for chunk in processed_chunks
+                ]
+
+                collection.add(embeddings=embeddings, metadatas=metadatas, ids=ids)
+                logger.success(
+                    f"Successfully added {len(ids)} new/modified chunks to ChromaDB"
+                )
+
+        file_mod_times[file_path] = modification_time
+        logger.success(f"Completed processing file: {file_path}")
+
+    except Exception as e:
+        logger.critical(f"Error processing file {file_path}: {str(e)}")
+
+
+def check_file_modified(file_path, current_time) -> bool:
+    """
+    Check if file has been modified since last processing.
+    Returns True if file needs processing, False otherwise.
+    """
+    if file_path not in file_mod_times:
+        logger.info(f"New file detected: {file_path}")
+        return True
+
+    if file_mod_times[file_path] < current_time:
+        logger.info(f"File modified: {file_path}")
+        logger.debug(f"Previous mod time: {file_mod_times[file_path]}")
+        logger.debug(f"Current mod time: {current_time}")
+        return True
+
+    logger.debug(f"File {file_path} hasn't been modified. Skipping.")
+    return False
+
+
 class FileChangeHandler(FileSystemEventHandler):
     def __init__(self, folder_path, output_json="temp_vault.json"):
         self.folder_path = folder_path
@@ -122,89 +465,100 @@ class FileChangeHandler(FileSystemEventHandler):
         ):
             file_path = event.src_path
             current_mod_time = os.path.getmtime(file_path)
-            if (
-                file_path not in file_mod_times
-                or file_mod_times[file_path] != current_mod_time
-            ):
-                logging.info(f"File modified: {file_path}")
+
+            if check_file_modified(file_path, current_mod_time):
+                logger.processing(f"Processing modified file: {file_path}")
                 self.process_file(file_path)
+            else:
+                logger.debug(f"Ignoring unchanged file: {file_path}")
 
     def process_file(self, file_path):
-        """Process new or modified files."""
+        """Process new or modified files with sequence alignment."""
         try:
             modification_time = os.path.getmtime(file_path)
 
-            # Extract text and create chunks
+            # Double check modification time before processing
+            if not check_file_modified(file_path, modification_time):
+                return
+
+            logger.header(f"Processing file: {file_path}")
+            # ...rest of the processing code...
+
+            logger.processing("Extracting text from file...")
             text = extract_text_from_html(file_path)
             if not text:
-                logging.warning(f"No text extracted from {file_path}. Skipping.")
+                logger.warning(f"No text extracted from {file_path}. Skipping.")
                 return
 
-            chunks = split_into_chunks(text)
-            chunk_ids = [generate_chunk_id(chunk["text"]) for chunk in chunks]
+            logger.processing("Creating chunks...")
+            new_chunks = split_into_chunks(text)
+            existing_chunks = get_existing_file_chunks(file_path)
+            logger.debug(
+                f"Found {len(new_chunks)} new chunks and {len(existing_chunks)} existing chunks"
+            )
 
-            # Check which chunks are missing from the database
-            missing_chunk_ids = check_existing_chunks(collection, chunk_ids)
+            logger.processing("Performing sequence alignment...")
+            alignments = sequence_align_chunks(new_chunks, existing_chunks)
+            diff = process_aligned_chunks(new_chunks, existing_chunks, alignments)
 
-            if not missing_chunk_ids:
-                logging.info(
-                    f"All chunks already exist in database for file: {file_path}"
+            if diff.to_remove:
+                logger.warning(f"Removing {len(diff.to_remove)} outdated chunks")
+                collection.delete(ids=list(diff.to_remove))
+                logger.success(f"Successfully removed {len(diff.to_remove)} chunks")
+
+            chunks_to_embed = diff.to_add + [chunk for _, chunk in diff.modified]
+
+            if chunks_to_embed:
+                logger.processing(
+                    f"Generating embeddings for {len(chunks_to_embed)} chunks..."
                 )
-                return
+                embeddings = []
+                processed_chunks = []
 
-            # Filter chunks to only process missing ones
-            new_chunks = [
-                chunk
-                for chunk in chunks
-                if generate_chunk_id(chunk["text"]) in missing_chunk_ids
-            ]
-
-            # Generate embeddings only for new chunks
-            embeddings = []
-            processed_chunks = []
-
-            for chunk in new_chunks:
-                response = ollama.embeddings(
-                    model="mxbai-embed-large", prompt=chunk["text"]
-                )
-                if check_gpu_temperature() > 51:
-                    print(
-                        f"{RED}GPU temp is too high. Pausing Temporarily...{RESET_COLOR}\n"
-                    )
-                    time.sleep(30)
-
-                if "embedding" in response:
-                    embeddings.append(response["embedding"])
-                    processed_chunks.append(chunk)
-                else:
-                    logging.warning(
-                        f"Failed to get embedding for chunk: {chunk['text']}"
+                for i, chunk in enumerate(chunks_to_embed, 1):
+                    logger.debug(f"Processing chunk {i}/{len(chunks_to_embed)}")
+                    response = ollama.embeddings(
+                        model="mxbai-embed-large", prompt=chunk["text"]
                     )
 
-            # Add new chunks to ChromaDB
-            if processed_chunks:
-                ids = [generate_chunk_id(chunk["text"]) for chunk in processed_chunks]
-                metadatas = [
-                    {
-                        "text": chunk["text"],
-                        "file_name": file_path,
-                        "modification_time": modification_time,
-                    }
-                    for chunk in processed_chunks
-                ]
-                collection.add(embeddings=embeddings, metadatas=metadatas, ids=ids)
-                logging.info(f"Added {len(ids)} new chunks to ChromaDB")
+                    if check_gpu_temperature() > 51:
+                        logger.warning(
+                            f"{LogColors.WARNING}GPU temperature critical. Pausing...{LogColors.RESET}"
+                        )
+                        time.sleep(30)
+                        continue
 
-                # Update vault.json
-                new_entry = {
-                    "file_name": file_path,
-                    "modification_time": modification_time,
-                    "chunks": processed_chunks,
-                }
-                self._update_vault_json(new_entry)
+                    if "embedding" in response:
+                        embeddings.append(response["embedding"])
+                        processed_chunks.append(chunk)
+                        logger.debug(f"Successfully embedded chunk {i}")
+                    else:
+                        logger.error(f"Failed to generate embedding for chunk {i}")
+
+                if processed_chunks:
+                    logger.processing("Adding chunks to ChromaDB...")
+                    ids = [
+                        generate_chunk_id(chunk["text"]) for chunk in processed_chunks
+                    ]
+                    metadatas = [
+                        {
+                            "text": chunk["text"],
+                            "file_name": file_path,
+                            "modification_time": modification_time,
+                        }
+                        for chunk in processed_chunks
+                    ]
+
+                    collection.add(embeddings=embeddings, metadatas=metadatas, ids=ids)
+                    logger.success(
+                        f"Successfully added {len(ids)} new/modified chunks to ChromaDB"
+                    )
+
+            file_mod_times[file_path] = modification_time
+            logger.success(f"Completed processing file: {file_path}")
 
         except Exception as e:
-            logging.error(f"Error processing file {file_path}: {e}")
+            logger.critical(f"Error processing file {file_path}: {str(e)}")
 
     def _update_vault_json(self, new_entry):
         """Helper method to update vault.json"""
