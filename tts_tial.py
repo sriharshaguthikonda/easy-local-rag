@@ -143,7 +143,8 @@ asyncio.run(text_to_speech_and_play(text, speed=1.2))  # Increase speed to 1.5x
 
 
 """
-import torch
 
-print(torch.__version__)  # Should print the installed PyTorch version
-print(torch.cuda.is_available())  # Should return True if CUDA is available
+# Beep to indicate the script has ended
+import winsound
+
+winsound.Beep(1000, 500)  # Frequency: 1000 Hz, Duration: 500 ms

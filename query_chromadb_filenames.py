@@ -50,7 +50,7 @@ def list_databases():
         results = collection.get(
             where={
                 # "file_name": r"C:\Users\deletable\Google Drive\goodman Gilman 12e\II. Neuropharmacology\24. Drug Addiction.htm"
-                "file_name": r"C:\Users\deletable\Downloads\deletable\Cummings Otolaryngology\100_Diagnostic_Imaging_of_the_Pharynx_and_Esophagus.html"
+                "file_name": r"C:\Users\deletable\Google Drive\Medicine books\Cummings Otolaryngology_ Head and Neck Surgery (3-Volume Set)(2020)\OEBPS\100_Diagnostic_Imaging_of_the_Pharynx_and_Esophagus.html"
             },
             include=[
                 "documents",
@@ -83,6 +83,10 @@ def list_databases():
 
         logging.info(f"Number of metadatas found: {len(results['metadatas'])}")
         print(len(results["metadatas"]))
+
+        print((results["metadatas"][1]["text"]))
+        for i in range(len(results["metadatas"])):
+            print((results["ids"][i]), "===", (results["metadatas"][i]["text"]))
 
     else:
         logging.info("No collection found.")
