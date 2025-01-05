@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 
 
 import numpy as np
+from rank_bm25 import BM25Okapi
 
 
 """TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
@@ -663,8 +664,9 @@ def get_relevant_context_hybrid(
     top_k=5,
     additional_unique_files=5,
     keyword_match=True,
-    alpha=0.7,  # Weight for vector similarity
+    alpha=0.5,  # Weight for vector similarity
     beta=0.3,  # Weight for keyword match
+    gamma=0.2,  # Weight for BM25 score
     lambda_mmr=0.5,  # Balance parameter for MMR
 ):
     try:
@@ -724,19 +726,33 @@ def get_relevant_context_hybrid(
                 if match_score > 0:
                     keyword_results.append({"meta": meta, "keyword_score": match_score})
 
-        # Normalize scores for both vector and keyword results
+        # Perform BM25 search
+        bm25_corpus = [meta["text"] for meta in search_result["metadatas"][0]]
+        bm25 = BM25Okapi([doc.split() for doc in bm25_corpus])
+        bm25_scores = bm25.get_scores(rewritten_input.split())
+
+        bm25_results = [
+            {"meta": meta, "bm25_score": score}
+            for meta, score in zip(search_result["metadatas"][0], bm25_scores)
+        ]
+
+        # Normalize scores for vector, keyword, and BM25 results
         max_vector_score = max(
             [res["vector_score"] for res in vector_results], default=1
         )
         max_keyword_score = max(
             [res["keyword_score"] for res in keyword_results], default=1
         )
+        max_bm25_score = max([res["bm25_score"] for res in bm25_results], default=1)
 
         for res in vector_results:
             res["vector_score"] /= max_vector_score
 
         for res in keyword_results:
             res["keyword_score"] /= max_keyword_score
+
+        for res in bm25_results:
+            res["bm25_score"] /= max_bm25_score
 
         # Combine results using weighted scoring
         combined_results = {}
@@ -757,6 +773,16 @@ def get_relevant_context_hybrid(
                 combined_results[file_name] = {
                     "meta": res["meta"],
                     "final_score": beta * res["keyword_score"],
+                }
+
+        for res in bm25_results:
+            file_name = res["meta"]["file_name"]
+            if file_name in combined_results:
+                combined_results[file_name]["final_score"] += gamma * res["bm25_score"]
+            else:
+                combined_results[file_name] = {
+                    "meta": res["meta"],
+                    "final_score": gamma * res["bm25_score"],
                 }
 
         # Sort by final_score

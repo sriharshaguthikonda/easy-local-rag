@@ -42,6 +42,9 @@ def search_by_id(collection, document_id):
             ids=[document_id], include=["embeddings", "metadatas", "documents"]
         )
         if result and result["documents"]:
+            for document in result["documents"]:
+                logging.info("Document found. Displaying details:")
+                pprint.pprint(document)
             logging.info("Document found. Displaying details:")
             pprint.pprint(result)
         else:
@@ -53,19 +56,9 @@ def search_by_id(collection, document_id):
 
 
 ids_to_search = [
-    "db14ec40d7447e5e036d3ec9c12cdb15642e8b18a6e82ef80c51535a203b0a2f",
-    "6410883e30222f4c9c8e36c7827d0c115ef07aa8ab9550dba3bdff1d0bb2a5ee",
-    "a7ebaf11023f7e3cc7ba0364d14d0a7f3bcfe88ad6d7e06f065a6280cb0ac14f",
-    "67c90fefc4c3b9d9c39a9789b7bffaee544f0c1a385663b3212a812375822f39",
-    "8dfc5eef06ce8f70ca14746a4da79d4dd25954b86e66a8c9e08517548acf3ddb",
-    "935e01b92791a89906aa85e3ed458a13a0a1f44fbac400f3b227be7463d944a5",
-    "168b51d67497caad157d0a93e583cedad6b311a6acd962bef1cc7f42cfe4960b",
-    "a8365d28d1b77085b7bffbf93dd6ca01bf0e1f1d2edcec9ead1909a50655f85b",
-    "5086d97d7eb8c913b55342d464ca04be8e6d12f436cec6a355aed184d97e5c9c",
-    "e334f7825f2288f8ffe4fb6f48d997604b9f359a0a631027ee75e027d713ef0c",
-    "61e1a56d4ea0116b8927c7a6a2c1af2e9598b3ea983d6d84bbc8d7ffdef0f91b",
-    "2be57fbb9cc40384edee59b8fd8668341e6b817cd7e2f3ab35871684476c8e35",
+    "23eadf8e2891189879510866f1e54b8127b5cee2ad3df80640d69a22dff582a5",
     "02d54b84e016bbd2625f0a10721c07c10776135b767fa7fbdd00c369d638e30d",
+    "23eadf8e2891189879510866f1e54b8127b5cee2ad3df80640d69a22dff582a5",
 ]
 
 
@@ -113,5 +106,5 @@ if __name__ == "__main__":
 
     # Replace 'your_document_id' with the actual ID of the document you want to search for
     document_id = "your_document_id"
-    # search_by_id(collection, "fa70396621a2114acb2c818e2f55ddf78740e2373e5ed8bcbe32dfed0f42a0c0")
+    # search_by_id(  collection, "4c8fa7b5ee3fa96f6b1ce218d1675d89f70c1cadb83e634a78d029eb31302b5d")
     search_by_ids(collection, ids_to_search)

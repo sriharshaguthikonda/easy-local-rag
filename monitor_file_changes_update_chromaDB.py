@@ -82,6 +82,7 @@ def get_existing_chunk_hashes(file_path, modification_time):
 def check_existing_chunks(collection, chunk_ids):
     """Check which chunk IDs are not present in the database."""
     try:
+        chunk_ids = list(set(chunk_ids))  # Deduplicate chunk_ids
         results = collection.get(ids=chunk_ids, include=["metadatas"])
         existing_ids = set(results["ids"]) if results else set()
         missing_ids = set(chunk_ids) - existing_ids
@@ -254,3 +255,8 @@ if __name__ == "__main__":
 
     # Start monitoring the folder
     monitor_folder(FOLDER_TO_MONITOR)
+
+    # Beep to indicate the script has ended
+    import winsound
+
+    winsound.Beep(1000, 500)  # Frequency: 1000 Hz, Duration: 500 ms
