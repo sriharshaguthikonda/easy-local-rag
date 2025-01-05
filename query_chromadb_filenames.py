@@ -50,7 +50,7 @@ def list_databases():
         results = collection.get(
             where={
                 # "file_name": r"C:\Users\deletable\Google Drive\goodman Gilman 12e\II. Neuropharmacology\24. Drug Addiction.htm"
-                "file_name": r"C:\Users\deletable\Downloads\deletable\Cummings Otolaryngology\100_Diagnostic_Imaging_of_the_Pharynx_and_Esophagus.html"
+                "file_name": r"C:\Users\deletable\Google Drive\Medicine books\Medrevision\medrevisions revision for plab medrivision.html"
             },
             include=[
                 "documents",
@@ -59,6 +59,7 @@ def list_databases():
                 "uris",
             ],
         )
+
         logging.info("Query executed. Printing the results.")
         # Print the entire structure of the results
         print(type(results))

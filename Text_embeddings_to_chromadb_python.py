@@ -30,7 +30,7 @@ import winsound
 
 
 csv_path = "processed_data.csv"
-collection_name = "html_chunks_temp"
+collection_name = "html_chunks_text_in_document"
 
 
 def init_chromadb():
