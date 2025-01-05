@@ -51,7 +51,7 @@ model = "mxbai-embed-large"
 groq_model = "llama-3.3-70b-versatile"
 ollama_model = "phi-3"
 
-collection_name = "html_chunks_temp"
+collection_name = "html_chunks_text_in_documents"
 
 # ANSI escape codes for colors
 PINK = "\033[95m"
@@ -691,11 +691,14 @@ def get_relevant_context_hybrid(
         vector_results = [
             {
                 "meta": meta,
+                "document": doc,
                 "vector_score": 1.0
                 - dist,  # Convert distance to similarity (assuming normalized)
             }
-            for meta, dist in zip(
-                search_result["metadatas"][0], search_result["distances"][0]
+            for meta, doc, dist in zip(
+                search_result["metadatas"][0],
+                search_result["documents"][0],
+                search_result["distances"][0],
             )
         ]
 
@@ -716,24 +719,32 @@ def get_relevant_context_hybrid(
             # Use a set to remove duplicates
             keywords = set(keywords)
 
-            for meta in search_result["metadatas"][0]:
+            for meta, doc in zip(
+                search_result["metadatas"][0], search_result["documents"][0]
+            ):
                 # Match against both original keywords and their synonyms
                 match_score = sum(
-                    meta["text"].lower().count(keyword)
+                    doc.lower().count(keyword)
                     + meta["file_name"].lower().count(keyword)
                     for keyword in keywords
                 )
                 if match_score > 0:
-                    keyword_results.append({"meta": meta, "keyword_score": match_score})
+                    keyword_results.append(
+                        {"meta": meta, "document": doc, "keyword_score": match_score}
+                    )
 
         # Perform BM25 search
-        bm25_corpus = [meta["text"] for meta in search_result["metadatas"][0]]
+        bm25_corpus = [doc for doc in search_result["documents"][0]]
         bm25 = BM25Okapi([doc.split() for doc in bm25_corpus])
         bm25_scores = bm25.get_scores(rewritten_input.split())
 
         bm25_results = [
-            {"meta": meta, "bm25_score": score}
-            for meta, score in zip(search_result["metadatas"][0], bm25_scores)
+            {"meta": meta, "document": doc, "bm25_score": score}
+            for meta, doc, score in zip(
+                search_result["metadatas"][0],
+                search_result["documents"][0],
+                bm25_scores,
+            )
         ]
 
         # Normalize scores for vector, keyword, and BM25 results
@@ -760,6 +771,7 @@ def get_relevant_context_hybrid(
             file_name = res["meta"]["file_name"]
             combined_results[file_name] = {
                 "meta": res["meta"],
+                "document": res["document"],
                 "final_score": alpha * res["vector_score"],
             }
 
@@ -772,6 +784,7 @@ def get_relevant_context_hybrid(
             else:
                 combined_results[file_name] = {
                     "meta": res["meta"],
+                    "document": res["document"],
                     "final_score": beta * res["keyword_score"],
                 }
 
@@ -782,6 +795,7 @@ def get_relevant_context_hybrid(
             else:
                 combined_results[file_name] = {
                     "meta": res["meta"],
+                    "document": res["document"],
                     "final_score": gamma * res["bm25_score"],
                 }
 
@@ -791,7 +805,7 @@ def get_relevant_context_hybrid(
         )
 
         # Limit results to top_k
-        final_results = [res["meta"] for res in sorted_results[:top_k]]
+        final_results = [res for res in sorted_results[:top_k]]
 
         # Use MMR to select additional_unique_files
         remaining_results = [res for res in sorted_results[top_k:]]
@@ -818,10 +832,10 @@ def get_relevant_context_hybrid(
         selected_additional_files = sorted_additional_files[:additional_unique_files]
 
         # Combine the top_k and the selected additional unique files
-        final_results.extend([res["meta"] for res in selected_additional_files])
+        final_results.extend([res for res in selected_additional_files])
 
         # Prepare relevant context
-        relevant_context = "\n\n".join([res["text"] for res in final_results])
+        relevant_context = "\n\n".join([res["document"] for res in final_results])
 
         # Start a worker thread to print details of the results
         worker_thread = threading.Thread(
@@ -840,10 +854,11 @@ def get_relevant_context_hybrid(
 
 def print_relevant_context(results):
     print("Context Pulled from Documents:\n")
-    for meta in results:
-        file_name = meta["file_name"]
+    for res in results:
+        meta = res["meta"]
+        file_name = meta.get("file_name", "Unknown")
         modification_time = meta.get("modification_time", "Unknown")
-        text = meta["text"]
+        text = res["document"]
 
         clickable_file_path = urljoin("file:", Path(file_name).as_uri())
 
