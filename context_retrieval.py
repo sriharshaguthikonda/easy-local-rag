@@ -1,15 +1,202 @@
 import numpy as np
+
+import threading
+import ollama
+import chromadb
+import os
+
+
+from groq import Groq
+from chromadb.config import Settings
+
 from rank_bm25 import BM25Okapi
 from urllib.parse import urljoin
 from pathlib import Path
-import threading
 
-# ...existing code...
+# Set of non-keywords
+non_keywords = set(
+    [
+        "a",
+        "an",
+        "the",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "with",
+        "for",
+        "to",
+        "from",
+        "up",
+        "down",
+        "into",
+        "over",
+        "under",
+        "about",
+        "between",
+        "after",
+        "before",
+        "while",
+        "during",
+        "as",
+        "but",
+        "or",
+        "so",
+        "such",
+        "that",
+        "this",
+        "these",
+        "those",
+        "all",
+        "any",
+        "both",
+        "some",
+        "most",
+        "much",
+        "many",
+        "few",
+        "one",
+        "each",
+        "every",
+        "neither",
+        "either",
+        "who",
+        "whom",
+        "whose",
+        "what",
+        "which",
+        "where",
+        "when",
+        "why",
+        "how",
+        "it",
+        "its",
+        "itself",
+        "he",
+        "she",
+        "her",
+        "him",
+        "his",
+        "they",
+        "their",
+        "them",
+        "themselves",
+        "you",
+        "your",
+        "yourself",
+        "yourselves",
+        "we",
+        "our",
+        "ours",
+        "us",
+    ]
+)
+
+
+from dotenv import load_dotenv
+
+
+groq_model = "llama-3.3-70b-versatile"
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Retrieve API key from environment variables
+api_key = os.getenv("GROQ_API_KEY")
+
+# Initialize Groq client
+Groqclient = Groq(
+    api_key=api_key,
+)
+
+
+# Initialize ChromaDB client
+client = chromadb.PersistentClient(settings=Settings())
+collection_name = "html_chunks_temp"
+collection = client.get_or_create_collection(name=collection_name)
+
+# Define the model to use
+model = "mxbai-embed-large"
 
 
 def rewrite_input_and_generate_synonyms(original_input):
-    # ...existing code...
-    pass
+    try:
+        # Single API call to get rewritten input, synonyms, and spelling variants
+        chat_completion = Groqclient.chat.completions.create(
+            model=groq_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a helpful assistant working in medical context. Your task is threefold: "
+                        "1) Rewrite the given input to make it clearer and more precise in one sentence while preserving its original meaning. "
+                        "2) Provide a list of synonyms for each keyword in the rewritten input. "
+                        "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword. "
+                        "Respond with the rewritten sentence followed by the synonyms and spelling variants in the format: "
+                        "'Rewritten: [sentence]' and 'Keywords: [word1: synonym1, synonym2; spelling variant1, spelling variant2; "
+                        "word2: synonym1, synonym2; spelling variant1, spelling variant2]'"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"""Rewrite and generate synonyms and spelling variants for: "{original_input}".""",
+                },
+            ],
+            temperature=0.7,
+            stream=False,
+        )
+
+        # Parse the response
+        response_text = chat_completion["choices"][0]["message"]["content"].strip()
+        print(f"Full Response:\n{response_text}")
+
+        # Extract rewritten sentence and keywords
+        rewritten_input = None
+        synonym_and_variant_dict = {}
+
+        if "Rewritten:" in response_text and "Keywords:" in response_text:
+            parts = response_text.split("Keywords:")
+            rewritten_input = parts[0].replace("Rewritten:", "").strip()
+            keywords_raw = parts[1].strip()
+
+            # Parse the keywords into a dictionary
+            for entry in keywords_raw.split(";"):
+                if ":" in entry:
+                    try:
+                        keyword, details = entry.split(":", 1)
+                        keyword = keyword.strip()
+                        details_split = [d.strip() for d in details.split(";")]
+
+                        # Separate synonyms and variants
+                        synonyms = [
+                            d
+                            for d in details_split
+                            if not d.startswith("no variants")
+                            and not d.startswith("spelling variant")
+                        ]
+                        spelling_variants = [
+                            d.replace("spelling variant", "").strip()
+                            for d in details_split
+                            if "spelling variant" in d
+                        ]
+
+                        # Handle "no synonyms available"
+                        if "no synonyms available" in details_split:
+                            synonyms = []
+
+                        synonym_and_variant_dict[keyword] = {
+                            "synonyms": synonyms,
+                            "spelling_variants": spelling_variants,
+                        }
+                    except ValueError:
+                        print(f"Skipping malformed entry: {entry}")
+
+        return rewritten_input, synonym_and_variant_dict
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return "", {}
 
 
 def print_relevant_context(results):
@@ -22,9 +209,9 @@ def print_relevant_context(results):
         clickable_file_path = urljoin("file:", Path(file_name).as_uri())
 
         print(
-            f"{YELLOW}Text:{RESET_COLOR} {text}\n"
-            f"{BLUE}File Name:{clickable_file_path}\n{RESET_COLOR}"
-            f"{PINK}Modification Time: {modification_time}\n{RESET_COLOR}"
+            f"Text: {text}\n"
+            f"File Name: {clickable_file_path}\n"
+            f"Modification Time: {modification_time}\n"
         )
         # Open the file in the default web browser
         # webbrowser.open(file_path)
@@ -57,6 +244,9 @@ def get_relevant_context_hybrid(
             n_results=50,
             include=["documents", "metadatas", "distances"],
         )
+
+        if not search_result["metadatas"]:
+            return "No relevant context found."
 
         # Extract results with distances
         vector_results = [
