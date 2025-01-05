@@ -30,7 +30,7 @@ import winsound
 
 
 csv_path = "processed_data.csv"
-collection_name = "html_chunks_temp"
+collection_name = "html_chunks_text_in_documents"
 
 
 def init_chromadb():
@@ -71,6 +71,7 @@ def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
         ids = []
         metadatas = []
         embeddings = []
+        documents = []
         unique_ids = set()
 
         for row in batch:
@@ -87,9 +88,9 @@ def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
             embedding = json.loads(embedding_str)  # Ensure it's a list of floats
 
             ids.append(chunk_id)
+            documents.append(text)
             metadatas.append(
                 {
-                    "text": text,
                     "file_name": file_name,
                     "modification_time": modification_time,
                 }
@@ -97,7 +98,9 @@ def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
             embeddings.append(embedding)
 
         try:
-            collection.add(embeddings=embeddings, metadatas=metadatas, ids=ids)
+            collection.add(
+                embeddings=embeddings, metadatas=metadatas, ids=ids, documents=documents
+            )
             print(f"Inserted {len(ids)} records to ChromaDB")
         except Exception as e:
             print(f"An error occurred while adding documents: {e}")
@@ -202,6 +205,7 @@ def insert_batches_to_chromadb(collection, processing_queue):
         ids = []
         metadatas = []
         embeddings = []
+        documents = []
         unique_ids = set()
 
         for row in batch:
@@ -218,15 +222,15 @@ def insert_batches_to_chromadb(collection, processing_queue):
             embedding = json.loads(embedding_str)  # Ensure it's a list of floats
 
             ids.append(chunk_id)
+            documents.append(text)
             metadatas.append({
-                "text": text,
                 "file_name": file_name,
                 "modification_time": modification_time,
             })
             embeddings.append(embedding)
 
         try:
-            collection.add(embeddings=embeddings, metadatas=metadatas, ids=ids)
+            collection.add(embeddings=embeddings, metadatas=metadatas, ids=ids, documents=documents)
             print(f"Inserted {len(ids)} records to ChromaDB")
         except Exception as e:
             print(f"An error occurred while adding documents: {e}")
@@ -283,5 +287,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 """
