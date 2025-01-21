@@ -35,6 +35,9 @@ from dotenv import load_dotenv
 
 
 import numpy as np
+import json
+
+
 from rank_bm25 import BM25Okapi
 
 
@@ -53,6 +56,7 @@ ollama_model = "phi-3"
 
 collection_name = "html_chunks_text_in_documents"
 
+
 # ANSI escape codes for colors
 PINK = "\033[95m"
 CYAN = "\033[96m"
@@ -61,9 +65,11 @@ NEON_GREEN = "\033[92m"
 MAGENTA = "\033[35m"
 BLUE = "\033[94m"
 RED = "\033[91m"
+VIOLET = "\033[38;5;93m"  # Violet color (using extended color range)
+RASPBERRY = "\033[38;5;125m"  # Raspberry color (using extended color range)
+ORANGE = "\033[38;5;214m"  # Orange color (using extended color range)
 
 BOLD = "\033[1m"
-
 RESET_COLOR = "\033[0m"
 
 
@@ -73,8 +79,10 @@ RESET_COLOR = "\033[0m"
 
 non_keywords = set(
     [
+        "is",
         "a",
         "an",
+        "and",
         "the",
         "of",
         "in",
@@ -571,78 +579,60 @@ def split_sentence(response):
 
 def rewrite_input_and_generate_synonyms(original_input):
     try:
-        # Single API call to get rewritten input, synonyms, and spelling variants
+        # Define the desired JSON structure in the system prompt
+        system_prompt = (
+            "You are a helpful assistant working in a medical context. Your tasks are:\n"
+            "1) Rephrase the given input to make it clearer and more precise in one sentence while preserving its original meaning. it will be used for searching chromadb after conversion to embeddings\n"
+            "2) Provide a list of synonyms for each keyword in the rephrased input.\n"
+            "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword.\n"
+            "Respond in the following JSON format:\n"
+            "{\n"
+            '  "rephrased": "[sentence]",\n'
+            '  "keywords": {\n'
+            '    "[word1]": {\n'
+            '      "synonyms": ["synonym1", "synonym2", "synonym3", "synonym4",....],\n'
+            '      "spelling_variants": ["variant1", "variant2", "variant3",.... ]\n'
+            "    },\n"
+            '    "[word2]": {\n'
+            '      "synonyms": ["synonym1", "synonym2", "synonym3", "synonym4",....],\n'
+            '      "spelling_variants": ["variant1", "variant2","variant3",....]\n'
+            "    }\n"
+            "  }\n"
+            "}"
+        )
+
+        # Make the API call with JSON mode enabled
         chat_completion = client.chat.completions.create(
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful assistant working in medical context. Your task is threefold: "
-                        "1) Rewrite the given input to make it clearer and more precise in one sentence while preserving its original meaning. "
-                        "2) Provide a list of synonyms for each keyword in the rewritten input. "
-                        "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword. "
-                        "Respond with the rewritten sentence followed by the synonyms and spelling variants in the format: "
-                        "'Rewritten: [sentence]' and 'Keywords: [word1: synonym1, synonym2; spelling variant1, spelling variant2; "
-                        "word2: synonym1, synonym2; spelling variant1, spelling variant2]'."
-                    ),
-                },
+                {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": f"""Rewrite and generate synonyms and spelling variants for: "{original_input}".""",
+                    "content": f'Rewrite and generate synonyms and spelling variants for: "{original_input}".',
                 },
             ],
             model=groq_model,
             temperature=0.7,
-            stream=False,
+            stream=False,  # JSON mode does not support streaming
+            response_format={"type": "json_object"},  # Enable JSON mode
         )
 
-        # Parse the response
-        response_text = chat_completion.choices[0].message.content.strip()
-        print(f"Full Response:\n{response_text}")
+        print(chat_completion)
 
-        # Extract rewritten sentence and keywords
-        rewritten_input = None
-        synonym_and_variant_dict = {}
+        # Parse the JSON response
+        response_json = chat_completion.choices[0].message.content.strip()
+        response_data = json.loads(response_json)
 
-        if "Rewritten:" in response_text and "Keywords:" in response_text:
-            parts = response_text.split("Keywords:")
-            rewritten_input = parts[0].replace("Rewritten:", "").strip()
-            keywords_raw = parts[1].strip()
+        rewritten_input = response_data.get("rephrased", "")
+        synonym_and_variant_dict = response_data.get("keywords", {})
 
-            # Parse the keywords into a dictionary
-            for entry in keywords_raw.split(";"):
-                if ":" in entry:
-                    try:
-                        keyword, details = entry.split(":", 1)
-                        keyword = keyword.strip()
-                        details_split = [d.strip() for d in details.split(";")]
-
-                        # Separate synonyms and variants
-                        synonyms = [
-                            d
-                            for d in details_split
-                            if not d.startswith("no variants")
-                            and not d.startswith("spelling variant")
-                        ]
-                        spelling_variants = [
-                            d.replace("spelling variant", "").strip()
-                            for d in details_split
-                            if "spelling variant" in d
-                        ]
-
-                        # Handle "no synonyms available"
-                        if "no synonyms available" in details_split:
-                            synonyms = []
-
-                        synonym_and_variant_dict[keyword] = {
-                            "synonyms": synonyms,
-                            "spelling_variants": spelling_variants,
-                        }
-                    except ValueError:
-                        print(f"Skipping malformed entry: {entry}")
+        print("synonym_and_variant_dict :", synonym_and_variant_dict)
+        print("rewritten_input :", rewritten_input)
 
         return rewritten_input, synonym_and_variant_dict
 
+    except json.JSONDecodeError as e:
+        print(f"JSON decoding error: {e}")
+        return None, {}
     except Exception as e:
         print(f"An error occurred: {e}")
         return None, {}
@@ -669,9 +659,12 @@ def get_relevant_context_hybrid(
     gamma=0.2,  # Weight for BM25 score
     lambda_mmr=0.5,  # Balance parameter for MMR
 ):
+    global keywords
     try:
         relevant_context = ""
-        rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(user_input)
+        rewritten_input, synonym_and_variant_dict = rewrite_input_and_generate_synonyms(
+            user_input
+        )
 
         # Encode the rewritten input into an embedding
         input_embedding = ollama.embeddings(
@@ -712,22 +705,47 @@ def get_relevant_context_hybrid(
                 if word not in non_keywords
             ]
 
-            # Add synonyms to the keyword list
-            for key, synonyms in synonym_dict.items():
-                keywords.extend(synonyms)
+            # Iterate through the synonym_and_variant_dict
+            for key, details in synonym_and_variant_dict.items():
+                # Add the main keyword
+                keywords.append(key)
 
-            # Use a set to remove duplicates
-            keywords = set(keywords)
+                # Add synonyms if they exist
+                synonyms = details.get("synonyms", [])
+                if synonyms:
+                    keywords.extend(synonyms)
+
+                # Add spelling variants if they exist
+                spelling_variants = details.get("spelling_variants", [])
+                if spelling_variants:
+                    keywords.extend(spelling_variants)
+
+            # Remove duplicates by converting the list to a set and back to a list
+            keywords = list(set(keywords))
+
+            print("keywords:", keywords)
 
             for meta, doc in zip(
                 search_result["metadatas"][0], search_result["documents"][0]
             ):
-                # Match against both original keywords and their synonyms
+                # Normalize the document text to fix hyphenated words
+                normalized_doc = re.sub(
+                    r"(?<=\w)-\s*(?=\w)", "", doc.lower()
+                )  # Normalize the document
+
+                # Match against both original keywords and their synonyms using word boundaries
                 match_score = sum(
-                    doc.lower().count(keyword)
-                    + meta["file_name"].lower().count(keyword)
+                    len(
+                        re.findall(rf"\b{re.escape(keyword)}\b", normalized_doc)
+                    )  # Search in the normalized document
+                    + len(
+                        re.findall(
+                            rf"\b{re.escape(keyword)}\b", meta["file_name"].lower()
+                        )
+                    )  # Search in the file name
                     for keyword in keywords
                 )
+
                 if match_score > 0:
                     keyword_results.append(
                         {"meta": meta, "document": doc, "keyword_score": match_score}
@@ -852,23 +870,57 @@ def get_relevant_context_hybrid(
         return "Answer this yourself!"
 
 
+# List of available colors
+color_list = [
+    PINK,
+    CYAN,
+    YELLOW,
+    NEON_GREEN,
+    MAGENTA,
+    BLUE,
+    RED,
+    VIOLET,
+    RASPBERRY,
+    ORANGE,
+]
+
+
 def print_relevant_context(results):
+    global keywords
+
+    print("keywords from inside print_relevant_context:", keywords)
+
     print("Context Pulled from Documents:\n")
+
+    # Dynamically generate a color_map based on the keywords
+    color_map = {}
+    for i, word in enumerate(keywords):
+        color_map[word] = color_list[
+            i % len(color_list)
+        ]  # Use modulus to cycle through colors
+
+    # Printing the document context
     for res in results:
         meta = res["meta"]
         file_name = meta.get("file_name", "Unknown")
         modification_time = meta.get("modification_time", "Unknown")
         text = res["document"]
 
+        # Colorize the text by replacing keywords with color-coded versions
+        colorized_text = text
+        for word, color in color_map.items():
+            # Replace the keywords in the text with their colorized versions using word boundaries
+            colorized_text = re.sub(
+                rf"\b{re.escape(word)}\b", f"{color}{word}{RESET_COLOR}", colorized_text
+            )
+
         clickable_file_path = urljoin("file:", Path(file_name).as_uri())
 
         print(
-            f"{YELLOW}Text:{RESET_COLOR} {text}\n"
+            f"{YELLOW}Text:{RESET_COLOR} {colorized_text}\n"
             f"{BLUE}File Name:{clickable_file_path}\n{RESET_COLOR}"
             f"{PINK}Modification Time: {modification_time}\n{RESET_COLOR}"
         )
-        # Open the file in the default web browser
-        # webbrowser.open(file_path)
 
 
 """

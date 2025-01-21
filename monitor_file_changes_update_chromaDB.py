@@ -4,16 +4,7 @@ import logging
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import nltk
-import pynvml
 
-
-import pprint
-
-# Set the NLTK data path to include the specific directory
-nltk.data.path.append(r"C:\Users\deletable\AppData\Roaming\nltk_data")
-
-# Download the 'punkt_tab' resource if not already available
-nltk.download("punkt_tab")
 
 from Semantic_chunking import (
     extract_text_from_html,
@@ -24,6 +15,20 @@ from Semantic_chunking import (
 from Generate_embeddings import check_gpu_temperature
 
 
+# Import the required functions
+import ollama
+import json
+import chromadb
+from chromadb.config import Settings
+
+
+# Set the NLTK data path to include the specific directory
+nltk.data.path.append(r"C:\Users\deletable\AppData\Roaming\nltk_data")
+
+# Download the 'punkt_tab' resource if not already available
+nltk.download("punkt_tab")
+
+
 RED = "\033[91m"
 RESET_COLOR = "\033[0m"
 
@@ -31,17 +36,6 @@ RESET_COLOR = "\033[0m"
 # Debugging: Print the current working directory and the module path
 print("Current working directory:", os.getcwd())
 print("Generate_embeddings module path:", os.path.abspath("Generate_embeddings.py"))
-
-
-"""
-TODO : generate_embeddings is the function and not generate_embeddings_for_chunks ....!!!!!!!!
-
-"""
-# Import the required functions
-import ollama
-import json
-import chromadb
-from chromadb.config import Settings
 
 
 vault_embeddings = []
@@ -56,7 +50,14 @@ file_mod_times = {}
 
 # Initialize ChromaDB client
 client = chromadb.PersistentClient(settings=Settings())
-collection_name = "html_chunks_temp"  # Ensure the collection name matches
+
+
+"""TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
+"""TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
+"""TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
+
+
+collection_name = "html_chunks_text_in_documents"  # Ensure the collection name matches
 collection = client.get_or_create_collection(name=collection_name)
 
 
@@ -142,7 +143,23 @@ class FileChangeHandler(FileSystemEventHandler):
                 return
 
             chunks = split_into_chunks(text)
-            chunk_ids = [generate_chunk_id(chunk["text"]) for chunk in chunks]
+
+            # Remove duplicates while preserving order
+            seen_ids = {}
+            unique_chunks = []
+
+            for chunk in chunks:
+                chunk_id = generate_chunk_id(chunk["text"])
+                if chunk_id not in seen_ids:
+                    seen_ids[chunk_id] = True
+                    unique_chunks.append(chunk)
+                else:
+                    logging.info(
+                        f"Duplicate chunk detected and removed: {chunk_id[:8]}..."
+                    )
+
+            chunks = unique_chunks
+            chunk_ids = list(seen_ids.keys())
 
             # Check which chunks are missing from the database
             missing_chunk_ids = check_existing_chunks(collection, chunk_ids)
@@ -185,15 +202,20 @@ class FileChangeHandler(FileSystemEventHandler):
             # Add new chunks to ChromaDB
             if processed_chunks:
                 ids = [generate_chunk_id(chunk["text"]) for chunk in processed_chunks]
+                documents = [chunk["text"] for chunk in processed_chunks]
                 metadatas = [
                     {
-                        "text": chunk["text"],
                         "file_name": file_path,
                         "modification_time": modification_time,
                     }
                     for chunk in processed_chunks
                 ]
-                collection.add(embeddings=embeddings, metadatas=metadatas, ids=ids)
+                collection.add(
+                    embeddings=embeddings,
+                    documents=documents,
+                    metadatas=metadatas,
+                    ids=ids,
+                )
                 logging.info(f"Added {len(ids)} new chunks to ChromaDB")
 
                 # Update vault.json
