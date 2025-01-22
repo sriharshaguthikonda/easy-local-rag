@@ -41,12 +41,17 @@ import json
 from rank_bm25 import BM25Okapi
 
 
-"""TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
-"""TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
-"""TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
+import pprint
 
 
-# Constants
+# from kokoro_tts import text_to_speech_kokoro
+
+"""TODO :  kokoro tts needs work ........lets see after restart....some issue with env varaibles?"""
+"""TODO :  kokoro tts needs work ........lets see after restart....some issue with env varaibles?"""
+"""TODO :  kokoro tts needs work ........lets see after restart....some issue with env varaibles?"""
+
+
+# models
 EMBEDDINGS_DIR = "Embeddings"
 model = "mxbai-embed-large"
 # groq_model="llama3-70b-8192"
@@ -54,8 +59,10 @@ model = "mxbai-embed-large"
 groq_model = "llama-3.3-70b-versatile"
 ollama_model = "phi-3"
 
-collection_name = "html_chunks_text_in_documents"
 
+# ChromaDB client
+collection_name = "html_chunks_text_in_documents"
+CHROMADB_PATH = r"C:\Users\deletable\OneDrive\easy-local-rag\chroma"
 
 # ANSI escape codes for colors
 PINK = "\033[95m"
@@ -242,6 +249,7 @@ def process_TTS_queue(TTS_queue):
             dont_read_tts = False  # Reset the flag after skipping
         else:
             asyncio.run(text_to_speech_gtts(sentence, volume=0.5, speed=1.4))
+            # asyncio.run(text_to_speech_kokoro(sentence, volume=0.5, speed=1.4))
         TTS_queue.task_done()
 
 
@@ -582,20 +590,29 @@ def rewrite_input_and_generate_synonyms(original_input):
         # Define the desired JSON structure in the system prompt
         system_prompt = (
             "You are a helpful assistant working in a medical context. Your tasks are:\n"
-            "1) Rephrase the given input to make it clearer and more precise in one sentence while preserving its original meaning. it will be used for searching chromadb after conversion to embeddings\n"
+            "1) Rephrase the given input to make it clearer and more precise in one sentence while preserving its original meaning. It will be used for searching ChromaDB after conversion to embeddings.\n"
             "2) Provide a list of synonyms for each keyword in the rephrased input.\n"
             "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword.\n"
+            "4) Provide plural and singular forms for each keyword.\n"
+            "5) Provide other parts of speech forms for each keyword.\n"
+            "6) Provide closely related terms for each keyword.\n"
             "Respond in the following JSON format:\n"
             "{\n"
             '  "rephrased": "[sentence]",\n'
             '  "keywords": {\n'
             '    "[word1]": {\n'
             '      "synonyms": ["synonym1", "synonym2", "synonym3", "synonym4",....],\n'
-            '      "spelling_variants": ["variant1", "variant2", "variant3",.... ]\n'
+            '      "spelling_variants": ["variant1", "variant2", "variant3",....],\n'
+            '      "plural_singular": ["plural_form", "singular_form"],\n'
+            '      "parts_of_speech": ["noun form ", "verb form", "adjective form",....],\n'
+            '      "related_terms": ["related1", "related2", "related3",....]\n'
             "    },\n"
             '    "[word2]": {\n'
             '      "synonyms": ["synonym1", "synonym2", "synonym3", "synonym4",....],\n'
-            '      "spelling_variants": ["variant1", "variant2","variant3",....]\n'
+            '      "spelling_variants": ["variant1", "variant2", "variant3",....],\n'
+            '      "plural_singular": ["plural_form", "singular_form"],\n'
+            '      "parts_of_speech": ["noun form ", "verb form", "adjective form",....],\n'
+            '      "related_terms": ["related1", "related2", "related3",....]\n'
             "    }\n"
             "  }\n"
             "}"
@@ -607,7 +624,7 @@ def rewrite_input_and_generate_synonyms(original_input):
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": f'Rewrite and generate synonyms and spelling variants for: "{original_input}".',
+                    "content": f'Rewrite and generate synonyms, spelling variants, plural/singular forms, parts of speech, and related terms for: "{original_input}".',
                 },
             ],
             model=groq_model,
@@ -616,7 +633,7 @@ def rewrite_input_and_generate_synonyms(original_input):
             response_format={"type": "json_object"},  # Enable JSON mode
         )
 
-        print(chat_completion)
+        pprint.pprint(chat_completion)
 
         # Parse the JSON response
         response_json = chat_completion.choices[0].message.content.strip()
@@ -625,8 +642,8 @@ def rewrite_input_and_generate_synonyms(original_input):
         rewritten_input = response_data.get("rephrased", "")
         synonym_and_variant_dict = response_data.get("keywords", {})
 
-        print("synonym_and_variant_dict :", synonym_and_variant_dict)
-        print("rewritten_input :", rewritten_input)
+        # print("synonym_and_variant_dict :", synonym_and_variant_dict)
+        # print("rewritten_input :", rewritten_input)
 
         return rewritten_input, synonym_and_variant_dict
 
@@ -719,6 +736,21 @@ def get_relevant_context_hybrid(
                 spelling_variants = details.get("spelling_variants", [])
                 if spelling_variants:
                     keywords.extend(spelling_variants)
+
+                # Add plural and singular forms if they exist
+                plural_singular = details.get("plural_singular", [])
+                if plural_singular:
+                    keywords.extend(plural_singular)
+
+                # Add parts of speech if they exist
+                parts_of_speech = details.get("parts_of_speech", [])
+                if parts_of_speech:
+                    keywords.extend(parts_of_speech)
+
+                # Add related terms if they exist
+                related_terms = details.get("related_terms", [])
+                if related_terms:
+                    keywords.extend(related_terms)
 
             # Remove duplicates by converting the list to a set and back to a list
             keywords = list(set(keywords))
@@ -872,14 +904,11 @@ def get_relevant_context_hybrid(
 
 # List of available colors
 color_list = [
-    PINK,
     CYAN,
     YELLOW,
     NEON_GREEN,
     MAGENTA,
-    BLUE,
     RED,
-    VIOLET,
     RASPBERRY,
     ORANGE,
 ]
@@ -888,7 +917,7 @@ color_list = [
 def print_relevant_context(results):
     global keywords
 
-    print("keywords from inside print_relevant_context:", keywords)
+    # print("keywords from inside print_relevant_context:", keywords)
 
     print("Context Pulled from Documents:\n")
 
@@ -899,6 +928,9 @@ def print_relevant_context(results):
             i % len(color_list)
         ]  # Use modulus to cycle through colors
 
+    # Sort keywords by length in descending order
+    sorted_keywords = sorted(keywords, key=len, reverse=True)
+
     # Printing the document context
     for res in results:
         meta = res["meta"]
@@ -908,7 +940,8 @@ def print_relevant_context(results):
 
         # Colorize the text by replacing keywords with color-coded versions
         colorized_text = text
-        for word, color in color_map.items():
+        for word in sorted_keywords:
+            color = color_map[word]
             # Replace the keywords in the text with their colorized versions using word boundaries
             colorized_text = re.sub(
                 rf"\b{re.escape(word)}\b", f"{color}{word}{RESET_COLOR}", colorized_text
@@ -997,6 +1030,7 @@ def main():
     ollama_thread.start()
 
     client = chromadb.PersistentClient(
+        path=CHROMADB_PATH,
         settings=Settings(),
         tenant=DEFAULT_TENANT,
         database=DEFAULT_DATABASE,
