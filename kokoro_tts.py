@@ -1,9 +1,10 @@
+import os
 import asyncio
 import numpy as np
 import torch
 from pydub import AudioSegment
+from pydub.playback import play  # Importing play for audio playback
 from io import BytesIO
-
 
 # Add this at the very top of your script (groq_lama_chromadb_RAG_ETTS.py)
 import sys
@@ -13,17 +14,24 @@ from pathlib import Path
 kokoro_path = Path(r"C:\Users\deletable\OneDrive\Kokoro-82M")
 sys.path.insert(0, str(kokoro_path))
 
+# Set these in your Python script or system variables
+os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = r"C:\Program Files\eSpeak NG\libespeak-ng.dll"
+os.environ["PHONEMIZER_ESPEAK_PATH"] = r"C:\Program Files\eSpeak NG"
 
 from models import build_model  # From Kokoro repository
 from kokoro import generate  # From Kokoro repository
 
+from phonemizer.backend.espeak.wrapper import EspeakWrapper
+
+# Set the DLL path explicitly
+EspeakWrapper.set_library(r"C:\Program Files\eSpeak NG\libespeak-ng.dll")
 
 # Pre-initialize model and voicepack (load once)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL = build_model(r"C:\Users\deletable\OneDrive\Kokoro-82M\kokoro-v0_19.pth", DEVICE)
-VOICEPACK = torch.load(
-    r"C:\Users\deletable\OneDrive\Kokoro-82M/voices/af.pt", weights_only=True
-).to(DEVICE)  # Default voice blend:cite[10]
+VOICEPACK = torch.load(r"C:\Users\deletable\OneDrive\Kokoro-82M\voices\af.pt").to(
+    DEVICE
+)  # Default voice blend:cite[10]
 
 
 async def text_to_speech_kokoro(
@@ -52,9 +60,7 @@ async def text_to_speech_kokoro(
 
         # Generate raw audio using Kokoro's neural synthesis:cite[10]
         loop = asyncio.get_event_loop()
-        audio, _ = await loop.run_in_executor(
-            None, generate, MODEL, text, VOICEPACK, lang
-        )
+        audio, _ = await loop.run_in_executor(None, generate, MODEL, text, VOICEPACK)
 
         # Convert to PyDub audio segment
         audio_int16 = (audio * 32767).astype(np.int16)
@@ -65,7 +71,10 @@ async def text_to_speech_kokoro(
         # Audio processing pipeline
         processed = segment.speedup(playback_speed=speed).apply_gain(volume * 10)
 
-        # Export to MP3 buffer
+        # Play the processed audio segment directly using pydub's playback functionality
+        play(processed)
+
+        # Export to MP3 buffer (if you still need it for other purposes)
         buffer = BytesIO()
         processed.export(buffer, format="mp3")
         buffer.seek(0)

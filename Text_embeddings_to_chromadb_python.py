@@ -40,7 +40,7 @@ def init_chromadb():
         database=DEFAULT_DATABASE,
     )
     # delete a particular collection
-    #     client.delete_collection(collection_name)
+    # client.delete_collection(collection_name)
 
     try:
         collection = client.get_or_create_collection(name=collection_name)
