@@ -46,17 +46,14 @@ def generate_chunk_id(text):
 splitter = TextSplitter((800, 900))
 
 
-# Function to split text into chunks based on sentence boundaries
-def split_into_chunks(text):
+def split_into_chunks(text, generate_id=True):
     chunks = splitter.chunks(text)
     result_chunks = []
     for chunk in chunks:
-        result_chunks.append(
-            {
-                "id": generate_chunk_id(chunk),
-                "text": chunk.strip(),
-            }
-        )
+        chunk_data = {"text": chunk.strip()}
+        if generate_id:
+            chunk_data["id"] = generate_chunk_id(chunk)
+        result_chunks.append(chunk_data)
     return result_chunks
 
 

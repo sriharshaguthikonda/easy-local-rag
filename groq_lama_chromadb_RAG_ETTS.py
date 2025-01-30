@@ -44,11 +44,15 @@ from rank_bm25 import BM25Okapi
 import pprint
 
 
-# from kokoro_tts import text_to_speech_kokoro
+from kokoro_tts import text_to_speech_kokoro
+from web_search import (
+    get_web_context,
+    fetch_and_chunk,
+)  # Import the get_web_context function
 
-"""TODO :  kokoro tts needs work ........lets see after restart....some issue with env varaibles?"""
-"""TODO :  kokoro tts needs work ........lets see after restart....some issue with env varaibles?"""
-"""TODO :  kokoro tts needs work ........lets see after restart....some issue with env varaibles?"""
+"""TODO :   reranking and only using of the web chunks need to be worked out. not sure if the chunks from promadb are being sent. we need to work out the model change to deepseek also."""
+"""TODO :   reranking and only using of the web chunks need to be worked out. not sure if the chunks from promadb are being sent. we need to work out the model change to deepseek also."""
+"""TODO :   reranking and only using of the web chunks need to be worked out. not sure if the chunks from promadb are being sent. we need to work out the model change to deepseek also."""
 
 
 # models
@@ -248,8 +252,8 @@ def process_TTS_queue(TTS_queue):
         if dont_read_tts:
             dont_read_tts = False  # Reset the flag after skipping
         else:
-            asyncio.run(text_to_speech_gtts(sentence, volume=0.5, speed=1.4))
-            # asyncio.run(text_to_speech_kokoro(sentence, volume=0.5, speed=1.4))
+            # asyncio.run(text_to_speech_gtts(sentence, volume=0.5, speed=1.4))
+            asyncio.run(text_to_speech_kokoro(sentence, volume=0.5, speed=1.4))
         TTS_queue.task_done()
 
 
@@ -340,7 +344,7 @@ def ollama_chat(
 ):
     global just_query_file_search
     # Get relevant context from Milvus
-    relevant_context = get_relevant_context_hybrid(user_input, top_k=5)
+    relevant_context = asyncio.run(get_relevant_context_hybrid(user_input, top_k=5))
 
     # Prepare the user's input by concatenating it with the relevant context
     if relevant_context:
@@ -426,11 +430,11 @@ def groq_chat(
     response = ""
 
     # Get relevant context from Milvus
-    relevant_context = get_relevant_context_hybrid(user_input, top_k=5)
+    relevant_context = asyncio.run(get_relevant_context_hybrid(user_input, top_k=5))
 
     # Prepare the user's input by concatenating it with the relevant context
     if relevant_context:
-        user_input_with_context = relevant_context + "\n\n" + user_input
+        user_input_with_context = f"{relevant_context}  \n\n  {user_input}"
     else:
         user_input_with_context = user_input
 
@@ -666,7 +670,7 @@ def rewrite_input_and_generate_synonyms(original_input):
 """
 
 
-def get_relevant_context_hybrid(
+async def get_relevant_context_hybrid(
     user_input,
     top_k=5,
     additional_unique_files=5,
@@ -683,34 +687,13 @@ def get_relevant_context_hybrid(
             user_input
         )
 
-        # Encode the rewritten input into an embedding
-        input_embedding = ollama.embeddings(
-            model=model,
-            prompt=rewritten_input,
-            keep_alive=-1,
-        )["embedding"]
-
-        # Perform vector similarity search
-        search_result = collection.query(
-            query_embeddings=[input_embedding],
-            n_results=50,
-            include=["documents", "metadatas", "distances"],
-        )
-
-        # Extract results with distances
-        vector_results = [
-            {
-                "meta": meta,
-                "document": doc,
-                "vector_score": 1.0
-                - dist,  # Convert distance to similarity (assuming normalized)
-            }
-            for meta, doc, dist in zip(
-                search_result["metadatas"][0],
-                search_result["documents"][0],
-                search_result["distances"][0],
-            )
-        ]
+        # Fetch web context and chunk it
+        web_results = await get_web_context(rewritten_input, num_results=top_k)
+        web_chunks = []
+        for result in web_results:
+            if result["link"] != "No link":
+                chunks = await fetch_and_chunk(result["link"])
+                web_chunks.extend(chunks)
 
         # Perform keyword matching if enabled
         keyword_results = []
@@ -757,57 +740,40 @@ def get_relevant_context_hybrid(
 
             print("keywords:", keywords)
 
-            for meta, doc in zip(
-                search_result["metadatas"][0], search_result["documents"][0]
-            ):
-                # Normalize the document text to fix hyphenated words
-                normalized_doc = re.sub(
-                    r"(?<=\w)-\s*(?=\w)", "", doc.lower()
-                )  # Normalize the document
+            for chunk in web_chunks:
+                # Normalize the chunk text to fix hyphenated words
+                normalized_chunk = re.sub(
+                    r"(?<=\w)-\s*(?=\w)", "", chunk.lower()
+                )  # Normalize the chunk
 
                 # Match against both original keywords and their synonyms using word boundaries
                 match_score = sum(
                     len(
-                        re.findall(rf"\b{re.escape(keyword)}\b", normalized_doc)
-                    )  # Search in the normalized document
-                    + len(
-                        re.findall(
-                            rf"\b{re.escape(keyword)}\b", meta["file_name"].lower()
-                        )
-                    )  # Search in the file name
+                        re.findall(rf"\b{re.escape(keyword)}\b", normalized_chunk)
+                    )  # Search in the normalized chunk
                     for keyword in keywords
                 )
 
                 if match_score > 0:
                     keyword_results.append(
-                        {"meta": meta, "document": doc, "keyword_score": match_score}
+                        {"chunk": chunk, "keyword_score": match_score}
                     )
 
         # Perform BM25 search
-        bm25_corpus = [doc for doc in search_result["documents"][0]]
-        bm25 = BM25Okapi([doc.split() for doc in bm25_corpus])
+        bm25_corpus = [chunk for chunk in web_chunks]
+        bm25 = BM25Okapi([chunk.split() for chunk in bm25_corpus])
         bm25_scores = bm25.get_scores(rewritten_input.split())
 
         bm25_results = [
-            {"meta": meta, "document": doc, "bm25_score": score}
-            for meta, doc, score in zip(
-                search_result["metadatas"][0],
-                search_result["documents"][0],
-                bm25_scores,
-            )
+            {"chunk": chunk, "bm25_score": score}
+            for chunk, score in zip(web_chunks, bm25_scores)
         ]
 
-        # Normalize scores for vector, keyword, and BM25 results
-        max_vector_score = max(
-            [res["vector_score"] for res in vector_results], default=1
-        )
+        # Normalize scores for keyword and BM25 results
         max_keyword_score = max(
             [res["keyword_score"] for res in keyword_results], default=1
         )
         max_bm25_score = max([res["bm25_score"] for res in bm25_results], default=1)
-
-        for res in vector_results:
-            res["vector_score"] /= max_vector_score
 
         for res in keyword_results:
             res["keyword_score"] /= max_keyword_score
@@ -817,35 +783,20 @@ def get_relevant_context_hybrid(
 
         # Combine results using weighted scoring
         combined_results = {}
-        for res in vector_results:
-            file_name = res["meta"]["file_name"]
-            combined_results[file_name] = {
-                "meta": res["meta"],
-                "document": res["document"],
-                "final_score": alpha * res["vector_score"],
+        for res in keyword_results:
+            chunk = res["chunk"]
+            combined_results[chunk] = {
+                "chunk": chunk,
+                "final_score": beta * res["keyword_score"],
             }
 
-        for res in keyword_results:
-            file_name = res["meta"]["file_name"]
-            if file_name in combined_results:
-                combined_results[file_name]["final_score"] += (
-                    beta * res["keyword_score"]
-                )
-            else:
-                combined_results[file_name] = {
-                    "meta": res["meta"],
-                    "document": res["document"],
-                    "final_score": beta * res["keyword_score"],
-                }
-
         for res in bm25_results:
-            file_name = res["meta"]["file_name"]
-            if file_name in combined_results:
-                combined_results[file_name]["final_score"] += gamma * res["bm25_score"]
+            chunk = res["chunk"]
+            if chunk in combined_results:
+                combined_results[chunk]["final_score"] += gamma * res["bm25_score"]
             else:
-                combined_results[file_name] = {
-                    "meta": res["meta"],
-                    "document": res["document"],
+                combined_results[chunk] = {
+                    "chunk": chunk,
                     "final_score": gamma * res["bm25_score"],
                 }
 
@@ -864,7 +815,7 @@ def get_relevant_context_hybrid(
         for res in remaining_results:
             max_similarity = max(
                 [
-                    np.dot(res["meta"]["embedding"], selected["meta"]["embedding"])
+                    np.dot(res["chunk"], selected["chunk"])
                     for selected in selected_additional_files
                 ],
                 default=0,
@@ -885,7 +836,7 @@ def get_relevant_context_hybrid(
         final_results.extend([res for res in selected_additional_files])
 
         # Prepare relevant context
-        relevant_context = "\n\n".join([res["document"] for res in final_results])
+        relevant_context = "\n\n".join([res["chunk"] for res in final_results])
 
         # Start a worker thread to print details of the results
         worker_thread = threading.Thread(
@@ -900,60 +851,6 @@ def get_relevant_context_hybrid(
     except Exception as e:
         print(f"An error occurred: {e}")
         return "Answer this yourself!"
-
-
-# List of available colors
-color_list = [
-    CYAN,
-    YELLOW,
-    NEON_GREEN,
-    MAGENTA,
-    RED,
-    RASPBERRY,
-    ORANGE,
-]
-
-
-def print_relevant_context(results):
-    global keywords
-
-    # print("keywords from inside print_relevant_context:", keywords)
-
-    print("Context Pulled from Documents:\n")
-
-    # Dynamically generate a color_map based on the keywords
-    color_map = {}
-    for i, word in enumerate(keywords):
-        color_map[word] = color_list[
-            i % len(color_list)
-        ]  # Use modulus to cycle through colors
-
-    # Sort keywords by length in descending order
-    sorted_keywords = sorted(keywords, key=len, reverse=True)
-
-    # Printing the document context
-    for res in results:
-        meta = res["meta"]
-        file_name = meta.get("file_name", "Unknown")
-        modification_time = meta.get("modification_time", "Unknown")
-        text = res["document"]
-
-        # Colorize the text by replacing keywords with color-coded versions
-        colorized_text = text
-        for word in sorted_keywords:
-            color = color_map[word]
-            # Replace the keywords in the text with their colorized versions using word boundaries
-            colorized_text = re.sub(
-                rf"\b{re.escape(word)}\b", f"{color}{word}{RESET_COLOR}", colorized_text
-            )
-
-        clickable_file_path = urljoin("file:", Path(file_name).as_uri())
-
-        print(
-            f"{YELLOW}Text:{RESET_COLOR} {colorized_text}\n"
-            f"{BLUE}File Name:{clickable_file_path}\n{RESET_COLOR}"
-            f"{PINK}Modification Time: {modification_time}\n{RESET_COLOR}"
-        )
 
 
 """
@@ -1039,8 +936,10 @@ def main():
     # Get or create the collection
     collection = client.get_collection(collection_name)
 
-    get_relevant_context_hybrid(
-        user_input="just loading ollama embeddings model and chromadb, dont respond"
+    asyncio.run(
+        get_relevant_context_hybrid(
+            user_input="just loading ollama embeddings model and chromadb, dont respond"
+        )
     )
 
     while True:
