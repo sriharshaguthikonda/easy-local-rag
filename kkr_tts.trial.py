@@ -27,7 +27,7 @@ if DEVICE == "cuda":
 MODEL = build_model(str(kokoro_path / "kokoro-v0_19.pth"), DEVICE)
 
 
-async def generate_speech(text: str, voice_file: str):
+async def generate_speech(text: str, voice_file: str, speed: float = 1.2):
     """Generate speech from text using a specific voice and play it."""
     try:
         # Load the specific voice pack
@@ -43,8 +43,15 @@ async def generate_speech(text: str, voice_file: str):
             audio_int16.tobytes(), frame_rate=24000, sample_width=2, channels=1
         )
 
+        # Adjust the playback speed
+        segment = segment.speedup(playback_speed=speed)
+
         # Play the generated audio
         play(segment)
+
+        # Save the audio file
+        with open("output.wav", "wb") as f:
+            segment.export(f, format="wav")
 
     finally:
         if "audio" in locals():
@@ -61,7 +68,7 @@ async def listen_to_all_voices(text: str):
 
     for voice_file in voice_files:
         print(f"Listening to voice: {voice_file.name}")
-        await generate_speech(text, str(voice_file))
+        await generate_speech(text, str(voice_file), speed=1.4)  # Adjust speed here
         input(
             "Press Enter to continue to the next voice..."
         )  # Wait for user input before continuing
