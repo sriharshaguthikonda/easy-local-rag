@@ -56,7 +56,8 @@ EMBEDDINGS_DIR = "Embeddings"
 model = "mxbai-embed-large"
 # groq_model="llama3-70b-8192"
 # groq_model = "llama-3.1-70b-versatile"
-groq_model = "llama-3.3-70b-versatile"
+# groq_model = "llama-3.3-70b-versatile"
+groq_model = "deepseek-r1-distill-llama-70b"
 ollama_model = "phi-3"
 
 
