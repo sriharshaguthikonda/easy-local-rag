@@ -34,26 +34,26 @@ async def text_to_speech_kokoro(
     voice: str = "af",
 ) -> BytesIO:
     """
-    Convert text to speech using Kokoro TTS with real-time processing
+    Convert text to speech using Kokoro TTS with real-time processing.
 
     Args:
-        text: Input text to synthesize
-        speed: Playback speed multiplier (0.5-2.0)
-        volume: Volume boost in dB (0.0-3.0)
-        lang: Language code (en-us/en-gb)
-        voice: Voice identifier or blend
+        text: Input text to synthesize.
+        speed: Playback speed multiplier (0.5-2.0).
+        volume: Volume boost in dB (0.0-3.0).
+        lang: Language code (en-us/en-gb).
+        voice: Voice identifier or blend.
 
     Returns:
-        BytesIO buffer containing MP3 audio
+        BytesIO buffer containing MP3 audio.
     """
     try:
         if not text.strip():
             raise ValueError("Empty input text")
 
-        # Generate raw audio using Kokoro's neural synthesis:cite[10]
+        # Generate raw audio using Kokoro's neural synthesis with speed adjustment
         loop = asyncio.get_event_loop()
         audio, _ = await loop.run_in_executor(
-            None, generate, MODEL, text, VOICEPACK, lang
+            None, generate, MODEL, text, VOICEPACK, lang, speed
         )
 
         # Convert to PyDub audio segment
@@ -62,8 +62,8 @@ async def text_to_speech_kokoro(
             audio_int16.tobytes(), frame_rate=24000, sample_width=2, channels=1
         )
 
-        # Audio processing pipeline
-        processed = segment.speedup(playback_speed=speed).apply_gain(volume * 10)
+        # Apply volume adjustment
+        processed = segment.apply_gain(volume * 10)
 
         # Export to MP3 buffer
         buffer = BytesIO()
