@@ -10,9 +10,8 @@ async def fetch_and_chunk(crawler, url):
         if result.success:
             soup = BeautifulSoup(result.html, "html.parser")
             text = soup.get_text()
-            chunks = split_into_chunks(
-                text, generate_id=False
-            )  # Use chunking function from semantic_chunking.py
+            chunks = split_into_chunks(text, generate_id=False)
+            # Use chunking function from semantic_chunking.py  here the id is not generated
             return chunks
         else:
             print(f"Error fetching {url}: {result.error_message}")
