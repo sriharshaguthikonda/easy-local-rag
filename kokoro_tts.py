@@ -58,7 +58,7 @@ async def text_to_speech_kokoro(
         if not text.strip():
             raise ValueError("Empty input text")
 
-        # Generate raw audio using Kokoro's neural synthesis:cite[10]
+        # Generate raw audio using Kokoro's neural synthesis
         loop = asyncio.get_event_loop()
         audio, _ = await loop.run_in_executor(None, generate, MODEL, text, VOICEPACK)
 
@@ -69,7 +69,7 @@ async def text_to_speech_kokoro(
         )
 
         # Audio processing pipeline
-        processed = segment.speedup(playback_speed=speed).apply_gain(volume * 10)
+        processed = segment.speedup(playback_speed=speed)
 
         # Play the processed audio segment directly using pydub's playback functionality
         play(processed)

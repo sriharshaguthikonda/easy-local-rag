@@ -61,7 +61,7 @@ model = "mxbai-embed-large"
 # groq_model="llama3-70b-8192"
 # groq_model = "llama-3.1-70b-versatile"
 groq_model = "deepseek-r1-distill-llama-70b"
-# groq_model = "llama-3.3-70b-versatile"
+groq_rewrite_model = "llama-3.3-70b-versatile"
 ollama_model = "phi-3"
 
 
@@ -388,7 +388,8 @@ def ollama_chat(
             if any(delimiter in response for delimiter in ".;,!?"):
                 response = response[1:]  # Remove the first character
                 sentence, response = split_sentence(response)
-                TTS_queue.put(sentence)
+                if len(sentence.split()) >= 10:
+                    TTS_queue.put(sentence)
 
         # Print the response
         print(RESET_COLOR + "\n")
@@ -519,7 +520,8 @@ def groq_chat(
                 if any(delimiter in response for delimiter in ".:!?"):
                     response = response[1:]  # Remove the first character
                     sentence, response = split_sentence(response)
-                    TTS_queue.put(sentence)
+                    if len(sentence.split()) >= 10:
+                        TTS_queue.put(sentence)
             # Process the stream here
         except Exception as e:
             print(f"An error occurred: {e}")
@@ -557,7 +559,7 @@ def count_tokens(messages, model="llama-3.3-70b-versatile"):
 
 """
  ######  ######## ##    ## ######## ######## ##    ##  ######  ######## 
-##    ## ##       ###   ##    ##    ##       ###   ## ##    ## ##       
+##    ## ##       ###   ##    ##    ##       ###   ### ##    ## ##       
 ##       ##       ####  ##    ##    ##       ####  ## ##       ##       
  ######  ######   ## ## ##    ##    ######   ## ## ## ##       ######   
       ## ##       ##  ####    ##    ##       ##  #### ##       ##       
@@ -567,20 +569,24 @@ def count_tokens(messages, model="llama-3.3-70b-versatile"):
 
 
 # Define the function to split sentences
-def split_sentence(response):
-    # delimiters = r"[.,;!?]"  # Add more delimiters if needed
+def split_sentence(response, min_words=10):
     delimiters = r"[\n]"  # Add more delimiters if needed
-
     sentences = re.split(delimiters, response, maxsplit=1)
     if len(sentences) > 1:
         sentence, response = sentences[0], sentences[1]
     else:
         sentence, response = sentences[0], ""
+
+    # Ensure the sentence has at least min_words words
+    while len(sentence.split()) < min_words and response:
+        next_sentence, response = split_sentence(response, min_words)
+        sentence = f"{sentence} {next_sentence}".strip()
+
     return sentence, response
 
 
 """
-########  ######## ##      ## ########  #### ######## ######## 
+ ########  ######## ##      ## ########  #### ######## ######## 
 ##     ## ##       ##  ##  ## ##     ##  ##     ##    ##       
 ##     ## ##       ##  ##  ## ##     ##  ##     ##    ##       
 ########  ######   ##  ##  ## ########   ##     ##    ######   
@@ -632,7 +638,7 @@ def rewrite_input_and_generate_synonyms(original_input):
                     "content": f'Rewrite and generate synonyms, spelling variants, plural/singular forms, parts of speech, and related terms for: "{original_input}".',
                 },
             ],
-            model=groq_model,
+            model=groq_rewrite_model,
             temperature=0.7,
             stream=False,  # JSON mode does not support streaming
             response_format={"type": "json_object"},  # Enable JSON mode
