@@ -15,6 +15,7 @@
 7. run upload.py (pdf, .txt, JSON)
 8. run localrag.py (with query re-write)
 9. run localrag_no_rewrite.py (no query re-write)
+10. run groq_lama_chromadb_RAG_ETTS_qt.py for a simple QtPy GUI
 
 ### Email RAG Setup
 1. git clone https://github.com/AllAboutAI-YT/easy-local-rag.git
