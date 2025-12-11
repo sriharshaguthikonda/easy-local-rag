@@ -185,9 +185,12 @@ class FileChangeHandler(FileSystemEventHandler):
                 response = ollama.embeddings(
                     model="mxbai-embed-large", prompt=chunk["text"]
                 )
-                if check_gpu_temperature() > 51:
+                
+                # Check GPU temperature if available
+                gpu_temp = check_gpu_temperature()
+                if gpu_temp is not None and gpu_temp > 51:
                     print(
-                        f"{RED}GPU temp is too high. Pausing Temporarily...{RESET_COLOR}\n"
+                        f"{RED}GPU temp is too high ({gpu_temp}°C). Pausing temporarily...{RESET_COLOR}\n"
                     )
                     time.sleep(30)
 

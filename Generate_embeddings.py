@@ -1,6 +1,10 @@
 import os
 import json
-import pynvml
+try:
+    import pynvml
+    NVML_AVAILABLE = True
+except ImportError:
+    NVML_AVAILABLE = False
 import time
 from tqdm import tqdm
 import ollama
@@ -84,11 +88,18 @@ def save_embeddings_txt(new_embeddings):
 
 # Function to check GPU temperature
 def check_gpu_temperature():
-    pynvml.nvmlInit()
-    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-    temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
-    pynvml.nvmlShutdown()
-    return temp
+    if not NVML_AVAILABLE:
+        return None  # Return None if NVML is not available
+        
+    try:
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+        pynvml.nvmlShutdown()
+        return temp
+    except Exception as e:
+        print(f"Warning: Could not check GPU temperature: {e}")
+        return None
 
 
 # Function to generate embeddings for vault content with checkpointing and logging
