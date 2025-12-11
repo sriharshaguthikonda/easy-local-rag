@@ -56,14 +56,24 @@ EMBEDDINGS_DIR = "Embeddings"
 model = "mxbai-embed-large"
 # groq_model="llama3-70b-8192"
 # groq_model = "llama-3.1-70b-versatile"
-# groq_model = "llama-3.3-70b-versatile"
+"""TODO :   let's see if we actually need to rewrite the synonyms and all that with lama model or deepseek model does well."""
+groq_rewrite_model = "llama-3.3-70b-versatile"
 groq_model = "deepseek-r1-distill-llama-70b"
 ollama_model = "phi-3"
 
 
 # ChromaDB client
 collection_name = "html_chunks_text_in_documents"
-CHROMADB_PATH = r"C:\Users\deletable\OneDrive\easy-local-rag\chroma"
+CHROMADB_PATH = r"C:\Windows_software\easy-local-rag\chroma"
+
+
+
+
+
+
+
+
+
 
 # ANSI escape codes for colors
 PINK = "\033[95m"
@@ -563,15 +573,19 @@ def count_tokens(messages, model="llama-3.3-70b-versatile"):
 
 
 # Define the function to split sentences
-def split_sentence(response):
-    # delimiters = r"[.,;!?]"  # Add more delimiters if needed
+def split_sentence(response, min_words=10):
     delimiters = r"[\n]"  # Add more delimiters if needed
-
     sentences = re.split(delimiters, response, maxsplit=1)
     if len(sentences) > 1:
         sentence, response = sentences[0], sentences[1]
     else:
         sentence, response = sentences[0], ""
+
+    # Ensure the sentence has at least min_words words
+    while len(sentence.split()) < min_words and response:
+        next_sentence, response = split_sentence(response, min_words)
+        sentence = f"{sentence} {next_sentence}".strip()
+
     return sentence, response
 
 
@@ -650,10 +664,10 @@ def rewrite_input_and_generate_synonyms(original_input):
 
     except json.JSONDecodeError as e:
         print(f"JSON decoding error: {e}")
-        return None, {}
+        return original_input, {}
     except Exception as e:
         print(f"An error occurred: {e}")
-        return None, {}
+        return original_input, {}
 
 
 """

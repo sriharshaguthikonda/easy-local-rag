@@ -1,6 +1,4 @@
-cd c:/Users/deletable/OneDrive/easy-local-rag/
+cd C:/Windows_software/easy-local-rag/chroma
 
 
-"C:/Users/deletable/OneDrive/Windows_software/openai whisper/openai/Scripts/python.exe" c:/Users/deletable/OneDrive/easy-local-rag/monitor_file_changes_update_chromaDB.py
-
-
+c:/Windows_software/easy-local-rag/easyrag/Scripts/python.exe c:/Windows_software/easy-local-rag/monitor_file_changes_update_chromaDB.py

@@ -6,3 +6,15 @@ pyyaml
 beautifulsoup4
 lxml
 python-dotenv
+watchdog
+nltk
+numpy
+pymilvus
+pydub
+pyttsx3
+edge-tts
+requests
+tqdm
+nltk
+tk
+ipython

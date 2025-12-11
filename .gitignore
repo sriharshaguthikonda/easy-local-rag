@@ -25,7 +25,10 @@ semantic_vault.json
 vault.json
 vault.txt
 
-# Ignore environment files
+# Virtual environment
+easyrag/
+
+# Environment files
 .env
 
 # Ignore Python script
