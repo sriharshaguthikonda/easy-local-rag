@@ -36,6 +36,7 @@ from gtts import gTTS
 
 import numpy as np
 from rank_bm25 import BM25Okapi
+import subprocess
 
 import nest_asyncio
 nest_asyncio.apply()
@@ -48,33 +49,32 @@ load_dotenv()
 # ============================================================================
 
 class ChatWorker(QThread):
-    """Worker thread for chat operations"""
+    """Worker thread for chat operations - only handles LLM calls, not ChromaDB"""
     response_chunk = pyqtSignal(str)
     response_complete = pyqtSignal(str)
-    context_ready = pyqtSignal(list)
     error_occurred = pyqtSignal(str)
     status_update = pyqtSignal(str)
     
-    def __init__(self, user_input, settings, collection, conversation_history):
+    def __init__(self, user_input, settings, context_results, conversation_history):
         super().__init__()
         self.user_input = user_input
         self.settings = settings
-        self.collection = collection
+        self.context_results = context_results  # Pre-fetched from main thread
         self.conversation_history = conversation_history
         self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         
     def run(self):
         try:
-            self.status_update.emit("Retrieving context...")
-            context_results = self.get_relevant_context_hybrid()
-            self.context_ready.emit(context_results)
+            print("[ChatWorker] Starting...")
             
             if self.settings.get('just_search', False):
+                print("[ChatWorker] Just search mode, done")
                 self.response_complete.emit("")
                 return
             
             self.status_update.emit("Generating response...")
-            relevant_context = "\n\n".join([res["document"] for res in context_results])
+            print("[ChatWorker] Building context...")
+            relevant_context = "\n\n".join([res["document"] for res in self.context_results])
             
             if relevant_context:
                 user_input_with_context = relevant_context + "\n\n" + self.user_input
@@ -88,11 +88,17 @@ class ChatWorker(QThread):
                 *self.conversation_history
             ]
             
+            print(f"[ChatWorker] Calling Groq with model: {self.settings['groq_model']}")
             response = self.groq_chat(messages)
+            print(f"[ChatWorker] Got response, length: {len(response)}")
             self.conversation_history.append({"role": "assistant", "content": response})
             self.response_complete.emit(response)
+            print("[ChatWorker] Done")
             
         except Exception as e:
+            print(f"[ChatWorker] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             self.error_occurred.emit(str(e))
     
     def groq_chat(self, messages):
@@ -135,150 +141,6 @@ class ChatWorker(QThread):
         
         return response
     
-    def get_relevant_context_hybrid(self):
-        try:
-            rewritten_input, synonym_dict = self.rewrite_input_and_generate_synonyms()
-            
-            input_embedding = ollama.embeddings(
-                model=self.settings['embedding_model'],
-                prompt=rewritten_input,
-                keep_alive=-1,
-            )["embedding"]
-            
-            search_result = self.collection.query(
-                query_embeddings=[input_embedding],
-                n_results=50,
-                include=["documents", "metadatas", "distances"],
-            )
-            
-            # Vector results
-            vector_results = [
-                {
-                    "meta": meta,
-                    "document": doc,
-                    "vector_score": 1.0 - dist,
-                }
-                for meta, doc, dist in zip(
-                    search_result["metadatas"][0],
-                    search_result["documents"][0],
-                    search_result["distances"][0],
-                )
-            ]
-            
-            # Keyword matching
-            non_keywords = {"is", "a", "an", "and", "the", "of", "in", "on", "at", "by", "with", "for", "to", "from"}
-            keywords = [word for word in rewritten_input.lower().split() if word not in non_keywords]
-            
-            for key, details in synonym_dict.items():
-                keywords.append(key)
-                for field in ['synonyms', 'spelling_variants', 'plural_singular', 'parts_of_speech', 'related_terms']:
-                    if details.get(field):
-                        keywords.extend(details[field])
-            
-            keywords = list(set(keywords))
-            
-            keyword_results = []
-            for meta, doc in zip(search_result["metadatas"][0], search_result["documents"][0]):
-                normalized_doc = re.sub(r"(?<=\w)-\s*(?=\w)", "", doc.lower())
-                match_score = sum(
-                    len(re.findall(rf"\b{re.escape(kw)}\b", normalized_doc))
-                    for kw in keywords
-                )
-                if match_score > 0:
-                    keyword_results.append({"meta": meta, "document": doc, "keyword_score": match_score})
-            
-            # BM25
-            bm25_corpus = [doc for doc in search_result["documents"][0]]
-            bm25 = BM25Okapi([doc.split() for doc in bm25_corpus])
-            bm25_scores = bm25.get_scores(rewritten_input.split())
-            
-            bm25_results = [
-                {"meta": meta, "document": doc, "bm25_score": score}
-                for meta, doc, score in zip(
-                    search_result["metadatas"][0],
-                    search_result["documents"][0],
-                    bm25_scores,
-                )
-            ]
-            
-            # Normalize and combine
-            alpha = self.settings['alpha']
-            beta = self.settings['beta']
-            gamma = self.settings['gamma']
-            
-            max_vector = max([r["vector_score"] for r in vector_results], default=1)
-            max_keyword = max([r["keyword_score"] for r in keyword_results], default=1)
-            max_bm25 = max([r["bm25_score"] for r in bm25_results], default=1)
-            
-            combined = {}
-            for res in vector_results:
-                fn = res["meta"].get("file_name", "unknown")
-                combined[fn] = {
-                    "meta": res["meta"],
-                    "document": res["document"],
-                    "final_score": alpha * (res["vector_score"] / max_vector),
-                    "keywords": keywords
-                }
-            
-            for res in keyword_results:
-                fn = res["meta"].get("file_name", "unknown")
-                if fn in combined:
-                    combined[fn]["final_score"] += beta * (res["keyword_score"] / max_keyword)
-                else:
-                    combined[fn] = {
-                        "meta": res["meta"],
-                        "document": res["document"],
-                        "final_score": beta * (res["keyword_score"] / max_keyword),
-                        "keywords": keywords
-                    }
-            
-            for res in bm25_results:
-                fn = res["meta"].get("file_name", "unknown")
-                if fn in combined:
-                    combined[fn]["final_score"] += gamma * (res["bm25_score"] / max_bm25)
-                else:
-                    combined[fn] = {
-                        "meta": res["meta"],
-                        "document": res["document"],
-                        "final_score": gamma * (res["bm25_score"] / max_bm25),
-                        "keywords": keywords
-                    }
-            
-            sorted_results = sorted(combined.values(), key=lambda x: x["final_score"], reverse=True)
-            return sorted_results[:self.settings['top_k']]
-            
-        except Exception as e:
-            self.error_occurred.emit(f"Context retrieval error: {e}")
-            return []
-    
-    def rewrite_input_and_generate_synonyms(self):
-        try:
-            system_prompt = (
-                "You are a helpful assistant. Your tasks are:\n"
-                "1) Rephrase the given input to make it clearer in one sentence.\n"
-                "2) Provide synonyms, spelling variants, plural/singular forms for keywords.\n"
-                "Respond in JSON format:\n"
-                '{"rephrased": "[sentence]", "keywords": {"[word]": {"synonyms": [], "spelling_variants": [], "plural_singular": [], "parts_of_speech": [], "related_terms": []}}}'
-            )
-            
-            chat_completion = self.groq_client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f'Rewrite and generate synonyms for: "{self.user_input}"'},
-                ],
-                model=self.settings['groq_rewrite_model'],
-                temperature=0.7,
-                stream=False,
-                response_format={"type": "json_object"},
-            )
-            
-            response_json = chat_completion.choices[0].message.content.strip()
-            response_data = json.loads(response_json)
-            
-            return response_data.get("rephrased", self.user_input), response_data.get("keywords", {})
-            
-        except Exception as e:
-            return self.user_input, {}
 
 
 class TTSWorker(QThread):
@@ -377,15 +239,15 @@ class RAGChatGUI(QMainWindow):
         self.chromadb_client = None
         self.conversation_history = []
         self.chat_worker = None
-        self.tts_worker = None
+        self.tts_workers = []  # Track all TTS workers
         self.is_dark_theme = True
         self.tts_enabled = True
         
         # Default settings
         self.settings = {
             'embedding_model': 'mxbai-embed-large',
-            'groq_model': 'deepseek-r1-distill-llama-70b',
-            'groq_rewrite_model': 'llama-3.3-70b-versatile',
+            'groq_model': 'llama-3.3-70b-versatile',
+            'groq_rewrite_model': 'llama-3.1-8b-instant',
             'ollama_model': 'phi-3',
             'collection_name': 'html_chunks_text_in_documents',
             'chromadb_path': r'C:\Windows_software\easy-local-rag\chroma',
@@ -508,28 +370,26 @@ class RAGChatGUI(QMainWindow):
         models_layout.addRow("Embedding:", self.embedding_model_combo)
         
         self.groq_model_combo = QComboBox()
-        self.groq_model_combo.addItems([
-            'deepseek-r1-distill-llama-70b',
-            'llama-3.3-70b-versatile',
-            'llama3-70b-8192',
-            'mixtral-8x7b-32768'
-        ])
         self.groq_model_combo.setEditable(True)
         models_layout.addRow("Groq Model:", self.groq_model_combo)
         
         self.groq_rewrite_combo = QComboBox()
-        self.groq_rewrite_combo.addItems([
-            'llama-3.3-70b-versatile',
-            'llama3-70b-8192',
-            'mixtral-8x7b-32768'
-        ])
         self.groq_rewrite_combo.setEditable(True)
         models_layout.addRow("Rewrite Model:", self.groq_rewrite_combo)
         
+        # Refresh models button
+        refresh_models_btn = QPushButton("Refresh Groq Models")
+        refresh_models_btn.clicked.connect(self.load_groq_models)
+        models_layout.addRow("", refresh_models_btn)
+        
         self.ollama_model_combo = QComboBox()
-        self.ollama_model_combo.addItems(['phi-3', 'llama3', 'mistral', 'gemma'])
         self.ollama_model_combo.setEditable(True)
         models_layout.addRow("Ollama Model:", self.ollama_model_combo)
+        
+        # Refresh Ollama models button
+        refresh_ollama_btn = QPushButton("Refresh Ollama Models")
+        refresh_ollama_btn.clicked.connect(self.load_ollama_models)
+        models_layout.addRow("", refresh_ollama_btn)
         
         models_group.setLayout(models_layout)
         layout.addWidget(models_group)
@@ -776,10 +636,15 @@ class RAGChatGUI(QMainWindow):
     # =========================================================================
     
     def update_settings_from_ui(self):
-        self.settings['embedding_model'] = self.embedding_model_combo.currentText()
-        self.settings['groq_model'] = self.groq_model_combo.currentText()
-        self.settings['groq_rewrite_model'] = self.groq_rewrite_combo.currentText()
-        self.settings['ollama_model'] = self.ollama_model_combo.currentText()
+        # Only update if combo has text, otherwise keep default
+        if self.embedding_model_combo.currentText():
+            self.settings['embedding_model'] = self.embedding_model_combo.currentText()
+        if self.groq_model_combo.currentText():
+            self.settings['groq_model'] = self.groq_model_combo.currentText()
+        if self.groq_rewrite_combo.currentText():
+            self.settings['groq_rewrite_model'] = self.groq_rewrite_combo.currentText()
+        if self.ollama_model_combo.currentText():
+            self.settings['ollama_model'] = self.ollama_model_combo.currentText()
         self.settings['chromadb_path'] = self.chromadb_path_edit.text()
         self.settings['collection_name'] = self.collection_combo.currentText()
         self.settings['system_message'] = self.system_message_edit.toPlainText()
@@ -831,6 +696,101 @@ class RAGChatGUI(QMainWindow):
                 self.statusBar.showMessage("Settings loaded!", 3000)
             except Exception as e:
                 print(f"Failed to load settings: {e}")
+    
+    # =========================================================================
+    # MODEL LOADING
+    # =========================================================================
+    
+    def load_groq_models(self):
+        """Dynamically load available models from Groq API"""
+        try:
+            self.statusBar.showMessage("Loading Groq models...")
+            groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+            models_response = groq_client.models.list()
+            
+            # Filter for chat models (exclude whisper, tts, etc.)
+            chat_models = []
+            for model in models_response.data:
+                model_id = model.id
+                # Skip audio/speech models
+                if any(x in model_id.lower() for x in ['whisper', 'tts', 'guard', 'safeguard']):
+                    continue
+                chat_models.append(model_id)
+            
+            # Sort models
+            chat_models.sort()
+            
+            # Save current selections
+            current_groq = self.groq_model_combo.currentText()
+            current_rewrite = self.groq_rewrite_combo.currentText()
+            
+            # Update combo boxes
+            self.groq_model_combo.clear()
+            self.groq_rewrite_combo.clear()
+            
+            self.groq_model_combo.addItems(chat_models)
+            self.groq_rewrite_combo.addItems(chat_models)
+            
+            # Restore selections if they exist
+            idx = self.groq_model_combo.findText(current_groq)
+            if idx >= 0:
+                self.groq_model_combo.setCurrentIndex(idx)
+            else:
+                # Set default to llama-3.3-70b-versatile if available
+                idx = self.groq_model_combo.findText('llama-3.3-70b-versatile')
+                if idx >= 0:
+                    self.groq_model_combo.setCurrentIndex(idx)
+            
+            idx = self.groq_rewrite_combo.findText(current_rewrite)
+            if idx >= 0:
+                self.groq_rewrite_combo.setCurrentIndex(idx)
+            else:
+                idx = self.groq_rewrite_combo.findText('llama-3.1-8b-instant')
+                if idx >= 0:
+                    self.groq_rewrite_combo.setCurrentIndex(idx)
+            
+            self.statusBar.showMessage(f"Loaded {len(chat_models)} Groq models", 3000)
+            
+        except Exception as e:
+            self.statusBar.showMessage(f"Failed to load Groq models: {e}", 5000)
+            # Fallback to default models
+            default_models = [
+                'llama-3.3-70b-versatile',
+                'llama-3.1-8b-instant',
+                'openai/gpt-oss-120b',
+                'openai/gpt-oss-20b',
+                'qwen/qwen3-32b',
+                'meta-llama/llama-4-maverick-17b-128e-instruct',
+                'meta-llama/llama-4-scout-17b-16e-instruct',
+            ]
+            if self.groq_model_combo.count() == 0:
+                self.groq_model_combo.addItems(default_models)
+                self.groq_rewrite_combo.addItems(default_models)
+    
+    def load_ollama_models(self):
+        """Dynamically load available models from Ollama"""
+        try:
+            self.statusBar.showMessage("Loading Ollama models...")
+            models_list = ollama.list()
+            
+            model_names = [m['name'] for m in models_list.get('models', [])]
+            model_names.sort()
+            
+            current = self.ollama_model_combo.currentText()
+            self.ollama_model_combo.clear()
+            
+            if model_names:
+                self.ollama_model_combo.addItems(model_names)
+                idx = self.ollama_model_combo.findText(current)
+                if idx >= 0:
+                    self.ollama_model_combo.setCurrentIndex(idx)
+                self.statusBar.showMessage(f"Loaded {len(model_names)} Ollama models", 3000)
+            else:
+                self.ollama_model_combo.addItems(['phi-3', 'llama3', 'mistral', 'gemma'])
+                self.statusBar.showMessage("No Ollama models found, using defaults", 3000)
+                
+        except Exception as e:
+            self.statusBar.showMessage(f"Failed to load Ollama models: {e}", 5000)
     
     # =========================================================================
     # CHROMADB
@@ -917,6 +877,167 @@ Current Settings:
                 self.stats_display.setText(f"Error getting stats: {e}")
     
     # =========================================================================
+    # CONTEXT RETRIEVAL (Main thread - ChromaDB not thread-safe)
+    # =========================================================================
+    
+    def get_relevant_context_hybrid(self, user_input):
+        """Get relevant context using hybrid search - runs in main thread"""
+        print("[Context] Getting rewritten input...")
+        rewritten_input, synonym_dict = self.rewrite_input_and_generate_synonyms(user_input)
+        
+        print(f"[Context] Getting embeddings with model: {self.settings['embedding_model']}")
+        input_embedding = ollama.embeddings(
+            model=self.settings['embedding_model'],
+            prompt=rewritten_input,
+            keep_alive=-1,
+        )["embedding"]
+        print(f"[Context] Got embedding, length: {len(input_embedding)}")
+        
+        print("[Context] Querying ChromaDB via subprocess...")
+        # Use subprocess to isolate ChromaDB from Qt (avoids native library conflicts)
+        helper_script = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0] if sys.argv[0] else 'rag_gui.py')), 'chromadb_helper.py')
+        python_exe = sys.executable
+        
+        input_data = json.dumps({
+            'chromadb_path': self.settings['chromadb_path'],
+            'collection_name': self.settings['collection_name'],
+            'embedding': input_embedding,
+            'n_results': 20
+        })
+        
+        result = subprocess.run(
+            [python_exe, helper_script],
+            input=input_data,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if result.returncode != 0:
+            raise Exception(f"ChromaDB helper failed: {result.stderr}")
+        
+        output = json.loads(result.stdout)
+        if not output.get('success'):
+            raise Exception(f"ChromaDB query failed: {output.get('error')}")
+        
+        search_result = {
+            'documents': [output['documents']],
+            'metadatas': [output['metadatas']],
+            'distances': [output['distances']]
+        }
+        print(f"[Context] Got {len(output['documents'])} results")
+        
+        # Vector results
+        vector_results = [
+            {"meta": meta, "document": doc, "vector_score": 1.0 - dist}
+            for meta, doc, dist in zip(
+                search_result["metadatas"][0],
+                search_result["documents"][0],
+                search_result["distances"][0],
+            )
+        ]
+        
+        # Keyword matching
+        non_keywords = {"is", "a", "an", "and", "the", "of", "in", "on", "at", "by", "with", "for", "to", "from"}
+        keywords = [word for word in rewritten_input.lower().split() if word not in non_keywords]
+        
+        for key, details in synonym_dict.items():
+            keywords.append(key)
+            for field in ['synonyms', 'spelling_variants', 'plural_singular', 'parts_of_speech', 'related_terms']:
+                if details.get(field):
+                    keywords.extend(details[field])
+        
+        keywords = list(set(keywords))
+        
+        keyword_results = []
+        for meta, doc in zip(search_result["metadatas"][0], search_result["documents"][0]):
+            normalized_doc = re.sub(r"(?<=\w)-\s*(?=\w)", "", doc.lower())
+            match_score = sum(len(re.findall(rf"\b{re.escape(kw)}\b", normalized_doc)) for kw in keywords)
+            if match_score > 0:
+                keyword_results.append({"meta": meta, "document": doc, "keyword_score": match_score})
+        
+        # BM25
+        bm25_corpus = search_result["documents"][0]
+        bm25 = BM25Okapi([doc.split() for doc in bm25_corpus])
+        bm25_scores = bm25.get_scores(rewritten_input.split())
+        
+        bm25_results = [
+            {"meta": meta, "document": doc, "bm25_score": score}
+            for meta, doc, score in zip(
+                search_result["metadatas"][0],
+                search_result["documents"][0],
+                bm25_scores,
+            )
+        ]
+        
+        # Normalize and combine
+        alpha, beta, gamma = self.settings['alpha'], self.settings['beta'], self.settings['gamma']
+        max_vector = max([r["vector_score"] for r in vector_results], default=1)
+        max_keyword = max([r["keyword_score"] for r in keyword_results], default=1)
+        max_bm25 = max([r["bm25_score"] for r in bm25_results], default=1)
+        
+        combined = {}
+        for res in vector_results:
+            fn = res["meta"].get("file_name", "unknown")
+            combined[fn] = {"meta": res["meta"], "document": res["document"], 
+                          "final_score": alpha * (res["vector_score"] / max_vector), "keywords": keywords}
+        
+        for res in keyword_results:
+            fn = res["meta"].get("file_name", "unknown")
+            if fn in combined:
+                combined[fn]["final_score"] += beta * (res["keyword_score"] / max_keyword)
+            else:
+                combined[fn] = {"meta": res["meta"], "document": res["document"],
+                              "final_score": beta * (res["keyword_score"] / max_keyword), "keywords": keywords}
+        
+        for res in bm25_results:
+            fn = res["meta"].get("file_name", "unknown")
+            if fn in combined:
+                combined[fn]["final_score"] += gamma * (res["bm25_score"] / max_bm25)
+            else:
+                combined[fn] = {"meta": res["meta"], "document": res["document"],
+                              "final_score": gamma * (res["bm25_score"] / max_bm25), "keywords": keywords}
+        
+        sorted_results = sorted(combined.values(), key=lambda x: x["final_score"], reverse=True)
+        print(f"[Context] Returning top {self.settings['top_k']} results")
+        return sorted_results[:self.settings['top_k']]
+    
+    def rewrite_input_and_generate_synonyms(self, user_input):
+        """Rewrite query and generate synonyms using Groq"""
+        try:
+            print(f"[Rewrite] Using model: {self.settings['groq_rewrite_model']}")
+            groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+            
+            system_prompt = (
+                "You are a helpful assistant. Your tasks are:\n"
+                "1) Rephrase the given input to make it clearer in one sentence.\n"
+                "2) Provide synonyms, spelling variants, plural/singular forms for keywords.\n"
+                "Respond in JSON format:\n"
+                '{"rephrased": "[sentence]", "keywords": {"[word]": {"synonyms": [], "spelling_variants": [], "plural_singular": [], "parts_of_speech": [], "related_terms": []}}}'
+            )
+            
+            chat_completion = groq_client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f'Rewrite and generate synonyms for: "{user_input}"'},
+                ],
+                model=self.settings['groq_rewrite_model'],
+                temperature=0.7,
+                stream=False,
+                response_format={"type": "json_object"},
+            )
+            
+            response_json = chat_completion.choices[0].message.content.strip()
+            response_data = json.loads(response_json)
+            print(f"[Rewrite] Got rephrased: {response_data.get('rephrased', '')[:50]}...")
+            
+            return response_data.get("rephrased", user_input), response_data.get("keywords", {})
+            
+        except Exception as e:
+            print(f"[Rewrite] Error: {e}")
+            return user_input, {}
+    
+    # =========================================================================
     # CHAT FUNCTIONALITY
     # =========================================================================
     
@@ -943,29 +1064,43 @@ Current Settings:
         self.append_message("You", user_input, "#4A90D9")
         self.chat_input.clear()
         
-        # Start worker
+        # Disable buttons and show progress
         self.send_btn.setEnabled(False)
         self.search_only_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminate
         
+        # Get context in main thread (ChromaDB is not thread-safe)
+        self.statusBar.showMessage("Retrieving context...")
+        QApplication.processEvents()  # Update UI
+        
+        try:
+            context_results = self.get_relevant_context_hybrid(user_input)
+            self.on_context_ready(context_results)
+        except Exception as e:
+            self.on_error(f"Context retrieval failed: {e}")
+            return
+        
+        if self.settings['just_search']:
+            self.on_response_complete("")
+            return
+        
+        # Start worker for LLM calls only
         self.chat_worker = ChatWorker(
             user_input,
-            self.settings,
-            self.collection,
+            self.settings.copy(),
+            context_results,
             self.conversation_history
         )
         self.chat_worker.response_chunk.connect(self.on_response_chunk)
         self.chat_worker.response_complete.connect(self.on_response_complete)
-        self.chat_worker.context_ready.connect(self.on_context_ready)
         self.chat_worker.error_occurred.connect(self.on_error)
         self.chat_worker.status_update.connect(self.on_status_update)
         self.chat_worker.start()
         
         # Add assistant placeholder
-        if not self.settings['just_search']:
-            self.append_message("Assistant", "", "#2ECC71", start_only=True)
+        self.append_message("Assistant", "", "#2ECC71", start_only=True)
         
     def on_response_chunk(self, chunk):
         cursor = self.chat_display.textCursor()
@@ -981,13 +1116,22 @@ Current Settings:
         self.progress_bar.setVisible(False)
         self.statusBar.showMessage("Ready", 3000)
         
+        # Clean up worker thread (it has already finished when signal is emitted)
+        if self.chat_worker:
+            if self.chat_worker.isRunning():
+                self.chat_worker.wait(2000)
+            self.chat_worker.deleteLater()
+            self.chat_worker = None
+        
         if response and self.tts_enabled:
             # Split into sentences for TTS
             sentences = re.split(r'[.!?]+', response)
             for sentence in sentences[:3]:  # Read first 3 sentences
                 if sentence.strip():
-                    self.tts_worker = TTSWorker(sentence.strip(), self.settings)
-                    self.tts_worker.start()
+                    tts_worker = TTSWorker(sentence.strip(), self.settings)
+                    tts_worker.finished.connect(lambda w=tts_worker: self._cleanup_tts_worker(w))
+                    self.tts_workers.append(tts_worker)
+                    tts_worker.start()
         
         # Add newlines after response
         self.chat_display.append("\n")
@@ -1039,6 +1183,31 @@ Current Settings:
         
     def on_status_update(self, status):
         self.statusBar.showMessage(status)
+    
+    def _cleanup_tts_worker(self, worker):
+        """Clean up finished TTS worker"""
+        if worker in self.tts_workers:
+            self.tts_workers.remove(worker)
+            worker.deleteLater()
+    
+    def closeEvent(self, event):
+        """Properly clean up threads before closing"""
+        print("[Cleanup] Waiting for threads to finish...")
+        
+        # Stop and wait for chat worker
+        if self.chat_worker and self.chat_worker.isRunning():
+            self.chat_worker.terminate()
+            self.chat_worker.wait(2000)
+        
+        # Wait for TTS workers
+        for worker in self.tts_workers[:]:  # Copy list to avoid modification during iteration
+            if worker.isRunning():
+                worker.wait(1000)
+            worker.deleteLater()
+        self.tts_workers.clear()
+        
+        print("[Cleanup] Done")
+        event.accept()
         
     def stop_generation(self):
         if self.chat_worker and self.chat_worker.isRunning():
@@ -1450,9 +1619,11 @@ def main():
         window = RAGChatGUI()
         print("Window created, showing...")
         window.show()
-        print("Window shown, connecting to DB...")
-        # Connect to DB after window is shown
-        QTimer.singleShot(100, window.connect_chromadb)
+        print("Window shown, loading models and connecting to DB...")
+        # Load models and connect to DB after window is shown
+        QTimer.singleShot(100, window.load_groq_models)
+        QTimer.singleShot(200, window.load_ollama_models)
+        QTimer.singleShot(300, window.connect_chromadb)
         print("Entering event loop...")
         sys.exit(app.exec_())
     except Exception as e:

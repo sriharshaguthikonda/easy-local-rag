@@ -54,11 +54,10 @@ import pprint
 # models
 EMBEDDINGS_DIR = "Embeddings"
 model = "mxbai-embed-large"
-# groq_model="llama3-70b-8192"
-# groq_model = "llama-3.1-70b-versatile"
-"""TODO :   let's see if we actually need to rewrite the synonyms and all that with lama model or deepseek model does well."""
-groq_rewrite_model = "llama-3.3-70b-versatile"
-groq_model = "deepseek-r1-distill-llama-70b"
+# Updated models - deepseek-r1-distill-llama-70b is deprecated
+# Current production models: llama-3.3-70b-versatile, llama-3.1-8b-instant, openai/gpt-oss-120b
+groq_rewrite_model = "llama-3.1-8b-instant"  # Fast model for query rewriting
+groq_model = "llama-3.3-70b-versatile"  # Main chat model
 ollama_model = "phi-3"
 
 
