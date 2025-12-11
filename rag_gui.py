@@ -2,7 +2,6 @@
 import sys
 import os
 import json
-import re
 import io
 import threading
 import queue
@@ -20,213 +19,58 @@ from PyQt5.QtWidgets import (
     QAction, QDockWidget, QTreeWidget, QTreeWidgetItem, QTableWidget,
     QTableWidgetItem, QHeaderView, QStyle, QStyleFactory, QInputDialog
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
-from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QTextCursor, QTextCharFormat
+from PyQt5.QtCore import Qt, QTimer, QSize
+from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QTextCharFormat
 
 import chromadb
 from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 
 import ollama
 from groq import Groq
-from dotenv import load_dotenv
-
-from pydub import AudioSegment
-from pydub.playback import play
-from gtts import gTTS
 
 import numpy as np
 from rank_bm25 import BM25Okapi
 import subprocess
 
-import nest_asyncio
-nest_asyncio.apply()
+from GUI_workers import TTSWorker, ChromaDBSearchWorker
+from GUI_chat import ChatFunctionalityMixin
 
+import GUI_settings
+import GUI_theme
+import GUI_context
+
+import nest_asyncio
+from dotenv import load_dotenv
+
+nest_asyncio.apply()
 load_dotenv()
 
 
-# ============================================================================
-# WORKER THREADS
-# ============================================================================
+# =========================================================================
+# GLOBAL EXCEPTION HOOK FOR DEBUGGING
+# =========================================================================
 
-class ChatWorker(QThread):
-    """Worker thread for chat operations - only handles LLM calls, not ChromaDB"""
-    response_chunk = pyqtSignal(str)
-    response_complete = pyqtSignal(str)
-    error_occurred = pyqtSignal(str)
-    status_update = pyqtSignal(str)
-    
-    def __init__(self, user_input, settings, context_results, conversation_history):
-        super().__init__()
-        self.user_input = user_input
-        self.settings = settings
-        self.context_results = context_results  # Pre-fetched from main thread
-        self.conversation_history = conversation_history
-        self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        
-    def run(self):
-        try:
-            print("[ChatWorker] Starting...")
-            
-            if self.settings.get('just_search', False):
-                print("[ChatWorker] Just search mode, done")
-                self.response_complete.emit("")
-                return
-            
-            self.status_update.emit("Generating response...")
-            print("[ChatWorker] Building context...")
-            relevant_context = "\n\n".join([res["document"] for res in self.context_results])
-            
-            if relevant_context:
-                user_input_with_context = relevant_context + "\n\n" + self.user_input
-            else:
-                user_input_with_context = self.user_input
-            
-            self.conversation_history.append({"role": "user", "content": user_input_with_context})
-            
-            messages = [
-                {"role": "system", "content": self.settings['system_message']},
-                *self.conversation_history
-            ]
-            
-            print(f"[ChatWorker] Calling Groq with model: {self.settings['groq_model']}")
-            response = self.groq_chat(messages)
-            print(f"[ChatWorker] Got response, length: {len(response)}")
-            self.conversation_history.append({"role": "assistant", "content": response})
-            self.response_complete.emit(response)
-            print("[ChatWorker] Done")
-            
-        except Exception as e:
-            print(f"[ChatWorker] ERROR: {e}")
-            import traceback
-            traceback.print_exc()
-            self.error_occurred.emit(str(e))
-    
-    def groq_chat(self, messages):
-        try:
-            stream = self.groq_client.chat.completions.create(
-                messages=messages,
-                model=self.settings['groq_model'],
-                temperature=1,
-                max_tokens=4096,
-                top_p=1,
-                stream=True,
-            )
-            
-            response = ""
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    chunk_text = chunk.choices[0].delta.content
-                    response += chunk_text
-                    self.response_chunk.emit(chunk_text)
-            
-            return response
-        except Exception as e:
-            # Fallback to Ollama
-            self.status_update.emit("Falling back to Ollama...")
-            return self.ollama_chat(messages)
-    
-    def ollama_chat(self, messages):
-        stream = ollama.chat(
-            model=self.settings['ollama_model'],
-            messages=messages,
-            stream=True,
-            keep_alive=-1,
-        )
-        
-        response = ""
-        for chunk in stream:
-            chunk_text = chunk["message"]["content"]
-            response += chunk_text
-            self.response_chunk.emit(chunk_text)
-        
-        return response
-    
+def _global_excepthook(exc_type, exc_value, exc_traceback):
+    """Log any uncaught exceptions to help debug crashes."""
+    import traceback as _tb
+    print("\n========== UNCAUGHT EXCEPTION ==========")
+    _tb.print_exception(exc_type, exc_value, exc_traceback)
+    print("=======================================\n")
 
 
-class TTSWorker(QThread):
-    """Worker thread for TTS"""
-    finished = pyqtSignal()
-    
-    def __init__(self, text, settings):
-        super().__init__()
-        self.text = text
-        self.settings = settings
-        
-    def run(self):
-        try:
-            if not self.text.strip():
-                return
-            
-            tts = gTTS(
-                text=self.text,
-                lang=self.settings.get('tts_lang', 'en'),
-                tld=self.settings.get('tts_tld', 'co.uk')
-            )
-            audio_fp = io.BytesIO()
-            tts.write_to_fp(audio_fp)
-            audio_fp.seek(0)
-            
-            audio = AudioSegment.from_file(audio_fp, format="mp3")
-            audio = audio.speedup(playback_speed=self.settings.get('tts_speed', 1.4))
-            audio = audio + (self.settings.get('tts_volume', 0.5) * 10)
-            
-            play(audio)
-        except Exception as e:
-            print(f"TTS Error: {e}")
-        finally:
-            self.finished.emit()
+sys.excepthook = _global_excepthook
 
 
-class ChromaDBSearchWorker(QThread):
-    """Worker for direct ChromaDB search"""
-    results_ready = pyqtSignal(list)
-    error_occurred = pyqtSignal(str)
-    
-    def __init__(self, query, collection, embedding_model, n_results=20):
-        super().__init__()
-        self.query = query
-        self.collection = collection
-        self.embedding_model = embedding_model
-        self.n_results = n_results
-        
-    def run(self):
-        try:
-            embedding = ollama.embeddings(
-                model=self.embedding_model,
-                prompt=self.query,
-                keep_alive=-1,
-            )["embedding"]
-            
-            results = self.collection.query(
-                query_embeddings=[embedding],
-                n_results=self.n_results,
-                include=["documents", "metadatas", "distances"],
-            )
-            
-            formatted = []
-            for meta, doc, dist in zip(
-                results["metadatas"][0],
-                results["documents"][0],
-                results["distances"][0]
-            ):
-                formatted.append({
-                    "file_name": meta.get("file_name", "Unknown"),
-                    "document": doc,
-                    "distance": dist,
-                    "similarity": 1.0 - dist,
-                    "metadata": meta
-                })
-            
-            self.results_ready.emit(formatted)
-        except Exception as e:
-            self.error_occurred.emit(str(e))
+ # ============================================================================
+ # WORKER THREADS
+ # ============================================================================
 
 
 # ============================================================================
 # MAIN WINDOW
 # ============================================================================
 
-class RAGChatGUI(QMainWindow):
+class RAGChatGUI(ChatFunctionalityMixin, QMainWindow):
     def __init__(self):
         print("  __init__ started")
         super().__init__()
@@ -244,26 +88,7 @@ class RAGChatGUI(QMainWindow):
         self.tts_enabled = True
         
         # Default settings
-        self.settings = {
-            'embedding_model': 'mxbai-embed-large',
-            'groq_model': 'llama-3.3-70b-versatile',
-            'groq_rewrite_model': 'llama-3.1-8b-instant',
-            'ollama_model': 'phi-3',
-            'collection_name': 'html_chunks_text_in_documents',
-            'chromadb_path': r'C:\Windows_software\easy-local-rag\chroma',
-            'system_message': 'You are a helpful assistant. You will give precise and concise answers from the given context. If the context does not have the answer then give it from your knowledge.',
-            'top_k': 5,
-            'additional_unique_files': 5,
-            'alpha': 0.5,
-            'beta': 0.3,
-            'gamma': 0.2,
-            'lambda_mmr': 0.5,
-            'tts_speed': 1.4,
-            'tts_volume': 0.5,
-            'tts_lang': 'en',
-            'tts_tld': 'co.uk',
-            'just_search': False,
-        }
+        self.settings = GUI_settings.DEFAULT_SETTINGS.copy()
         print("  Settings initialized")
         
         print("  Calling init_ui...")
@@ -636,66 +461,13 @@ class RAGChatGUI(QMainWindow):
     # =========================================================================
     
     def update_settings_from_ui(self):
-        # Only update if combo has text, otherwise keep default
-        if self.embedding_model_combo.currentText():
-            self.settings['embedding_model'] = self.embedding_model_combo.currentText()
-        if self.groq_model_combo.currentText():
-            self.settings['groq_model'] = self.groq_model_combo.currentText()
-        if self.groq_rewrite_combo.currentText():
-            self.settings['groq_rewrite_model'] = self.groq_rewrite_combo.currentText()
-        if self.ollama_model_combo.currentText():
-            self.settings['ollama_model'] = self.ollama_model_combo.currentText()
-        self.settings['chromadb_path'] = self.chromadb_path_edit.text()
-        self.settings['collection_name'] = self.collection_combo.currentText()
-        self.settings['system_message'] = self.system_message_edit.toPlainText()
-        self.settings['top_k'] = self.top_k_spin.value()
-        self.settings['alpha'] = self.alpha_spin.value()
-        self.settings['beta'] = self.beta_spin.value()
-        self.settings['gamma'] = self.gamma_spin.value()
-        self.settings['lambda_mmr'] = self.lambda_mmr_spin.value()
-        self.settings['tts_speed'] = self.tts_speed_spin.value()
-        self.settings['tts_volume'] = self.tts_volume_spin.value()
-        self.settings['tts_lang'] = self.tts_lang_combo.currentText()
-        self.settings['tts_tld'] = self.tts_tld_combo.currentText()
+        GUI_settings.update_settings_from_ui(self, self.settings)
         
     def save_settings(self):
-        self.update_settings_from_ui()
-        settings_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0] if sys.argv[0] else 'rag_gui.py')), 'rag_gui_settings.json')
-        try:
-            with open(settings_path, 'w') as f:
-                json.dump(self.settings, f, indent=2)
-            self.statusBar.showMessage("Settings saved!", 3000)
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to save settings: {e}")
+        GUI_settings.save_settings(self, self.settings)
             
     def load_settings(self):
-        settings_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0] if sys.argv[0] else 'rag_gui.py')), 'rag_gui_settings.json')
-        if os.path.exists(settings_path):
-            try:
-                with open(settings_path, 'r') as f:
-                    loaded = json.load(f)
-                    self.settings.update(loaded)
-                    
-                # Update UI
-                self.embedding_model_combo.setCurrentText(self.settings['embedding_model'])
-                self.groq_model_combo.setCurrentText(self.settings['groq_model'])
-                self.groq_rewrite_combo.setCurrentText(self.settings['groq_rewrite_model'])
-                self.ollama_model_combo.setCurrentText(self.settings['ollama_model'])
-                self.chromadb_path_edit.setText(self.settings['chromadb_path'])
-                self.system_message_edit.setText(self.settings['system_message'])
-                self.top_k_spin.setValue(self.settings['top_k'])
-                self.alpha_spin.setValue(self.settings['alpha'])
-                self.beta_spin.setValue(self.settings['beta'])
-                self.gamma_spin.setValue(self.settings['gamma'])
-                self.lambda_mmr_spin.setValue(self.settings['lambda_mmr'])
-                self.tts_speed_spin.setValue(self.settings['tts_speed'])
-                self.tts_volume_spin.setValue(self.settings['tts_volume'])
-                self.tts_lang_combo.setCurrentText(self.settings['tts_lang'])
-                self.tts_tld_combo.setCurrentText(self.settings['tts_tld'])
-                
-                self.statusBar.showMessage("Settings loaded!", 3000)
-            except Exception as e:
-                print(f"Failed to load settings: {e}")
+        GUI_settings.load_settings(self, self.settings)
     
     # =========================================================================
     # MODEL LOADING
@@ -882,331 +654,31 @@ Current Settings:
     
     def get_relevant_context_hybrid(self, user_input):
         """Get relevant context using hybrid search - runs in main thread"""
-        print("[Context] Getting rewritten input...")
-        rewritten_input, synonym_dict = self.rewrite_input_and_generate_synonyms(user_input)
-        
-        print(f"[Context] Getting embeddings with model: {self.settings['embedding_model']}")
-        input_embedding = ollama.embeddings(
-            model=self.settings['embedding_model'],
-            prompt=rewritten_input,
-            keep_alive=-1,
-        )["embedding"]
-        print(f"[Context] Got embedding, length: {len(input_embedding)}")
-        
-        print("[Context] Querying ChromaDB via subprocess...")
-        # Use subprocess to isolate ChromaDB from Qt (avoids native library conflicts)
-        helper_script = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0] if sys.argv[0] else 'rag_gui.py')), 'chromadb_helper.py')
-        python_exe = sys.executable
-        
-        input_data = json.dumps({
-            'chromadb_path': self.settings['chromadb_path'],
-            'collection_name': self.settings['collection_name'],
-            'embedding': input_embedding,
-            'n_results': 20
-        })
-        
-        result = subprocess.run(
-            [python_exe, helper_script],
-            input=input_data,
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        
-        if result.returncode != 0:
-            raise Exception(f"ChromaDB helper failed: {result.stderr}")
-        
-        output = json.loads(result.stdout)
-        if not output.get('success'):
-            raise Exception(f"ChromaDB query failed: {output.get('error')}")
-        
-        search_result = {
-            'documents': [output['documents']],
-            'metadatas': [output['metadatas']],
-            'distances': [output['distances']]
-        }
-        print(f"[Context] Got {len(output['documents'])} results")
-        
-        # Vector results
-        vector_results = [
-            {"meta": meta, "document": doc, "vector_score": 1.0 - dist}
-            for meta, doc, dist in zip(
-                search_result["metadatas"][0],
-                search_result["documents"][0],
-                search_result["distances"][0],
-            )
-        ]
-        
-        # Keyword matching
-        non_keywords = {"is", "a", "an", "and", "the", "of", "in", "on", "at", "by", "with", "for", "to", "from"}
-        keywords = [word for word in rewritten_input.lower().split() if word not in non_keywords]
-        
-        for key, details in synonym_dict.items():
-            keywords.append(key)
-            for field in ['synonyms', 'spelling_variants', 'plural_singular', 'parts_of_speech', 'related_terms']:
-                if details.get(field):
-                    keywords.extend(details[field])
-        
-        keywords = list(set(keywords))
-        
-        keyword_results = []
-        for meta, doc in zip(search_result["metadatas"][0], search_result["documents"][0]):
-            normalized_doc = re.sub(r"(?<=\w)-\s*(?=\w)", "", doc.lower())
-            match_score = sum(len(re.findall(rf"\b{re.escape(kw)}\b", normalized_doc)) for kw in keywords)
-            if match_score > 0:
-                keyword_results.append({"meta": meta, "document": doc, "keyword_score": match_score})
-        
-        # BM25
-        bm25_corpus = search_result["documents"][0]
-        bm25 = BM25Okapi([doc.split() for doc in bm25_corpus])
-        bm25_scores = bm25.get_scores(rewritten_input.split())
-        
-        bm25_results = [
-            {"meta": meta, "document": doc, "bm25_score": score}
-            for meta, doc, score in zip(
-                search_result["metadatas"][0],
-                search_result["documents"][0],
-                bm25_scores,
-            )
-        ]
-        
-        # Normalize and combine
-        alpha, beta, gamma = self.settings['alpha'], self.settings['beta'], self.settings['gamma']
-        max_vector = max([r["vector_score"] for r in vector_results], default=1)
-        max_keyword = max([r["keyword_score"] for r in keyword_results], default=1)
-        max_bm25 = max([r["bm25_score"] for r in bm25_results], default=1)
-        
-        combined = {}
-        for res in vector_results:
-            fn = res["meta"].get("file_name", "unknown")
-            combined[fn] = {"meta": res["meta"], "document": res["document"], 
-                          "final_score": alpha * (res["vector_score"] / max_vector), "keywords": keywords}
-        
-        for res in keyword_results:
-            fn = res["meta"].get("file_name", "unknown")
-            if fn in combined:
-                combined[fn]["final_score"] += beta * (res["keyword_score"] / max_keyword)
-            else:
-                combined[fn] = {"meta": res["meta"], "document": res["document"],
-                              "final_score": beta * (res["keyword_score"] / max_keyword), "keywords": keywords}
-        
-        for res in bm25_results:
-            fn = res["meta"].get("file_name", "unknown")
-            if fn in combined:
-                combined[fn]["final_score"] += gamma * (res["bm25_score"] / max_bm25)
-            else:
-                combined[fn] = {"meta": res["meta"], "document": res["document"],
-                              "final_score": gamma * (res["bm25_score"] / max_bm25), "keywords": keywords}
-        
-        sorted_results = sorted(combined.values(), key=lambda x: x["final_score"], reverse=True)
-        print(f"[Context] Returning top {self.settings['top_k']} results")
-        return sorted_results[:self.settings['top_k']]
+        return GUI_context.get_relevant_context_hybrid(self.settings, user_input)
     
     def rewrite_input_and_generate_synonyms(self, user_input):
         """Rewrite query and generate synonyms using Groq"""
-        try:
-            print(f"[Rewrite] Using model: {self.settings['groq_rewrite_model']}")
-            groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-            
-            system_prompt = (
-                "You are a helpful assistant. Your tasks are:\n"
-                "1) Rephrase the given input to make it clearer in one sentence.\n"
-                "2) Provide synonyms, spelling variants, plural/singular forms for keywords.\n"
-                "Respond in JSON format:\n"
-                '{"rephrased": "[sentence]", "keywords": {"[word]": {"synonyms": [], "spelling_variants": [], "plural_singular": [], "parts_of_speech": [], "related_terms": []}}}'
-            )
-            
-            chat_completion = groq_client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f'Rewrite and generate synonyms for: "{user_input}"'},
-                ],
-                model=self.settings['groq_rewrite_model'],
-                temperature=0.7,
-                stream=False,
-                response_format={"type": "json_object"},
-            )
-            
-            response_json = chat_completion.choices[0].message.content.strip()
-            response_data = json.loads(response_json)
-            print(f"[Rewrite] Got rephrased: {response_data.get('rephrased', '')[:50]}...")
-            
-            return response_data.get("rephrased", user_input), response_data.get("keywords", {})
-            
-        except Exception as e:
-            print(f"[Rewrite] Error: {e}")
-            return user_input, {}
-    
-    # =========================================================================
-    # CHAT FUNCTIONALITY
-    # =========================================================================
-    
-    def send_message(self):
-        self.settings['just_search'] = False
-        self._do_send()
-        
-    def search_only(self):
-        self.settings['just_search'] = True
-        self._do_send()
-        
-    def _do_send(self):
-        user_input = self.chat_input.toPlainText().strip()
-        if not user_input:
-            return
-            
-        if not self.collection:
-            QMessageBox.warning(self, "Error", "Please connect to ChromaDB first!")
-            return
-            
-        self.update_settings_from_ui()
-        
-        # Display user message
-        self.append_message("You", user_input, "#4A90D9")
-        self.chat_input.clear()
-        
-        # Disable buttons and show progress
-        self.send_btn.setEnabled(False)
-        self.search_only_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)  # Indeterminate
-        
-        # Get context in main thread (ChromaDB is not thread-safe)
-        self.statusBar.showMessage("Retrieving context...")
-        QApplication.processEvents()  # Update UI
-        
-        try:
-            context_results = self.get_relevant_context_hybrid(user_input)
-            self.on_context_ready(context_results)
-        except Exception as e:
-            self.on_error(f"Context retrieval failed: {e}")
-            return
-        
-        if self.settings['just_search']:
-            self.on_response_complete("")
-            return
-        
-        # Start worker for LLM calls only
-        self.chat_worker = ChatWorker(
-            user_input,
-            self.settings.copy(),
-            context_results,
-            self.conversation_history
-        )
-        self.chat_worker.response_chunk.connect(self.on_response_chunk)
-        self.chat_worker.response_complete.connect(self.on_response_complete)
-        self.chat_worker.error_occurred.connect(self.on_error)
-        self.chat_worker.status_update.connect(self.on_status_update)
-        self.chat_worker.start()
-        
-        # Add assistant placeholder
-        self.append_message("Assistant", "", "#2ECC71", start_only=True)
-        
-    def on_response_chunk(self, chunk):
-        cursor = self.chat_display.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        cursor.insertText(chunk)
-        self.chat_display.setTextCursor(cursor)
-        self.chat_display.ensureCursorVisible()
-        
-    def on_response_complete(self, response):
-        self.send_btn.setEnabled(True)
-        self.search_only_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.progress_bar.setVisible(False)
-        self.statusBar.showMessage("Ready", 3000)
-        
-        # Clean up worker thread (it has already finished when signal is emitted)
-        if self.chat_worker:
-            if self.chat_worker.isRunning():
-                self.chat_worker.wait(2000)
-            self.chat_worker.deleteLater()
-            self.chat_worker = None
-        
-        if response and self.tts_enabled:
-            # Split into sentences for TTS
-            sentences = re.split(r'[.!?]+', response)
-            for sentence in sentences[:3]:  # Read first 3 sentences
-                if sentence.strip():
-                    tts_worker = TTSWorker(sentence.strip(), self.settings)
-                    tts_worker.finished.connect(lambda w=tts_worker: self._cleanup_tts_worker(w))
-                    self.tts_workers.append(tts_worker)
-                    tts_worker.start()
-        
-        # Add newlines after response
-        self.chat_display.append("\n")
-        
-    def on_context_ready(self, results):
-        self.context_display.clear()
-        
-        if not results:
-            self.context_display.setText("No context found.")
-            return
-            
-        context_html = "<h3>📄 Retrieved Context</h3><hr>"
-        
-        for i, res in enumerate(results, 1):
-            meta = res.get("meta", {})
-            file_name = meta.get("file_name", "Unknown")
-            score = res.get("final_score", 0)
-            doc = res.get("document", "")[:500]
-            
-            # Highlight keywords
-            keywords = res.get("keywords", [])
-            for kw in keywords:
-                doc = re.sub(
-                    rf'\b({re.escape(kw)})\b',
-                    r'<span style="background-color: #FFD700; color: black;">\1</span>',
-                    doc,
-                    flags=re.IGNORECASE
-                )
-            
-            context_html += f"""
-            <div style="margin: 10px 0; padding: 10px; border: 1px solid #444; border-radius: 5px;">
-                <b>#{i}</b> - Score: {score:.3f}<br>
-                <b>File:</b> <code>{file_name}</code><br>
-                <hr style="margin: 5px 0;">
-                <p style="font-size: 11px;">{doc}...</p>
-            </div>
-            """
-        
-        self.context_display.setHtml(context_html)
-        
-    def on_error(self, error):
-        self.send_btn.setEnabled(True)
-        self.search_only_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.progress_bar.setVisible(False)
-        
-        self.append_message("System", f"Error: {error}", "#E74C3C")
-        self.statusBar.showMessage(f"Error: {error}", 5000)
-        
-    def on_status_update(self, status):
-        self.statusBar.showMessage(status)
-    
-    def _cleanup_tts_worker(self, worker):
-        """Clean up finished TTS worker"""
-        if worker in self.tts_workers:
-            self.tts_workers.remove(worker)
-            worker.deleteLater()
+        return GUI_context.rewrite_input_and_generate_synonyms(self.settings, user_input)
     
     def closeEvent(self, event):
         """Properly clean up threads before closing"""
-        print("[Cleanup] Waiting for threads to finish...")
+        print("[closeEvent] Waiting for threads to finish...")
         
         # Stop and wait for chat worker
         if self.chat_worker and self.chat_worker.isRunning():
+            print("[closeEvent] Terminating ChatWorker")
             self.chat_worker.terminate()
             self.chat_worker.wait(2000)
         
         # Wait for TTS workers
         for worker in self.tts_workers[:]:  # Copy list to avoid modification during iteration
             if worker.isRunning():
+                print("[closeEvent] Waiting for TTS worker")
                 worker.wait(1000)
             worker.deleteLater()
         self.tts_workers.clear()
         
-        print("[Cleanup] Done")
+        print("[closeEvent] Cleanup done, closing window")
         event.accept()
         
     def stop_generation(self):
@@ -1391,204 +863,10 @@ ID: {data['id']}
             self.apply_light_theme()
             
     def apply_dark_theme(self):
-        self.setStyleSheet("""
-            QMainWindow, QWidget {
-                background-color: #1E1E1E;
-                color: #D4D4D4;
-            }
-            QTextEdit, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
-                background-color: #2D2D2D;
-                color: #D4D4D4;
-                border: 1px solid #3C3C3C;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QTextEdit:focus, QLineEdit:focus {
-                border: 1px solid #007ACC;
-            }
-            QPushButton {
-                background-color: #0E639C;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-            }
-            QPushButton:hover {
-                background-color: #1177BB;
-            }
-            QPushButton:pressed {
-                background-color: #094771;
-            }
-            QPushButton:disabled {
-                background-color: #3C3C3C;
-                color: #808080;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #3C3C3C;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }
-            QTabWidget::pane {
-                border: 1px solid #3C3C3C;
-                border-radius: 4px;
-            }
-            QTabBar::tab {
-                background-color: #2D2D2D;
-                color: #D4D4D4;
-                padding: 8px 16px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: #1E1E1E;
-                border-bottom: 2px solid #007ACC;
-            }
-            QScrollBar:vertical {
-                background-color: #2D2D2D;
-                width: 12px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #3C3C3C;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #4C4C4C;
-            }
-            QTableWidget {
-                background-color: #2D2D2D;
-                gridline-color: #3C3C3C;
-            }
-            QHeaderView::section {
-                background-color: #252526;
-                color: #D4D4D4;
-                padding: 5px;
-                border: 1px solid #3C3C3C;
-            }
-            QTreeWidget {
-                background-color: #2D2D2D;
-            }
-            QTreeWidget::item:hover {
-                background-color: #3C3C3C;
-            }
-            QTreeWidget::item:selected {
-                background-color: #094771;
-            }
-            QToolBar {
-                background-color: #252526;
-                border: none;
-                spacing: 5px;
-            }
-            QStatusBar {
-                background-color: #007ACC;
-                color: white;
-            }
-            QProgressBar {
-                border: none;
-                background-color: #3C3C3C;
-                border-radius: 4px;
-            }
-            QProgressBar::chunk {
-                background-color: #0E639C;
-                border-radius: 4px;
-            }
-        """)
+        GUI_theme.apply_dark_theme(self)
         
     def apply_light_theme(self):
-        self.setStyleSheet("""
-            QMainWindow, QWidget {
-                background-color: #F5F5F5;
-                color: #333333;
-            }
-            QTextEdit, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
-                background-color: white;
-                color: #333333;
-                border: 1px solid #CCCCCC;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QTextEdit:focus, QLineEdit:focus {
-                border: 1px solid #0078D4;
-            }
-            QPushButton {
-                background-color: #0078D4;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-            }
-            QPushButton:hover {
-                background-color: #106EBE;
-            }
-            QPushButton:pressed {
-                background-color: #005A9E;
-            }
-            QPushButton:disabled {
-                background-color: #CCCCCC;
-                color: #808080;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #CCCCCC;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }
-            QTabWidget::pane {
-                border: 1px solid #CCCCCC;
-                border-radius: 4px;
-            }
-            QTabBar::tab {
-                background-color: #E5E5E5;
-                color: #333333;
-                padding: 8px 16px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: #F5F5F5;
-                border-bottom: 2px solid #0078D4;
-            }
-            QTableWidget {
-                background-color: white;
-                gridline-color: #CCCCCC;
-            }
-            QHeaderView::section {
-                background-color: #E5E5E5;
-                color: #333333;
-                padding: 5px;
-                border: 1px solid #CCCCCC;
-            }
-            QTreeWidget {
-                background-color: white;
-            }
-            QTreeWidget::item:hover {
-                background-color: #E5E5E5;
-            }
-            QTreeWidget::item:selected {
-                background-color: #CCE4F7;
-            }
-            QToolBar {
-                background-color: #E5E5E5;
-                border: none;
-                spacing: 5px;
-            }
-            QStatusBar {
-                background-color: #0078D4;
-                color: white;
-            }
-        """)
+        GUI_theme.apply_light_theme(self)
         
     def toggle_tts(self):
         self.tts_enabled = not self.tts_enabled

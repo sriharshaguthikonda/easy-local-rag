@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import threading
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -25,17 +26,31 @@ class ChatWorker(QThread):
         self.context_results = context_results  # Pre-fetched context from main thread
         self.conversation_history = conversation_history
         self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        print(
+            "[ChatWorker.__init__] created worker id=%s, thread=%s",
+            id(self),
+            threading.get_ident(),
+        )
 
     def run(self):
         try:
+            print(
+                "[ChatWorker.run] starting worker id=%s on thread=%s",
+                id(self),
+                threading.get_ident(),
+            )
             self.status_update.emit("Generating response...")
 
             if self.settings.get("just_search", False):
+                print("[ChatWorker.run] just_search=True, returning early")
                 self.response_complete.emit("")
                 return
 
             relevant_context = "\n\n".join(
                 [res.get("document", "") for res in self.context_results]
+            )
+            print(
+                f"[ChatWorker.run] Context docs: {len(self.context_results)}; length={len(relevant_context)}"
             )
 
             if relevant_context:
@@ -52,16 +67,34 @@ class ChatWorker(QThread):
                 *self.conversation_history,
             ]
 
+            print(f"[ChatWorker.run] Calling Groq with model={self.settings['groq_model']}")
             response = self.groq_chat(messages)
+            print(f"[ChatWorker.run] Groq response length={len(response)}")
             self.conversation_history.append({"role": "assistant", "content": response})
             self.response_complete.emit(response)
+            print(
+                "[ChatWorker.run] finished worker id=%s on thread=%s",
+                id(self),
+                threading.get_ident(),
+            )
 
         except Exception as e:
+            print(f"[ChatWorker.run] ERROR: {e}")
+            import traceback as _tb
+            _tb.print_exc()
             self.status_update.emit("Error during generation")
             self.error_occurred.emit(str(e))
+        finally:
+            print(
+                "[ChatWorker.run] exiting run() worker id=%s, isRunning=%s, isFinished=%s",
+                id(self),
+                self.isRunning(),
+                self.isFinished(),
+            )
 
     def groq_chat(self, messages):
         try:
+            print("[ChatWorker.groq_chat] starting streaming call")
             stream = self.groq_client.chat.completions.create(
                 messages=messages,
                 model=self.settings["groq_model"],
@@ -80,10 +113,12 @@ class ChatWorker(QThread):
 
             return response
         except Exception as e:
+            print(f"[ChatWorker.groq_chat] error: {e}")
             self.status_update.emit("Falling back to Ollama...")
             return self.ollama_chat(messages)
 
     def ollama_chat(self, messages):
+        print("[ChatWorker.ollama_chat] starting Ollama fallback")
         stream = ollama.chat(
             model=self.settings["ollama_model"],
             messages=messages,
@@ -112,7 +147,9 @@ class TTSWorker(QThread):
 
     def run(self):
         try:
+            print(f"[TTSWorker.run] worker id={id(self)} starting")
             if not self.text.strip():
+                print("[TTSWorker.run] empty text, exiting early")
                 return
 
             tts = gTTS(
@@ -134,8 +171,11 @@ class TTSWorker(QThread):
 
             play(audio)
         except Exception as e:
-            print(f"TTS Error: {e}")
+            print(f"[TTSWorker.run] ERROR: {e}")
         finally:
+            print(
+                f"[TTSWorker.run] finishing worker id={id(self)}, isRunning={self.isRunning()}, isFinished={self.isFinished()}"
+            )
             self.finished.emit()
 
 
