@@ -16,8 +16,8 @@ from PyQt5.QtWidgets import (
     QDoubleSpinBox, QTabWidget, QGroupBox, QFormLayout, QSplitter,
     QListWidget, QListWidgetItem, QFileDialog, QMessageBox, QCheckBox,
     QSlider, QScrollArea, QFrame, QStatusBar, QProgressBar, QToolBar,
-    QAction, QDockWidget, QTreeWidget, QTreeWidgetItem, QTableWidget,
-    QHeaderView, QStyle, QStyleFactory, QInputDialog
+    QAction, QDockWidget, QTreeWidget, QTreeWidgetItem, QStyle, QStyleFactory,
+    QInputDialog
 )
 from PyQt5.QtCore import Qt, QTimer, QSize
 from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QTextCharFormat
@@ -416,13 +416,43 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         search_input_layout.addWidget(self.direct_search_btn)
         
         search_layout.addLayout(search_input_layout)
+
+        # Toolbar for sort/filter/top-k
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.addWidget(QLabel("Sort:"))
+        self.direct_sort_combo = QComboBox()
+        self.direct_sort_combo.addItems(["Distance ↑", "Distance ↓", "File A→Z"])
+        self.direct_sort_combo.currentIndexChanged.connect(self.apply_direct_search_view)
+        toolbar_layout.addWidget(self.direct_sort_combo)
+
+        toolbar_layout.addWidget(QLabel("Filter:"))
+        self.direct_filter_input = QLineEdit()
+        self.direct_filter_input.setPlaceholderText("Filter by file/snippet...")
+        self.direct_filter_input.textChanged.connect(self.apply_direct_search_view)
+        toolbar_layout.addWidget(self.direct_filter_input)
+
+        toolbar_layout.addWidget(QLabel("Top K:"))
+        self.direct_topk_spin = QSpinBox()
+        self.direct_topk_spin.setRange(1, 100)
+        self.direct_topk_spin.setValue(int(self.settings.get("top_k", 5)))
+        toolbar_layout.addWidget(self.direct_topk_spin)
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(lambda: self.search_results_list.clear())
+        toolbar_layout.addWidget(clear_btn)
+
+        toolbar_layout.addStretch()
+        search_layout.addLayout(toolbar_layout)
         
-        self.search_results_table = QTableWidget()
-        self.search_results_table.setColumnCount(3)
-        self.search_results_table.setHorizontalHeaderLabels(["File", "Similarity", "Preview"])
-        self.search_results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.search_results_table.itemDoubleClicked.connect(self.show_search_result_detail)
-        search_layout.addWidget(self.search_results_table)
+        self.search_results_list = QListWidget()
+        self.search_results_list.itemClicked.connect(self.update_search_result_detail)
+        self.search_results_list.itemDoubleClicked.connect(self.open_search_result_file)
+        search_layout.addWidget(self.search_results_list)
+
+        self.search_result_detail = QTextEdit()
+        self.search_result_detail.setReadOnly(True)
+        self.search_result_detail.setMinimumHeight(160)
+        search_layout.addWidget(self.search_result_detail)
         
         tabs.addTab(search_tab, "🔎 Direct Search")
         
