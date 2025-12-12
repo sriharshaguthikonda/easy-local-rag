@@ -1,6 +1,5 @@
 
 import sys
-import os
 import json
 import io
 import threading
@@ -17,23 +16,20 @@ from PyQt5.QtWidgets import (
     QListWidget, QListWidgetItem, QFileDialog, QMessageBox, QCheckBox,
     QSlider, QScrollArea, QFrame, QStatusBar, QProgressBar, QToolBar,
     QAction, QDockWidget, QTreeWidget, QTreeWidgetItem, QTableWidget,
-    QTableWidgetItem, QHeaderView, QStyle, QStyleFactory, QInputDialog
+    QHeaderView, QStyle, QStyleFactory, QInputDialog
 )
 from PyQt5.QtCore import Qt, QTimer, QSize
 from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QTextCharFormat
-
-import chromadb
-from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
-
-import ollama
-from groq import Groq
 
 import numpy as np
 from rank_bm25 import BM25Okapi
 import subprocess
 
-from GUI_workers import TTSWorker, ChromaDBSearchWorker
+from GUI_workers import TTSWorker
 from GUI_chat import ChatFunctionalityMixin
+from GUI_models import ModelLoadingMixin
+from GUI_chromadb import ChromaDBMixin
+from GUI_direct_search import DirectSearchMixin
 
 import GUI_settings
 import GUI_theme
@@ -70,7 +66,7 @@ sys.excepthook = _global_excepthook
 # MAIN WINDOW
 # ============================================================================
 
-class RAGChatGUI(ChatFunctionalityMixin, QMainWindow):
+class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFunctionalityMixin, QMainWindow):
     def __init__(self):
         print("  __init__ started")
         super().__init__()
@@ -469,184 +465,6 @@ class RAGChatGUI(ChatFunctionalityMixin, QMainWindow):
     def load_settings(self):
         GUI_settings.load_settings(self, self.settings)
     
-    # =========================================================================
-    # MODEL LOADING
-    # =========================================================================
-    
-    def load_groq_models(self):
-        """Dynamically load available models from Groq API"""
-        try:
-            self.statusBar.showMessage("Loading Groq models...")
-            groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-            models_response = groq_client.models.list()
-            
-            # Filter for chat models (exclude whisper, tts, etc.)
-            chat_models = []
-            for model in models_response.data:
-                model_id = model.id
-                # Skip audio/speech models
-                if any(x in model_id.lower() for x in ['whisper', 'tts', 'guard', 'safeguard']):
-                    continue
-                chat_models.append(model_id)
-            
-            # Sort models
-            chat_models.sort()
-            
-            # Save current selections
-            current_groq = self.groq_model_combo.currentText()
-            current_rewrite = self.groq_rewrite_combo.currentText()
-            
-            # Update combo boxes
-            self.groq_model_combo.clear()
-            self.groq_rewrite_combo.clear()
-            
-            self.groq_model_combo.addItems(chat_models)
-            self.groq_rewrite_combo.addItems(chat_models)
-            
-            # Restore selections if they exist
-            idx = self.groq_model_combo.findText(current_groq)
-            if idx >= 0:
-                self.groq_model_combo.setCurrentIndex(idx)
-            else:
-                # Set default to llama-3.3-70b-versatile if available
-                idx = self.groq_model_combo.findText('llama-3.3-70b-versatile')
-                if idx >= 0:
-                    self.groq_model_combo.setCurrentIndex(idx)
-            
-            idx = self.groq_rewrite_combo.findText(current_rewrite)
-            if idx >= 0:
-                self.groq_rewrite_combo.setCurrentIndex(idx)
-            else:
-                idx = self.groq_rewrite_combo.findText('llama-3.1-8b-instant')
-                if idx >= 0:
-                    self.groq_rewrite_combo.setCurrentIndex(idx)
-            
-            self.statusBar.showMessage(f"Loaded {len(chat_models)} Groq models", 3000)
-            
-        except Exception as e:
-            self.statusBar.showMessage(f"Failed to load Groq models: {e}", 5000)
-            # Fallback to default models
-            default_models = [
-                'llama-3.3-70b-versatile',
-                'llama-3.1-8b-instant',
-                'openai/gpt-oss-120b',
-                'openai/gpt-oss-20b',
-                'qwen/qwen3-32b',
-                'meta-llama/llama-4-maverick-17b-128e-instruct',
-                'meta-llama/llama-4-scout-17b-16e-instruct',
-            ]
-            if self.groq_model_combo.count() == 0:
-                self.groq_model_combo.addItems(default_models)
-                self.groq_rewrite_combo.addItems(default_models)
-    
-    def load_ollama_models(self):
-        """Dynamically load available models from Ollama"""
-        try:
-            self.statusBar.showMessage("Loading Ollama models...")
-            models_list = ollama.list()
-            
-            model_names = [m['name'] for m in models_list.get('models', [])]
-            model_names.sort()
-            
-            current = self.ollama_model_combo.currentText()
-            self.ollama_model_combo.clear()
-            
-            if model_names:
-                self.ollama_model_combo.addItems(model_names)
-                idx = self.ollama_model_combo.findText(current)
-                if idx >= 0:
-                    self.ollama_model_combo.setCurrentIndex(idx)
-                self.statusBar.showMessage(f"Loaded {len(model_names)} Ollama models", 3000)
-            else:
-                self.ollama_model_combo.addItems(['phi-3', 'llama3', 'mistral', 'gemma'])
-                self.statusBar.showMessage("No Ollama models found, using defaults", 3000)
-                
-        except Exception as e:
-            self.statusBar.showMessage(f"Failed to load Ollama models: {e}", 5000)
-    
-    # =========================================================================
-    # CHROMADB
-    # =========================================================================
-    
-    def browse_chromadb_path(self):
-        path = QFileDialog.getExistingDirectory(self, "Select ChromaDB Directory")
-        if path:
-            self.chromadb_path_edit.setText(path)
-            
-    def connect_chromadb(self, show_errors=True):
-        try:
-            self.update_settings_from_ui()
-            path = self.settings['chromadb_path']
-            
-            print(f"    Connecting to ChromaDB at: {path}")
-            self.chromadb_client = chromadb.PersistentClient(
-                path=path,
-                settings=Settings(),
-                tenant=DEFAULT_TENANT,
-                database=DEFAULT_DATABASE,
-            )
-            print("    ChromaDB client created")
-            
-            self.refresh_collections()
-            print("    Collections refreshed")
-            
-            count = self.collection_combo.count()
-            print(f"    Collection count: {count}")
-            if count > 0:
-                collection_name = self.collection_combo.currentText()
-                print(f"    Getting collection: {collection_name}")
-                self.collection = self.chromadb_client.get_collection(collection_name)
-                print("    Got collection, updating status bar")
-                self.statusBar.showMessage(f"Connected to collection: {collection_name}", 5000)
-                print("    Skipping refresh_stats for now")
-            else:
-                self.statusBar.showMessage("Connected but no collections found", 5000)
-            print("    connect_chromadb complete")
-                
-        except Exception as e:
-            print(f"    ChromaDB connection error: {e}")
-            self.statusBar.showMessage(f"Connection failed: {e}", 5000)
-            if show_errors and self.isVisible():
-                QMessageBox.critical(self, "Connection Error", f"Failed to connect to ChromaDB:\n{e}")
-            
-    def refresh_collections(self):
-        if self.chromadb_client:
-            try:
-                collections = self.chromadb_client.list_collections()
-                self.collection_combo.clear()
-                for col in collections:
-                    self.collection_combo.addItem(col.name)
-                
-                # Set default if exists
-                idx = self.collection_combo.findText(self.settings['collection_name'])
-                if idx >= 0:
-                    self.collection_combo.setCurrentIndex(idx)
-            except Exception as e:
-                print(f"Error refreshing collections: {e}")
-                
-    def refresh_stats(self):
-        print("      refresh_stats called")
-        if self.collection:
-            try:
-                print("      Getting count...")
-                count = self.collection.count()
-                print(f"      Count: {count}")
-                stats_text = f"""**Collection Statistics**
-
-Collection Name: {self.collection.name}
-Total Documents: {count}
-
-Current Settings:
-- Embedding Model: {self.settings['embedding_model']}
-- Groq Model: {self.settings['groq_model']}
-- Top K: {self.settings['top_k']}
-"""
-                print("      Setting text...")
-                self.stats_display.setPlainText(stats_text)
-                print("      Text set")
-            except Exception as e:
-                print(f"      Error in refresh_stats: {e}")
-                self.stats_display.setText(f"Error getting stats: {e}")
     
     # =========================================================================
     # CONTEXT RETRIEVAL (Main thread - ChromaDB not thread-safe)
@@ -740,59 +558,6 @@ Current Settings:
                     self.tts_worker = TTSWorker(msg['content'][:500], self.settings)
                     self.tts_worker.start()
                     break
-    
-    # =========================================================================
-    # DIRECT CHROMADB SEARCH
-    # =========================================================================
-    
-    def direct_chromadb_search(self):
-        query = self.direct_search_input.text().strip()
-        if not query or not self.collection:
-            return
-            
-        self.update_settings_from_ui()
-        self.statusBar.showMessage("Searching...")
-        
-        self.search_worker = ChromaDBSearchWorker(
-            query,
-            self.collection,
-            self.settings['embedding_model'],
-            n_results=30
-        )
-        self.search_worker.results_ready.connect(self.on_search_results)
-        self.search_worker.error_occurred.connect(self.on_error)
-        self.search_worker.start()
-        
-    def on_search_results(self, results):
-        self.search_results_table.setRowCount(len(results))
-        
-        for i, res in enumerate(results):
-            self.search_results_table.setItem(i, 0, QTableWidgetItem(res['file_name']))
-            self.search_results_table.setItem(i, 1, QTableWidgetItem(f"{res['similarity']:.4f}"))
-            self.search_results_table.setItem(i, 2, QTableWidgetItem(res['document'][:100]))
-            
-            # Store full data
-            self.search_results_table.item(i, 0).setData(Qt.UserRole, res)
-            
-        self.statusBar.showMessage(f"Found {len(results)} results", 3000)
-        
-    def show_search_result_detail(self, item):
-        row = item.row()
-        data = self.search_results_table.item(row, 0).data(Qt.UserRole)
-        
-        if data:
-            detail = f"""
-File: {data['file_name']}
-Similarity: {data['similarity']:.4f}
-Distance: {data['distance']:.4f}
-
---- Document Content ---
-{data['document']}
-
---- Metadata ---
-{json.dumps(data['metadata'], indent=2, default=str)}
-"""
-            QMessageBox.information(self, "Document Details", detail)
     
     # =========================================================================
     # COLLECTION BROWSER
