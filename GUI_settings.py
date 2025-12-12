@@ -24,6 +24,7 @@ DEFAULT_SETTINGS = {
     'tts_lang': 'en',
     'tts_tld': 'co.uk',
     'just_search': False,
+    'enter_to_send': False,
 }
 
 
@@ -48,6 +49,8 @@ def update_settings_from_ui(window, settings):
     settings['tts_volume'] = window.tts_volume_spin.value()
     settings['tts_lang'] = window.tts_lang_combo.currentText()
     settings['tts_tld'] = window.tts_tld_combo.currentText()
+    if getattr(window, "enter_to_send_checkbox", None):
+        settings['enter_to_send'] = window.enter_to_send_checkbox.isChecked()
 
 
 def _settings_path():

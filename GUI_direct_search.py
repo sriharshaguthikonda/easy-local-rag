@@ -4,36 +4,170 @@ import subprocess
 import sys
 import webbrowser
 
-from PyQt5.QtWidgets import QMessageBox, QListWidgetItem
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtWidgets import QListWidgetItem, QMessageBox
 
 
 class DirectSearchSubprocessWorker(QThread):
     results_ready = pyqtSignal(list)
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, query, chroma_path, collection_name, embed_model, n_results, include):
+    def __init__(
+        self,
+        query,
+        chroma_path,
+        collection_name,
+        embed_model,
+        rewrite_model,
+        n_results,
+        include,
+        alpha=0.5,
+        beta=0.3,
+        gamma=0.2,
+    ):
         super().__init__()
         self.query = query
         self.chroma_path = chroma_path
         self.collection_name = collection_name
         self.embed_model = embed_model
+        self.rewrite_model = rewrite_model
         self.n_results = n_results
         self.include = include
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
 
     def run(self):
-        include_literal = "[" + ",".join(repr(x) for x in self.include) + "]"
+        alpha = float(self.alpha)
+        beta = float(self.beta)
+        gamma = float(self.gamma)
         script = f"""
-import json, chromadb, ollama
+import json, chromadb, ollama, re, numpy as np
+from groq import Groq
+from rank_bm25 import BM25Okapi
 from chromadb.config import Settings, DEFAULT_TENANT, DEFAULT_DATABASE
 path = {repr(self.chroma_path)}
 col_name = {repr(self.collection_name)}
 query = {repr(self.query)}
-emb = ollama.embeddings(model={repr(self.embed_model)}, prompt=query, keep_alive=-1)["embedding"]
+embedding_model = {repr(self.embed_model)}
+rewrite_model = {repr(self.rewrite_model)}
+top_k = {int(self.n_results)}
+alpha = {alpha}
+beta = {beta}
+gamma = {gamma}
+
+def rewrite_input_and_generate_synonyms(user_input):
+    try:
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        system_prompt = (
+            "You are a helpful assistant. Your tasks are:\\n"
+            "1) Rephrase the given input to make it clearer in one sentence.\\n"
+            "2) Provide synonyms, spelling variants, plural/singular forms for keywords.\\n"
+            'Respond in JSON format:\\n{{"rephrased": "[sentence]", "keywords": {{"[word]": {{"synonyms": [], "spelling_variants": [], "plural_singular": [], "parts_of_speech": [], "related_terms": []}}}}}}'
+        )
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {{ "role": "system", "content": system_prompt }},
+                {{ "role": "user", "content": f'Rewrite and generate synonyms for: "{{user_input}}"' }},
+            ],
+            model=rewrite_model,
+            temperature=0.7,
+            stream=False,
+            response_format={{"type": "json_object"}},
+        )
+        response_json = chat_completion.choices[0].message.content.strip()
+        data = json.loads(response_json)
+        return data.get("rephrased", user_input), data.get("keywords", {{}})
+    except Exception:
+        return user_input, {{}}
+
+def build_keywords(rewritten, synonym_dict):
+    non_keywords = {{"is","a","an","and","the","of","in","on","at","by","with","for","to","from"}}
+    kws = [w for w in rewritten.lower().split() if w not in non_keywords]
+    for key, details in synonym_dict.items():
+        kws.append(key)
+        for field in ["synonyms","spelling_variants","plural_singular","parts_of_speech","related_terms"]:
+            vals = details.get(field) or []
+            kws.extend(vals)
+    return list(set(kws))
+
+def normalize_scores(items, key):
+    max_v = max([x.get(key,0) for x in items], default=1) or 1
+    for x in items:
+        x[key] = x.get(key,0) / max_v
+
+import os
+rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(query)
+emb = ollama.embeddings(model=embedding_model, prompt=rewritten_input, keep_alive=-1)["embedding"]
 client = chromadb.PersistentClient(path=path, settings=Settings(), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
 col = client.get_collection(col_name)
-res = col.query(query_embeddings=[emb], n_results={int(self.n_results)}, include={include_literal})
-print(json.dumps(res))
+res = col.query(query_embeddings=[emb], n_results=50, include=["documents","metadatas","distances"])
+
+vector_results = [
+    {{
+        "meta": meta,
+        "document": doc,
+        "vector_score": 1.0 - dist,
+        "distance": dist,
+    }}
+    for meta, doc, dist in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0], res.get("distances",[[]])[0])
+]
+
+keywords = build_keywords(rewritten_input, synonym_dict)
+keyword_results = []
+for meta, doc in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0]):
+    normalized_doc = re.sub(r"(?<=\\w)-\\s*(?=\\w)", "", (doc or "").lower())
+    match_score = sum(len(re.findall(rf"\\b{{re.escape(kw)}}\\b", normalized_doc)) + len(re.findall(rf"\\b{{re.escape(kw)}}\\b", str(meta.get("file_name","")).lower())) for kw in keywords)
+    if match_score > 0:
+        keyword_results.append({{"meta": meta, "document": doc, "keyword_score": match_score}})
+
+bm25_corpus = [doc or "" for doc in res.get("documents",[[]])[0]]
+bm25 = BM25Okapi([d.split() for d in bm25_corpus]) if bm25_corpus else None
+bm25_scores = bm25.get_scores(rewritten_input.split()) if bm25 else []
+bm25_results = [
+    {{"meta": meta, "document": doc, "bm25_score": score}}
+    for meta, doc, score in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0], bm25_scores)
+]
+
+normalize_scores(vector_results, "vector_score")
+normalize_scores(keyword_results, "keyword_score")
+normalize_scores(bm25_results, "bm25_score")
+
+combined = {{}}
+for item in vector_results:
+    name = item.get("meta",{{}}).get("file_name","Unknown")
+    combined[name] = {{"meta": item.get("meta",{{}}), "document": item.get("document",""), "final_score": alpha*item.get("vector_score",0), "distance": item.get("distance")}}
+
+for item in keyword_results:
+    name = item.get("meta",{{}}).get("file_name","Unknown")
+    combined.setdefault(name, {{"meta": item.get("meta",{{}}), "document": item.get("document",""), "final_score": 0}})["final_score"] += beta*item.get("keyword_score",0)
+
+for item in bm25_results:
+    name = item.get("meta",{{}}).get("file_name","Unknown")
+    combined.setdefault(name, {{"meta": item.get("meta",{{}}), "document": item.get("document",""), "final_score": 0}})["final_score"] += gamma*item.get("bm25_score",0)
+
+sorted_results = sorted(combined.values(), key=lambda x: x.get("final_score",0), reverse=True)[:top_k]
+formatted = []
+for item in sorted_results:
+    meta = item.get("meta") or {{}}
+    doc = item.get("document") or ""
+    dist = item.get("distance")
+    similarity = None
+    if dist is not None and isinstance(dist,(int,float)):
+        similarity = 1.0 - dist
+    formatted.append(
+        {{
+            "file_name": meta.get("file_name","Unknown") if isinstance(meta, dict) else "Unknown",
+            "file_path": meta.get("file_path") if isinstance(meta, dict) else None,
+            "document": doc,
+            "distance": dist,
+            "similarity": similarity,
+            "metadata": meta,
+            "final_score": item.get("final_score"),
+        }}
+    )
+
+print(json.dumps({{"results": formatted}}))
 """
         try:
             result = subprocess.run(
@@ -46,24 +180,10 @@ print(json.dumps(res))
                 raise RuntimeError(
                     f"Subprocess query failed rc={result.returncode} stderr={result.stderr.strip()} stdout={result.stdout.strip()}"
                 )
-            if not result.stdout:
-                raise RuntimeError("Subprocess query produced no output")
-            res = json.loads(result.stdout)
-            docs = res.get("documents", [[]])
-            metas = res.get("metadatas", [[]])
-            dists = res.get("distances", [[]])
-            formatted = []
-            for meta, doc, dist in zip(metas[0], docs[0], dists[0]):
-                formatted.append(
-                    {
-                        "file_name": meta.get("file_name", "Unknown") if isinstance(meta, dict) else "Unknown",
-                        "file_path": meta.get("file_path") if isinstance(meta, dict) else None,
-                        "document": doc,
-                        "distance": dist,
-                        "similarity": 1.0 - dist if isinstance(dist, (int, float)) else None,
-                        "metadata": meta,
-                    }
-                )
+            payload = json.loads(result.stdout)
+            formatted = payload.get("results") or []
+            if not formatted:
+                raise RuntimeError("No results returned from hybrid search")
             self.results_ready.emit(formatted)
         except Exception as e:
             import traceback as _tb
@@ -138,8 +258,12 @@ class DirectSearchMixin:
             chroma_path=self.settings.get("chromadb_path"),
             collection_name=getattr(self.collection, "name", self.settings.get("collection_name")),
             embed_model=self.settings.get("embedding_model"),
+            rewrite_model=self.settings.get("groq_rewrite_model", self.settings.get("model_name", "")),
             n_results=top_k,
             include=["documents", "metadatas", "distances"],
+            alpha=self.settings.get("hybrid_alpha", 0.5),
+            beta=self.settings.get("hybrid_beta", 0.3),
+            gamma=self.settings.get("hybrid_gamma", 0.2),
         )
         self._direct_worker.results_ready.connect(self._on_direct_worker_results)
         self._direct_worker.error_occurred.connect(self.on_error)

@@ -45,6 +45,8 @@ class ChromaDBMixin:
                 self.collection = self.chromadb_client.get_collection(collection_name)
                 print("[ChromaDBMixin.connect_chromadb] collection object acquired", flush=True)
                 self.statusBar.showMessage(f"Connected to collection: {collection_name}", 5000)
+                if hasattr(self, "update_connection_status"):
+                    self.update_connection_status(f"Connected: {collection_name}", "#2ECC71")
                 print("[ChromaDBMixin.connect_chromadb] status bar updated", flush=True)
                 # Optionally refresh stats if desired
                 # print("[ChromaDBMixin.connect_chromadb] calling refresh_stats", flush=True)
@@ -52,12 +54,16 @@ class ChromaDBMixin:
             else:
                 print("[ChromaDBMixin.connect_chromadb] no collections found on client", flush=True)
                 self.statusBar.showMessage("Connected but no collections found", 5000)
+                if hasattr(self, "update_connection_status"):
+                    self.update_connection_status("Connected (no collections)", "#F39C12")
 
             print("[ChromaDBMixin.connect_chromadb] complete", flush=True)
 
         except Exception as e:
             print(f"[ChromaDBMixin.connect_chromadb] ERROR: {e}", flush=True)
             self.statusBar.showMessage(f"Connection failed: {e}", 5000)
+            if hasattr(self, "update_connection_status"):
+                self.update_connection_status("Disconnected", "#E74C3C")
             if show_errors and self.isVisible():
                 QMessageBox.critical(self, "Connection Error", f"Failed to connect to ChromaDB:\n{e}")
 

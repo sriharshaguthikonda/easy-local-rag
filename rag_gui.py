@@ -16,10 +16,10 @@ from PyQt5.QtWidgets import (
     QDoubleSpinBox, QTabWidget, QGroupBox, QFormLayout, QSplitter,
     QListWidget, QListWidgetItem, QFileDialog, QMessageBox, QCheckBox,
     QSlider, QScrollArea, QFrame, QStatusBar, QProgressBar, QToolBar,
-    QAction, QDockWidget, QTreeWidget, QTreeWidgetItem, QStyle, QStyleFactory,
+    QAction, QTreeWidget, QTreeWidgetItem, QStyle, QStyleFactory,
     QInputDialog
 )
-from PyQt5.QtCore import Qt, QTimer, QSize
+from PyQt5.QtCore import Qt, QTimer, QSize, QSettings
 from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QTextCharFormat
 
 import numpy as np
@@ -84,10 +84,11 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         self.tts_workers = []  # Track all TTS workers
         self.is_dark_theme = True
         self.tts_enabled = True
+        self.qsettings = QSettings("easy-local-rag", "RAGChatGUI")
         # Self-test controls
         self.self_test_enabled = os.getenv("DIRECT_SEARCH_SELF_TEST", "0") == "1"
-        self.self_test_interval_ms = int(os.getenv("DIRECT_SEARCH_SELF_TEST_MS", "3000"))
-        self.self_test_query = os.getenv("DIRECT_SEARCH_SELF_TEST_QUERY", "test ping")
+        self.self_test_interval_ms = int(os.getenv("DIRECT_SEARCH_SELF_TEST_MS", "20000"))
+        self.self_test_query = os.getenv("DIRECT_SEARCH_SELF_TEST_QUERY", "orchitis Aspire")
         self._self_test_running = False
         
         # Default settings
@@ -110,6 +111,7 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         
         # Create splitter for resizable panels
         splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter = splitter
         main_layout.addWidget(splitter)
         
         # Left panel - Settings
@@ -126,6 +128,7 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         
         # Set splitter sizes
         splitter.setSizes([300, 600, 400])
+        self.restore_window_state()
         
         # Toolbar
         self.create_toolbar()
@@ -181,6 +184,9 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         reconnect_action = QAction("🔄 Reconnect DB", self)
         reconnect_action.triggered.connect(self.connect_chromadb)
         toolbar.addAction(reconnect_action)
+        self.connection_status_label = QLabel("Disconnected")
+        self.connection_status_label.setStyleSheet("color: #E74C3C; margin-left: 8px;")
+        toolbar.addWidget(self.connection_status_label)
         
         # Save settings
         save_settings_action = QAction("⚙️ Save Settings", self)
@@ -250,6 +256,9 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         refresh_btn = QPushButton("🔄 Refresh Collections")
         refresh_btn.clicked.connect(self.refresh_collections)
         db_layout.addRow("", refresh_btn)
+        self.enter_to_send_checkbox = QCheckBox("Enter to send (Shift+Enter for newline)")
+        self.enter_to_send_checkbox.stateChanged.connect(self.update_chat_input_placeholder)
+        db_layout.addRow("", self.enter_to_send_checkbox)
         
         db_group.setLayout(db_layout)
         layout.addWidget(db_group)
@@ -504,6 +513,8 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
             
     def load_settings(self):
         GUI_settings.load_settings(self, self.settings)
+        self.enter_to_send_checkbox.setChecked(self.settings.get("enter_to_send", False))
+        self.update_chat_input_placeholder()
     
     
     # =========================================================================
@@ -569,6 +580,7 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
     def closeEvent(self, event):
         """Properly clean up threads before closing"""
         print("[closeEvent] Waiting for threads to finish...")
+        self.save_window_state()
         
         # Stop self-test timer if running
         if getattr(self, "_self_test_running", False):
@@ -598,6 +610,7 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
             self.chat_worker.wait()
             self.on_response_complete("")
             self.append_message("System", "Generation stopped.", "#F39C12")
+            self.set_progress_stage("done")
             
     def append_message(self, sender, message, color, start_only=False):
         timestamp = datetime.now().strftime("%H:%M")
@@ -734,11 +747,75 @@ ID: {data['id']}
             self.tts_action.setText("🔇 TTS Off")
             
     def keyPressEvent(self, event):
-        # Ctrl+Enter to send
-        if event.key() == Qt.Key_Return and event.modifiers() == Qt.ControlModifier:
-            self.send_message()
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter) and self.chat_input.hasFocus():
+            mods = event.modifiers()
+            enter_to_send = self.settings.get("enter_to_send", False)
+            if mods & Qt.ShiftModifier:
+                return super().keyPressEvent(event)
+            if mods & Qt.ControlModifier:
+                self.send_message()
+                return
+            if enter_to_send:
+                self.send_message()
+                return
+        super().keyPressEvent(event)
+
+    def update_chat_input_placeholder(self):
+        if getattr(self, "enter_to_send_checkbox", None) and self.enter_to_send_checkbox.isChecked():
+            self.chat_input.setPlaceholderText("Type your message here... (Enter to send, Shift+Enter for newline)")
+            self.settings["enter_to_send"] = True
         else:
-            super().keyPressEvent(event)
+            self.chat_input.setPlaceholderText("Type your message here... (Ctrl+Enter to send)")
+            self.settings["enter_to_send"] = False
+
+    def restore_window_state(self):
+        geometry = self.qsettings.value("window/geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        splitter_sizes = self.qsettings.value("window/splitter_sizes")
+        if splitter_sizes and hasattr(self, "main_splitter"):
+            try:
+                sizes = [int(x) for x in splitter_sizes]
+                if sizes:
+                    self.main_splitter.setSizes(sizes)
+            except Exception:
+                pass
+
+    def save_window_state(self):
+        self.qsettings.setValue("window/geometry", self.saveGeometry())
+        if hasattr(self, "main_splitter"):
+            self.qsettings.setValue("window/splitter_sizes", self.main_splitter.sizes())
+
+    def update_connection_status(self, text, color):
+        if getattr(self, "connection_status_label", None):
+            self.connection_status_label.setText(text)
+            self.connection_status_label.setStyleSheet(f"color: {color}; margin-left: 8px;")
+
+    def set_progress_stage(self, stage):
+        """
+        Determinate progress feedback across chat workflow.
+        Stages: context -> llm -> streaming -> done/error.
+        """
+        stage_values = {
+            "context": (15, "Retrieving context…"),
+            "llm": (45, "Calling LLM…"),
+            "streaming": (80, "Streaming response…"),
+            "done": (100, "Ready"),
+            "error": (0, "Error"),
+        }
+
+        value, message = stage_values.get(stage, (0, "Ready"))
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(value)
+        self.progress_bar.setVisible(stage not in ("done", "idle"))
+        if stage == "done":
+            # brief show of completion then hide
+            QTimer.singleShot(300, lambda: self.progress_bar.setVisible(False))
+        self.statusBar.showMessage(message, 3000 if stage in ("done", "error") else 0)
+
+    def reset_progress(self):
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setValue(0)
 
 
 # ============================================================================

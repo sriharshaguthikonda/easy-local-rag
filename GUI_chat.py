@@ -44,8 +44,8 @@ class ChatFunctionalityMixin:
         self.send_btn.setEnabled(False)
         self.search_only_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)  # Indeterminate
+        self._streaming_started = False
+        self.set_progress_stage("context")
 
         # Get context in main thread (ChromaDB is not thread-safe)
         print("[_do_send] Retrieving context in main thread...")
@@ -56,6 +56,7 @@ class ChatFunctionalityMixin:
             context_results = self.get_relevant_context_hybrid(user_input)
             print(f"[_do_send] Retrieved {len(context_results)} context results")
             self.on_context_ready(context_results)
+            self.set_progress_stage("llm")
         except Exception as e:
             print(f"[_do_send] Context retrieval failed: {e}")
             self.on_error(f"Context retrieval failed: {e}")
@@ -64,6 +65,7 @@ class ChatFunctionalityMixin:
         if self.settings["just_search"]:
             print("[_do_send] just_search=True, completing without LLM")
             self.on_response_complete("")
+            self.set_progress_stage("done")
             return
 
         # Start worker for LLM calls only
@@ -78,11 +80,15 @@ class ChatFunctionalityMixin:
         self.chat_worker.status_update.connect(self.on_status_update)
         print("[_do_send] Starting ChatWorker thread")
         self.chat_worker.start()
+        self.set_progress_stage("streaming")
 
         # Add assistant placeholder
         self.append_message("Assistant", "", "#2ECC71", start_only=True)
 
     def on_response_chunk(self, chunk):
+        if not getattr(self, "_streaming_started", False):
+            self._streaming_started = True
+            self.set_progress_stage("streaming")
         cursor = self.chat_display.textCursor()
         cursor.movePosition(QTextCursor.End)
         cursor.insertText(chunk)
@@ -96,7 +102,7 @@ class ChatFunctionalityMixin:
         self.send_btn.setEnabled(True)
         self.search_only_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.progress_bar.setVisible(False)
+        self.set_progress_stage("done")
         self.statusBar.showMessage("Ready", 3000)
 
         # Clean up worker thread (it has already finished when signal is emitted)
@@ -170,7 +176,7 @@ class ChatFunctionalityMixin:
         self.send_btn.setEnabled(True)
         self.search_only_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.progress_bar.setVisible(False)
+        self.set_progress_stage("error")
 
         self.append_message("System", f"Error: {error}", "#E74C3C")
         self.statusBar.showMessage(f"Error: {error}", 5000)
