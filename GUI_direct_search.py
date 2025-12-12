@@ -24,6 +24,8 @@ class DirectSearchSubprocessWorker(QThread):
         alpha=0.5,
         beta=0.3,
         gamma=0.2,
+        delta=0.2,
+        mode="hybrid",
     ):
         super().__init__()
         self.query = query
@@ -36,13 +38,19 @@ class DirectSearchSubprocessWorker(QThread):
         self.alpha = alpha
         self.beta = beta
         self.gamma = gamma
+        self.delta = delta
+        self.mode = (mode or "hybrid").lower()
 
     def run(self):
         alpha = float(self.alpha)
         beta = float(self.beta)
         gamma = float(self.gamma)
+        delta = float(self.delta)
+        mode = self.mode
         script = f"""
 import json, chromadb, ollama, re, numpy as np
+
+import json, chromadb, ollama, re, numpy as np, sys
 from groq import Groq
 from rank_bm25 import BM25Okapi
 from chromadb.config import Settings, DEFAULT_TENANT, DEFAULT_DATABASE
@@ -55,6 +63,8 @@ top_k = {int(self.n_results)}
 alpha = {alpha}
 beta = {beta}
 gamma = {gamma}
+delta = {delta}
+mode = {repr(mode)}
 
 def rewrite_input_and_generate_synonyms(user_input):
     try:
@@ -96,11 +106,43 @@ def normalize_scores(items, key):
     for x in items:
         x[key] = x.get(key,0) / max_v
 
+def phrase_boost(document, rewritten):
+    # Simple sequential phrase boost: count occurrences of the full rewritten input (lowercased) in doc and filename
+    if not rewritten:
+        return 0.0
+    phrase = rewritten.lower()
+    doc = (document or "").lower()
+    return doc.count(phrase)
+
 import os
-rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(query)
-emb = ollama.embeddings(model=embedding_model, prompt=rewritten_input, keep_alive=-1)["embedding"]
 client = chromadb.PersistentClient(path=path, settings=Settings(), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
 col = client.get_collection(col_name)
+
+if mode == "phrase":
+    emb = ollama.embeddings(model=embedding_model, prompt=query, keep_alive=-1)["embedding"]
+    res = col.query(query_embeddings=[emb], n_results=top_k, include={self.include})
+    formatted = []
+    docs = res.get("documents",[[]])[0]
+    metas = res.get("metadatas",[[]])[0]
+    dists = res.get("distances",[[]])[0]
+    for meta, doc, dist in zip(metas, docs, dists):
+        similarity = 1.0 - dist if isinstance(dist,(int,float)) else None
+        formatted.append(
+            {{
+                "file_name": meta.get("file_name","Unknown") if isinstance(meta, dict) else "Unknown",
+                "file_path": meta.get("file_path") if isinstance(meta, dict) else None,
+                "document": doc,
+                "distance": dist,
+                "similarity": similarity,
+                "metadata": meta,
+                "final_score": similarity if similarity is not None else None,
+            }}
+        )
+    print(json.dumps({{"results": formatted}}))
+    sys.exit(0)
+
+rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(query)
+emb = ollama.embeddings(model=embedding_model, prompt=rewritten_input, keep_alive=-1)["embedding"]
 res = col.query(query_embeddings=[emb], n_results=50, include=["documents","metadatas","distances"])
 
 vector_results = [
@@ -115,11 +157,15 @@ vector_results = [
 
 keywords = build_keywords(rewritten_input, synonym_dict)
 keyword_results = []
+phrase_results = []
 for meta, doc in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0]):
     normalized_doc = re.sub(r"(?<=\\w)-\\s*(?=\\w)", "", (doc or "").lower())
     match_score = sum(len(re.findall(rf"\\b{{re.escape(kw)}}\\b", normalized_doc)) + len(re.findall(rf"\\b{{re.escape(kw)}}\\b", str(meta.get("file_name","")).lower())) for kw in keywords)
     if match_score > 0:
         keyword_results.append({{"meta": meta, "document": doc, "keyword_score": match_score}})
+    phrase_score = phrase_boost(doc, rewritten_input)
+    if phrase_score > 0:
+        phrase_results.append({{"meta": meta, "document": doc, "phrase_score": phrase_score}})
 
 bm25_corpus = [doc or "" for doc in res.get("documents",[[]])[0]]
 bm25 = BM25Okapi([d.split() for d in bm25_corpus]) if bm25_corpus else None
@@ -132,6 +178,7 @@ bm25_results = [
 normalize_scores(vector_results, "vector_score")
 normalize_scores(keyword_results, "keyword_score")
 normalize_scores(bm25_results, "bm25_score")
+normalize_scores(phrase_results, "phrase_score")
 
 combined = {{}}
 for item in vector_results:
@@ -145,6 +192,10 @@ for item in keyword_results:
 for item in bm25_results:
     name = item.get("meta",{{}}).get("file_name","Unknown")
     combined.setdefault(name, {{"meta": item.get("meta",{{}}), "document": item.get("document",""), "final_score": 0}})["final_score"] += gamma*item.get("bm25_score",0)
+
+for item in phrase_results:
+    name = item.get("meta",{{}}).get("file_name","Unknown")
+    combined.setdefault(name, {{"meta": item.get("meta",{{}}), "document": item.get("document",""), "final_score": 0}})["final_score"] += delta*item.get("phrase_score",0)
 
 sorted_results = sorted(combined.values(), key=lambda x: x.get("final_score",0), reverse=True)[:top_k]
 formatted = []
@@ -246,9 +297,27 @@ class DirectSearchMixin:
 
         self.update_settings_from_ui()
         top_k = int(self.settings.get("top_k", 5))
+        # Normalize hybrid weights so they sum to 1
+        alpha_raw = float(self.settings.get("hybrid_alpha", 0.5))
+        beta_raw = float(self.settings.get("hybrid_beta", 0.3))
+        gamma_raw = float(self.settings.get("hybrid_gamma", 0.2))
+        delta_raw = float(self.settings.get("hybrid_delta", 0.2))
+        total = alpha_raw + beta_raw + gamma_raw + delta_raw
+        if total <= 0:
+            alpha = beta = gamma = 0.0
+            delta = 1.0  # fallback to phrase if all zero/negative
+            if hasattr(self, "statusBar"):
+                self.statusBar.showMessage("Hybrid weights invalid; using delta=1.0 fallback", 4000)
+        else:
+            alpha = alpha_raw / total
+            beta = beta_raw / total
+            gamma = gamma_raw / total
+            delta = delta_raw / total
+            if abs(total - 1.0) > 1e-6 and hasattr(self, "statusBar"):
+                self.statusBar.showMessage(f"Normalized hybrid weights (sum was {total:.2f})", 3000)
         print(
-            "[DirectSearchMixin.direct_chromadb_search] settings embedding_model=%s top_k=%s"
-            % (self.settings.get("embedding_model"), top_k),
+            "[DirectSearchMixin.direct_chromadb_search] settings embedding_model=%s top_k=%s weights=(%.2f, %.2f, %.2f, %.2f)"
+            % (self.settings.get("embedding_model"), top_k, alpha, beta, gamma, delta),
             flush=True,
         )
         self.statusBar.showMessage("Searching...")
@@ -261,9 +330,11 @@ class DirectSearchMixin:
             rewrite_model=self.settings.get("groq_rewrite_model", self.settings.get("model_name", "")),
             n_results=top_k,
             include=["documents", "metadatas", "distances"],
-            alpha=self.settings.get("hybrid_alpha", 0.5),
-            beta=self.settings.get("hybrid_beta", 0.3),
-            gamma=self.settings.get("hybrid_gamma", 0.2),
+            alpha=alpha,
+            beta=beta,
+            gamma=gamma,
+            delta=delta,
+            mode=self.settings.get("direct_search_mode", "hybrid"),
         )
         self._direct_worker.results_ready.connect(self._on_direct_worker_results)
         self._direct_worker.error_occurred.connect(self.on_error)
@@ -303,9 +374,11 @@ class DirectSearchMixin:
             file_name = res.get("file_name", "Unknown")
             sim = res.get("similarity")
             dist = res.get("distance")
+            sim_display = f"{sim:.4f}" if isinstance(sim, (int, float)) else "n/a"
+            dist_display = f"{dist:.4f}" if isinstance(dist, (int, float)) else "n/a"
             doc = res.get("document", "")
             preview = (doc or "")[:180].replace("\n", " ")
-            line = f"{file_name}\n  sim={sim:.4f} dist={dist:.4f}\n  {preview}"
+            line = f"{file_name}\n  sim={sim_display} dist={dist_display}\n  {preview}"
             item = QListWidgetItem(line)
             item.setData(Qt.UserRole, res)
             self.search_results_list.addItem(item)
