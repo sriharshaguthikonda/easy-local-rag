@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 import threading
 
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -199,28 +200,39 @@ class ChromaDBSearchWorker(QThread):
 
     def run(self):
         try:
-            print("[ChromaDBSearchWorker.run] starting embedding call", flush=True)
+            thread_id = threading.get_ident()
+            print(
+                "[ChromaDBSearchWorker.run] thread=%s starting embedding call" % thread_id,
+                flush=True,
+            )
             embedding = ollama.embeddings(
                 model=self.embedding_model,
                 prompt=self.query,
                 keep_alive=-1,
             )["embedding"]
             print(
-                "[ChromaDBSearchWorker.run] embedding returned len=%s first5=%s"
-                % (len(embedding), embedding[:5] if embedding else None),
+                "[ChromaDBSearchWorker.run] embedding returned len=%s first5=%s thread=%s"
+                % (len(embedding), embedding[:5] if embedding else None, thread_id),
                 flush=True,
             )
 
             print(
-                "[ChromaDBSearchWorker.run] querying collection=%s n_results=%s"
-                % (getattr(self.collection, "name", "<no-name>"), self.n_results),
+                "[ChromaDBSearchWorker.run] querying collection=%s n_results=%s thread=%s"
+                % (getattr(self.collection, "name", "<no-name>"), self.n_results, thread_id),
                 flush=True,
             )
             try:
+                start = time.time()
+                # Minimize payload for debugging stability; can re-enable docs/metadatas later
                 results = self.collection.query(
                     query_embeddings=[embedding],
                     n_results=self.n_results,
-                    include=["documents", "metadatas", "distances"],
+                    include=["distances"],
+                )
+                elapsed = time.time() - start
+                print(
+                    "[ChromaDBSearchWorker.run] query() finished in %.3fs thread=%s" % (elapsed, thread_id),
+                    flush=True,
                 )
             except Exception as qe:
                 import traceback
@@ -302,3 +314,9 @@ class ChromaDBSearchWorker(QThread):
             print("[ChromaDBSearchWorker.run] error: %s" % e, flush=True)
             traceback.print_exc()
             self.error_occurred.emit(str(e))
+        finally:
+            print(
+                "[ChromaDBSearchWorker.run] exit thread=%s isRunning=%s isFinished=%s"
+                % (threading.get_ident(), self.isRunning(), self.isFinished()),
+                flush=True,
+            )

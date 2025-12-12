@@ -1,4 +1,5 @@
 
+import os
 import sys
 import json
 import io
@@ -37,6 +38,7 @@ import GUI_context
 
 import nest_asyncio
 from dotenv import load_dotenv
+import ollama
 
 nest_asyncio.apply()
 load_dotenv()
@@ -82,6 +84,11 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         self.tts_workers = []  # Track all TTS workers
         self.is_dark_theme = True
         self.tts_enabled = True
+        # Self-test controls
+        self.self_test_enabled = os.getenv("DIRECT_SEARCH_SELF_TEST", "0") == "1"
+        self.self_test_interval_ms = int(os.getenv("DIRECT_SEARCH_SELF_TEST_MS", "3000"))
+        self.self_test_query = os.getenv("DIRECT_SEARCH_SELF_TEST_QUERY", "test ping")
+        self._self_test_running = False
         
         # Default settings
         self.settings = GUI_settings.DEFAULT_SETTINGS.copy()
@@ -131,6 +138,15 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         self.progress_bar.setVisible(False)
         self.statusBar.addPermanentWidget(self.progress_bar)
         self.statusBar.showMessage("Ready")
+
+        # Self-test: schedule after UI is ready; will wait for Chroma connection
+        if self.self_test_enabled:
+            print(
+                "[SelfTest] Direct search self-test enabled; query=%r interval_ms=%s"
+                % (self.self_test_query, self.self_test_interval_ms),
+                flush=True,
+            )
+            QTimer.singleShot(500, self.maybe_start_direct_search_self_test)
         
     def create_toolbar(self):
         toolbar = QToolBar("Main Toolbar")
@@ -477,11 +493,64 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
     def rewrite_input_and_generate_synonyms(self, user_input):
         """Rewrite query and generate synonyms using Groq"""
         return GUI_context.rewrite_input_and_generate_synonyms(self.settings, user_input)
-    
+
+    # =========================================================================
+    # SELF-TEST: DIRECT SEARCH
+    # =========================================================================
+    def maybe_start_direct_search_self_test(self):
+        """Kick off a periodic direct-search self-test after DB is ready."""
+        if not self.self_test_enabled:
+            return
+
+        if not self.collection:
+            print("[SelfTest] Collection not ready; retrying in 1s", flush=True)
+            QTimer.singleShot(1000, self.maybe_start_direct_search_self_test)
+            return
+
+        if self._self_test_running:
+            print("[SelfTest] Already running; skipping re-start", flush=True)
+            return
+
+        print(
+            "[SelfTest] Starting periodic direct search self-test; query=%r interval_ms=%s"
+            % (self.self_test_query, self.self_test_interval_ms),
+            flush=True,
+        )
+        self._self_test_running = True
+        self.run_direct_search_self_test()
+
+    def run_direct_search_self_test(self):
+        """Perform one direct search and reschedule if still enabled."""
+        if not self._self_test_running:
+            return
+        if not self.collection:
+            print("[SelfTest] No collection available; stopping self-test", flush=True)
+            self._self_test_running = False
+            return
+
+        # Put the test query into the input box so UI reflects it
+        self.direct_search_input.setText(self.self_test_query)
+        print("[SelfTest] Triggering direct search with query=%r" % self.self_test_query, flush=True)
+        try:
+            self.direct_chromadb_search()
+        except Exception as e:
+            import traceback as _tb
+
+            print("[SelfTest] direct_chromadb_search raised: %s" % e, flush=True)
+            _tb.print_exc()
+
+        # Schedule next run
+        QTimer.singleShot(self.self_test_interval_ms, self.run_direct_search_self_test)
+
     def closeEvent(self, event):
         """Properly clean up threads before closing"""
         print("[closeEvent] Waiting for threads to finish...")
         
+        # Stop self-test timer if running
+        if getattr(self, "_self_test_running", False):
+            self._self_test_running = False
+            print("[closeEvent] Self-test loop flagged to stop")
+
         # Stop and wait for chat worker
         if self.chat_worker and self.chat_worker.isRunning():
             print("[closeEvent] Terminating ChatWorker")

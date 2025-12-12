@@ -166,6 +166,7 @@ class ChatFunctionalityMixin:
         self.context_display.setHtml(context_html)
 
     def on_error(self, error):
+        print(f"[GUI_chat.on_error] received error: {error}", flush=True)
         self.send_btn.setEnabled(True)
         self.search_only_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
