@@ -446,6 +446,40 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         self.direct_topk_spin.setValue(int(self.settings.get("top_k", 5)))
         toolbar_layout.addWidget(self.direct_topk_spin)
 
+        toolbar_layout.addWidget(QLabel("Mode:"))
+        self.direct_mode_combo = QComboBox()
+        self.direct_mode_combo.addItems(["Hybrid", "Phrase"])
+        self.direct_mode_combo.setCurrentText(self.settings.get("direct_search_mode", "hybrid").capitalize())
+        toolbar_layout.addWidget(self.direct_mode_combo)
+
+        toolbar_layout.addWidget(QLabel("α"))
+        self.direct_alpha_spin = QDoubleSpinBox()
+        self.direct_alpha_spin.setRange(0, 1)
+        self.direct_alpha_spin.setSingleStep(0.05)
+        self.direct_alpha_spin.setValue(float(self.settings.get("hybrid_alpha", self.settings.get("alpha", 0.5))))
+        toolbar_layout.addWidget(self.direct_alpha_spin)
+
+        toolbar_layout.addWidget(QLabel("β"))
+        self.direct_beta_spin = QDoubleSpinBox()
+        self.direct_beta_spin.setRange(0, 1)
+        self.direct_beta_spin.setSingleStep(0.05)
+        self.direct_beta_spin.setValue(float(self.settings.get("hybrid_beta", self.settings.get("beta", 0.3))))
+        toolbar_layout.addWidget(self.direct_beta_spin)
+
+        toolbar_layout.addWidget(QLabel("γ"))
+        self.direct_gamma_spin = QDoubleSpinBox()
+        self.direct_gamma_spin.setRange(0, 1)
+        self.direct_gamma_spin.setSingleStep(0.05)
+        self.direct_gamma_spin.setValue(float(self.settings.get("hybrid_gamma", self.settings.get("gamma", 0.2))))
+        toolbar_layout.addWidget(self.direct_gamma_spin)
+
+        toolbar_layout.addWidget(QLabel("δ"))
+        self.direct_delta_spin = QDoubleSpinBox()
+        self.direct_delta_spin.setRange(0, 1)
+        self.direct_delta_spin.setSingleStep(0.05)
+        self.direct_delta_spin.setValue(float(self.settings.get("hybrid_delta", self.settings.get("gamma", 0.2))))
+        toolbar_layout.addWidget(self.direct_delta_spin)
+
         clear_btn = QPushButton("Clear")
         clear_btn.clicked.connect(lambda: self.search_results_list.clear())
         toolbar_layout.addWidget(clear_btn)
@@ -454,6 +488,9 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         search_layout.addLayout(toolbar_layout)
         
         self.search_results_list = QListWidget()
+        self.search_results_list.setWordWrap(True)
+        self.search_results_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.search_results_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.search_results_list.itemDoubleClicked.connect(self.open_search_result_file)
         search_layout.addWidget(self.search_results_list)
         
