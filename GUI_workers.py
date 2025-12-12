@@ -191,37 +191,114 @@ class ChromaDBSearchWorker(QThread):
         self.collection = collection
         self.embedding_model = embedding_model
         self.n_results = n_results
+        print(
+            "[ChromaDBSearchWorker.__init__] query_len=%s collection=%s model=%s n_results=%s"
+            % (len(query), getattr(collection, "name", "<no-name>"), embedding_model, n_results),
+            flush=True,
+        )
 
     def run(self):
         try:
+            print("[ChromaDBSearchWorker.run] starting embedding call", flush=True)
             embedding = ollama.embeddings(
                 model=self.embedding_model,
                 prompt=self.query,
                 keep_alive=-1,
             )["embedding"]
-
-            results = self.collection.query(
-                query_embeddings=[embedding],
-                n_results=self.n_results,
-                include=["documents", "metadatas", "distances"],
+            print(
+                "[ChromaDBSearchWorker.run] embedding returned len=%s first5=%s"
+                % (len(embedding), embedding[:5] if embedding else None),
+                flush=True,
             )
 
-            formatted = []
-            for meta, doc, dist in zip(
-                results["metadatas"][0],
-                results["documents"][0],
-                results["distances"][0],
-            ):
-                formatted.append(
-                    {
-                        "file_name": meta.get("file_name", "Unknown"),
-                        "document": doc,
-                        "distance": dist,
-                        "similarity": 1.0 - dist,
-                        "metadata": meta,
-                    }
+            print(
+                "[ChromaDBSearchWorker.run] querying collection=%s n_results=%s"
+                % (getattr(self.collection, "name", "<no-name>"), self.n_results),
+                flush=True,
+            )
+            try:
+                results = self.collection.query(
+                    query_embeddings=[embedding],
+                    n_results=self.n_results,
+                    include=["documents", "metadatas", "distances"],
                 )
+            except Exception as qe:
+                import traceback
 
-            self.results_ready.emit(formatted)
+                print("[ChromaDBSearchWorker.run] query() raised: %s (%s)" % (qe, type(qe)), flush=True)
+                traceback.print_exc()
+                self.error_occurred.emit(f"Chroma query failed: {qe}")
+                return
+
+            if results is None:
+                print("[ChromaDBSearchWorker.run] results is None", flush=True)
+                self.error_occurred.emit("Chroma query returned None")
+                return
+
+            print(
+                "[ChromaDBSearchWorker.run] raw results keys=%s lens=%s"
+                % (
+                    list(results.keys()),
+                    {k: (len(v[0]) if isinstance(v, list) and v else "n/a") for k, v in results.items()},
+                ),
+                flush=True,
+            )
+
+            # Defensive checks on expected structure
+            try:
+                metadatas = results.get("metadatas", [])
+                documents = results.get("documents", [])
+                distances = results.get("distances", [])
+                print(
+                    "[ChromaDBSearchWorker.run] unpack lengths metas=%s docs=%s dists=%s"
+                    % (len(metadatas), len(documents), len(distances)),
+                    flush=True,
+                )
+                first_meta_len = len(metadatas[0]) if metadatas and metadatas[0] else 0
+                first_doc_len = len(documents[0]) if documents and documents[0] else 0
+                first_dist_len = len(distances[0]) if distances and distances[0] else 0
+                print(
+                    "[ChromaDBSearchWorker.run] first batch lens metas=%s docs=%s dists=%s"
+                    % (first_meta_len, first_doc_len, first_dist_len),
+                    flush=True,
+                )
+            except Exception as se:
+                import traceback
+
+                print("[ChromaDBSearchWorker.run] structure check failed: %s" % se, flush=True)
+                traceback.print_exc()
+                self.error_occurred.emit(f"Chroma result structure error: {se}")
+                return
+
+            formatted = []
+            try:
+                for idx, (meta, doc, dist) in enumerate(
+                    zip(
+                        results["metadatas"][0],
+                        results["documents"][0],
+                        results["distances"][0],
+                    )
+                ):
+                    formatted.append(
+                        {
+                            "file_name": meta.get("file_name", "Unknown"),
+                            "document": doc,
+                            "distance": dist,
+                            "similarity": 1.0 - dist,
+                            "metadata": meta,
+                        }
+                    )
+                print("[ChromaDBSearchWorker.run] emitting %s formatted results" % len(formatted), flush=True)
+                self.results_ready.emit(formatted)
+            except Exception as pe:
+                import traceback
+
+                print("[ChromaDBSearchWorker.run] post-process error: %s" % pe, flush=True)
+                traceback.print_exc()
+                self.error_occurred.emit(f"Chroma post-process failed: {pe}")
         except Exception as e:
+            import traceback
+
+            print("[ChromaDBSearchWorker.run] error: %s" % e, flush=True)
+            traceback.print_exc()
             self.error_occurred.emit(str(e))
