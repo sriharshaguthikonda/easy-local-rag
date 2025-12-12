@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import webbrowser
 
 from PyQt5.QtWidgets import QMessageBox, QListWidgetItem
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -219,16 +220,64 @@ class DirectSearchMixin:
             return
         data = item.data(Qt.UserRole) or {}
         path = data.get("file_path") or data.get("file_name")
+        print(f"[DirectSearch] open_search_result_file path={path!r}", flush=True)
         if not path:
+            print("[DirectSearch] No file path available", flush=True)
             QMessageBox.information(self, "Open File", "No file path available.")
             return
         if not os.path.exists(path):
+            print(f"[DirectSearch] File not found: {path}", flush=True)
             QMessageBox.warning(self, "Open File", f"File not found:\n{path}")
             return
+        # Try multiple strategies to launch
+        
+
+        # Fallback 1: explorer (direct)
         try:
-            os.startfile(path)
+            print(f"[DirectSearch] Fallback explorer (open): {path}", flush=True)
+            subprocess.Popen(["explorer", path])
+            return
         except Exception as e:
-            QMessageBox.warning(self, "Open File", f"Failed to open file:\n{path}\n\nError: {e}")
+            import traceback as _tb
+
+            print(f"[DirectSearch] explorer open failed: {e}", flush=True)
+            _tb.print_exc()
+
+        # Fallback 2: explorer /select to show file in folder
+        try:
+            print(f"[DirectSearch] Fallback explorer (/select): {path}", flush=True)
+            subprocess.Popen(["explorer", "/select,", path])
+            return
+        except Exception as e:
+            import traceback as _tb
+
+            print(f"[DirectSearch] explorer select failed: {e}", flush=True)
+            _tb.print_exc()
+
+        # Fallback 3: cmd /c start "" "<path>"
+        try:
+            print(f"[DirectSearch] Fallback cmd start: {path}", flush=True)
+            subprocess.Popen(["cmd", "/c", "start", "", path], shell=False)
+            return
+        except Exception as e:
+            import traceback as _tb
+
+            print(f"[DirectSearch] cmd start failed: {e}", flush=True)
+            _tb.print_exc()
+
+        # Fallback 4: webbrowser (may pick default browser)
+        try:
+            print(f"[DirectSearch] Fallback webbrowser.open: {path}", flush=True)
+            webbrowser.open(path)
+            return
+        except Exception as e:
+            import traceback as _tb
+
+            print(f"[DirectSearch] webbrowser open failed: {e}", flush=True)
+            _tb.print_exc()
+
+        # If everything fails, inform the user
+        QMessageBox.warning(self, "Open File", f"Failed to open file via all methods:\n{path}")
 
     def _on_search_worker_finished(self):
         print("[DirectSearchMixin._on_search_worker_finished] search worker finished", flush=True)
