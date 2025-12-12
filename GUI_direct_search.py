@@ -1,12 +1,74 @@
 import json
+import os
 import subprocess
 import sys
 
-from PyQt5.QtWidgets import QMessageBox, QTableWidgetItem
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtWidgets import QMessageBox, QListWidgetItem
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
-import ollama
-from GUI_workers import ChromaDBSearchWorker
+
+class DirectSearchSubprocessWorker(QThread):
+    results_ready = pyqtSignal(list)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, query, chroma_path, collection_name, embed_model, n_results, include):
+        super().__init__()
+        self.query = query
+        self.chroma_path = chroma_path
+        self.collection_name = collection_name
+        self.embed_model = embed_model
+        self.n_results = n_results
+        self.include = include
+
+    def run(self):
+        include_literal = "[" + ",".join(repr(x) for x in self.include) + "]"
+        script = f"""
+import json, chromadb, ollama
+from chromadb.config import Settings, DEFAULT_TENANT, DEFAULT_DATABASE
+path = {repr(self.chroma_path)}
+col_name = {repr(self.collection_name)}
+query = {repr(self.query)}
+emb = ollama.embeddings(model={repr(self.embed_model)}, prompt=query, keep_alive=-1)["embedding"]
+client = chromadb.PersistentClient(path=path, settings=Settings(), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
+col = client.get_collection(col_name)
+res = col.query(query_embeddings=[emb], n_results={int(self.n_results)}, include={include_literal})
+print(json.dumps(res))
+"""
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Subprocess query failed rc={result.returncode} stderr={result.stderr.strip()} stdout={result.stdout.strip()}"
+                )
+            if not result.stdout:
+                raise RuntimeError("Subprocess query produced no output")
+            res = json.loads(result.stdout)
+            docs = res.get("documents", [[]])
+            metas = res.get("metadatas", [[]])
+            dists = res.get("distances", [[]])
+            formatted = []
+            for meta, doc, dist in zip(metas[0], docs[0], dists[0]):
+                formatted.append(
+                    {
+                        "file_name": meta.get("file_name", "Unknown") if isinstance(meta, dict) else "Unknown",
+                        "file_path": meta.get("file_path") if isinstance(meta, dict) else None,
+                        "document": doc,
+                        "distance": dist,
+                        "similarity": 1.0 - dist if isinstance(dist, (int, float)) else None,
+                        "metadata": meta,
+                    }
+                )
+            self.results_ready.emit(formatted)
+        except Exception as e:
+            import traceback as _tb
+
+            _tb.print_exc()
+            self.error_occurred.emit(str(e))
 
 
 class DirectSearchMixin:
@@ -57,60 +119,116 @@ class DirectSearchMixin:
             return
 
         # Normal path: run search via subprocess to avoid native crash in worker
-        self.update_settings_from_ui()
-        print("[DirectSearchMixin.direct_chromadb_search] settings embedding_model=%s" % self.settings.get("embedding_model"), flush=True)
-        self.statusBar.showMessage("Searching...")
-        try:
-            res = self._query_via_subprocess(
-                query,
-                n_results=5,
-                include=["documents", "metadatas", "distances"],
-            )
-            formatted = []
-            docs = res.get("documents", [[]])
-            metas = res.get("metadatas", [[]])
-            dists = res.get("distances", [[]])
-            for meta, doc, dist in zip(metas[0], docs[0], dists[0]):
-                formatted.append(
-                    {
-                        "file_name": meta.get("file_name", "Unknown") if isinstance(meta, dict) else "Unknown",
-                        "document": doc,
-                        "distance": dist,
-                        "similarity": 1.0 - dist if isinstance(dist, (int, float)) else None,
-                        "metadata": meta,
-                    }
-                )
-            print("[DirectSearchMixin.direct_chromadb_search] subprocess returned %s results" % len(formatted), flush=True)
-            self.on_search_results(formatted)
-        except Exception as e:
-            import traceback as _tb
+        # Sync top-k from direct control before saving settings
+        if hasattr(self, "direct_topk_spin"):
+            self.settings["top_k"] = int(self.direct_topk_spin.value())
 
-            print("[DirectSearchMixin.direct_chromadb_search] subprocess path error: %s" % e, flush=True)
-            _tb.print_exc()
-            self.on_error(str(e))
+        self.update_settings_from_ui()
+        top_k = int(self.settings.get("top_k", 5))
+        print(
+            "[DirectSearchMixin.direct_chromadb_search] settings embedding_model=%s top_k=%s"
+            % (self.settings.get("embedding_model"), top_k),
+            flush=True,
+        )
+        self.statusBar.showMessage("Searching...")
+        # Run subprocess query off the UI thread
+        self._direct_worker = DirectSearchSubprocessWorker(
+            query=query,
+            chroma_path=self.settings.get("chromadb_path"),
+            collection_name=getattr(self.collection, "name", self.settings.get("collection_name")),
+            embed_model=self.settings.get("embedding_model"),
+            n_results=top_k,
+            include=["documents", "metadatas", "distances"],
+        )
+        self._direct_worker.results_ready.connect(self._on_direct_worker_results)
+        self._direct_worker.error_occurred.connect(self.on_error)
+        self._direct_worker.finished.connect(lambda: self.statusBar.showMessage("Search complete", 3000))
+        self._direct_worker.start()
+
+    def apply_direct_search_view(self):
+        results = getattr(self, "_direct_results", []) or []
+        filt = getattr(self, "direct_filter_input", None)
+        sort_combo = getattr(self, "direct_sort_combo", None)
+        filter_text = filt.text().strip().lower() if filt else ""
+        view = []
+        for r in results:
+            hay = (r.get("file_name", "") + " " + (r.get("document", "") or "")).lower()
+            if filter_text and filter_text not in hay:
+                continue
+            view.append(r)
+        if sort_combo:
+            mode = sort_combo.currentText()
+            if mode == "Distance ↑":
+                view.sort(key=lambda x: x.get("distance", 0))
+            elif mode == "Distance ↓":
+                view.sort(key=lambda x: x.get("distance", 0), reverse=True)
+            elif mode == "File A→Z":
+                view.sort(key=lambda x: x.get("file_name", ""))
+        print("[DirectSearchMixin.apply_direct_search_view] rendering %s items" % len(view), flush=True)
+        self.on_search_results(view)
 
     def on_search_results(self, results):
         print(
             "[DirectSearchMixin.on_search_results] received %s results type=%s" % (len(results), type(results)),
             flush=True,
         )
-        self.search_results_table.setRowCount(len(results))
+        self.search_results_list.clear()
 
         for i, res in enumerate(results):
-            print(
-                "[DirectSearchMixin.on_search_results] row=%s file=%s sim=%.4f distance=%.4f"
-                % (i, res.get("file_name"), res.get("similarity"), res.get("distance")),
-                flush=True,
-            )
-            self.search_results_table.setItem(i, 0, QTableWidgetItem(res["file_name"]))
-            self.search_results_table.setItem(i, 1, QTableWidgetItem(f"{res['similarity']:.4f}"))
-            self.search_results_table.setItem(i, 2, QTableWidgetItem(res["document"][:100]))
-
-            # Store full data
-            self.search_results_table.item(i, 0).setData(Qt.UserRole, res)
+            file_name = res.get("file_name", "Unknown")
+            sim = res.get("similarity")
+            dist = res.get("distance")
+            doc = res.get("document", "")
+            preview = (doc or "")[:180].replace("\n", " ")
+            line = f"{file_name}\n  sim={sim:.4f} dist={dist:.4f}\n  {preview}"
+            item = QListWidgetItem(line)
+            item.setData(Qt.UserRole, res)
+            self.search_results_list.addItem(item)
 
         self.statusBar.showMessage(f"Found {len(results)} results", 3000)
         print("[DirectSearchMixin.on_search_results] table updated", flush=True)
+
+    def _on_direct_worker_results(self, results):
+        # Store and render with sort/filter
+        self._direct_results = results
+        self.apply_direct_search_view()
+
+    def update_search_result_detail(self, item):
+        if not item:
+            return
+        data = item.data(Qt.UserRole) or {}
+        file_name = data.get("file_name", "Unknown")
+        file_path = data.get("file_path") or file_name
+        dist = data.get("distance")
+        sim = data.get("similarity")
+        doc = data.get("document", "") or ""
+        meta = data.get("metadata") or {}
+        detail = (
+            f"File: {file_name}\n"
+            f"Path: {file_path}\n"
+            f"Similarity: {sim}\n"
+            f"Distance: {dist}\n\n"
+            f"Snippet:\n{doc[:1200]}\n\n"
+            f"Metadata:\n{json.dumps(meta, indent=2, default=str)}"
+        )
+        if hasattr(self, "search_result_detail"):
+            self.search_result_detail.setPlainText(detail)
+
+    def open_search_result_file(self, item):
+        if not item:
+            return
+        data = item.data(Qt.UserRole) or {}
+        path = data.get("file_path") or data.get("file_name")
+        if not path:
+            QMessageBox.information(self, "Open File", "No file path available.")
+            return
+        if not os.path.exists(path):
+            QMessageBox.warning(self, "Open File", f"File not found:\n{path}")
+            return
+        try:
+            os.startfile(path)
+        except Exception as e:
+            QMessageBox.warning(self, "Open File", f"Failed to open file:\n{path}\n\nError: {e}")
 
     def _on_search_worker_finished(self):
         print("[DirectSearchMixin._on_search_worker_finished] search worker finished", flush=True)
@@ -120,27 +238,7 @@ class DirectSearchMixin:
 
     def show_search_result_detail(self, item):
         print("[DirectSearchMixin.show_search_result_detail] invoked", flush=True)
-        row = item.row()
-        data = self.search_results_table.item(row, 0).data(Qt.UserRole)
-
-        if data:
-            print(
-                "[DirectSearchMixin.show_search_result_detail] row=%s file=%s distance=%.4f"
-                % (row, data.get("file_name"), data.get("distance")),
-                flush=True,
-            )
-            detail = f"""
-File: {data['file_name']}
-Similarity: {data['similarity']:.4f}
-Distance: {data['distance']:.4f}
-
---- Document Content ---
-{data['document']}
-
---- Metadata ---
-{json.dumps(data['metadata'], indent=2, default=str)}
-"""
-            QMessageBox.information(self, "Search Result Detail", detail)
+        self.update_search_result_detail(item)
 
     # ------------------------------------------------------------------
     # Subprocess helper
