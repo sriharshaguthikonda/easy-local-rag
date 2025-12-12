@@ -445,14 +445,8 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         search_layout.addLayout(toolbar_layout)
         
         self.search_results_list = QListWidget()
-        self.search_results_list.itemClicked.connect(self.update_search_result_detail)
         self.search_results_list.itemDoubleClicked.connect(self.open_search_result_file)
         search_layout.addWidget(self.search_results_list)
-
-        self.search_result_detail = QTextEdit()
-        self.search_result_detail.setReadOnly(True)
-        self.search_result_detail.setMinimumHeight(160)
-        search_layout.addWidget(self.search_result_detail)
         
         tabs.addTab(search_tab, "🔎 Direct Search")
         
