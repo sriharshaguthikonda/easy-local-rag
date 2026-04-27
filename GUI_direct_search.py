@@ -7,6 +7,172 @@ import webbrowser
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import QListWidgetItem, QMessageBox
 
+# Static script — no user data interpolated.  All params arrive via the
+# _DS_ARGS env var (JSON), so there is no code-injection surface.
+_SEARCH_SCRIPT = """
+import json, os, chromadb, ollama, re, numpy as np, sys
+from groq import Groq
+from rank_bm25 import BM25Okapi
+from chromadb.config import Settings, DEFAULT_TENANT, DEFAULT_DATABASE
+
+_a = json.loads(os.environ["_DS_ARGS"])
+path            = _a["path"]
+col_name        = _a["col_name"]
+query           = _a["query"]
+embedding_model = _a["embedding_model"]
+rewrite_model   = _a["rewrite_model"]
+top_k           = int(_a["top_k"])
+alpha           = float(_a["alpha"])
+beta            = float(_a["beta"])
+gamma           = float(_a["gamma"])
+delta           = float(_a["delta"])
+mode            = _a["mode"]
+include         = _a["include"]
+
+def rewrite_input_and_generate_synonyms(user_input):
+    try:
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        system_prompt = (
+            "You are a helpful assistant. Your tasks are:\\n"
+            "1) Rephrase the given input to make it clearer in one sentence.\\n"
+            "2) Provide synonyms, spelling variants, plural/singular forms for keywords.\\n"
+            'Respond in JSON format:\\n{"rephrased": "[sentence]", "keywords": {"[word]": {"synonyms": [], "spelling_variants": [], "plural_singular": [], "parts_of_speech": [], "related_terms": []}}}'
+        )
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f'Rewrite and generate synonyms for: "{user_input}"'},
+            ],
+            model=rewrite_model,
+            temperature=0.7,
+            stream=False,
+            response_format={"type": "json_object"},
+        )
+        response_json = chat_completion.choices[0].message.content.strip()
+        data = json.loads(response_json)
+        return data.get("rephrased", user_input), data.get("keywords", {})
+    except Exception:
+        return user_input, {}
+
+def build_keywords(rewritten, synonym_dict):
+    non_keywords = {"is","a","an","and","the","of","in","on","at","by","with","for","to","from"}
+    kws = [w for w in rewritten.lower().split() if w not in non_keywords]
+    for key, details in synonym_dict.items():
+        kws.append(key)
+        for field in ["synonyms","spelling_variants","plural_singular","parts_of_speech","related_terms"]:
+            vals = details.get(field) or []
+            kws.extend(vals)
+    return list(set(kws))
+
+def normalize_scores(items, key):
+    max_v = max([x.get(key,0) for x in items], default=1) or 1
+    for x in items:
+        x[key] = x.get(key,0) / max_v
+
+def phrase_boost(document, rewritten):
+    if not rewritten:
+        return 0.0
+    phrase = rewritten.lower()
+    doc = (document or "").lower()
+    return doc.count(phrase)
+
+client = chromadb.PersistentClient(path=path, settings=Settings(), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
+col = client.get_collection(col_name)
+
+if mode == "phrase":
+    emb = ollama.embeddings(model=embedding_model, prompt=query, keep_alive=-1)["embedding"]
+    res = col.query(query_embeddings=[emb], n_results=top_k, include=include)
+    formatted = []
+    docs = res.get("documents",[[]])[0]
+    metas = res.get("metadatas",[[]])[0]
+    dists = res.get("distances",[[]])[0]
+    for meta, doc, dist in zip(metas, docs, dists):
+        similarity = 1.0 - dist if isinstance(dist,(int,float)) else None
+        formatted.append({
+            "file_name": meta.get("file_name","Unknown") if isinstance(meta, dict) else "Unknown",
+            "file_path": meta.get("file_path") if isinstance(meta, dict) else None,
+            "document": doc,
+            "distance": dist,
+            "similarity": similarity,
+            "metadata": meta,
+            "final_score": similarity if similarity is not None else None,
+        })
+    print(json.dumps({"results": formatted}))
+    sys.exit(0)
+
+rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(query)
+emb = ollama.embeddings(model=embedding_model, prompt=rewritten_input, keep_alive=-1)["embedding"]
+res = col.query(query_embeddings=[emb], n_results=50, include=["documents","metadatas","distances"])
+
+vector_results = [
+    {"meta": meta, "document": doc, "vector_score": 1.0 - dist, "distance": dist}
+    for meta, doc, dist in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0], res.get("distances",[[]])[0])
+]
+
+keywords = build_keywords(rewritten_input, synonym_dict)
+keyword_results = []
+phrase_results = []
+for meta, doc in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0]):
+    normalized_doc = re.sub(r"(?<=\\w)-\\s*(?=\\w)", "", (doc or "").lower())
+    match_score = sum(len(re.findall(rf"\\b{re.escape(kw)}\\b", normalized_doc)) + len(re.findall(rf"\\b{re.escape(kw)}\\b", str(meta.get("file_name","")).lower())) for kw in keywords)
+    if match_score > 0:
+        keyword_results.append({"meta": meta, "document": doc, "keyword_score": match_score})
+    phrase_score = phrase_boost(doc, rewritten_input)
+    if phrase_score > 0:
+        phrase_results.append({"meta": meta, "document": doc, "phrase_score": phrase_score})
+
+bm25_corpus = [doc or "" for doc in res.get("documents",[[]])[0]]
+bm25 = BM25Okapi([d.split() for d in bm25_corpus]) if bm25_corpus else None
+bm25_scores = bm25.get_scores(rewritten_input.split()) if bm25 else []
+bm25_results = [
+    {"meta": meta, "document": doc, "bm25_score": score}
+    for meta, doc, score in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0], bm25_scores)
+]
+
+normalize_scores(vector_results, "vector_score")
+normalize_scores(keyword_results, "keyword_score")
+normalize_scores(bm25_results, "bm25_score")
+normalize_scores(phrase_results, "phrase_score")
+
+combined = {}
+for item in vector_results:
+    name = item.get("meta",{}).get("file_name","Unknown")
+    combined[name] = {"meta": item.get("meta",{}), "document": item.get("document",""), "final_score": alpha*item.get("vector_score",0), "distance": item.get("distance")}
+
+for item in keyword_results:
+    name = item.get("meta",{}).get("file_name","Unknown")
+    combined.setdefault(name, {"meta": item.get("meta",{}), "document": item.get("document",""), "final_score": 0})["final_score"] += beta*item.get("keyword_score",0)
+
+for item in bm25_results:
+    name = item.get("meta",{}).get("file_name","Unknown")
+    combined.setdefault(name, {"meta": item.get("meta",{}), "document": item.get("document",""), "final_score": 0})["final_score"] += gamma*item.get("bm25_score",0)
+
+for item in phrase_results:
+    name = item.get("meta",{}).get("file_name","Unknown")
+    combined.setdefault(name, {"meta": item.get("meta",{}), "document": item.get("document",""), "final_score": 0})["final_score"] += delta*item.get("phrase_score",0)
+
+sorted_results = sorted(combined.values(), key=lambda x: x.get("final_score",0), reverse=True)[:top_k]
+formatted = []
+for item in sorted_results:
+    meta = item.get("meta") or {}
+    doc = item.get("document") or ""
+    dist = item.get("distance")
+    similarity = None
+    if dist is not None and isinstance(dist,(int,float)):
+        similarity = 1.0 - dist
+    formatted.append({
+        "file_name": meta.get("file_name","Unknown") if isinstance(meta, dict) else "Unknown",
+        "file_path": meta.get("file_path") if isinstance(meta, dict) else None,
+        "document": doc,
+        "distance": dist,
+        "similarity": similarity,
+        "metadata": meta,
+        "final_score": item.get("final_score"),
+    })
+
+print(json.dumps({"results": formatted}))
+"""
+
 
 class DirectSearchSubprocessWorker(QThread):
     results_ready = pyqtSignal(list)
@@ -47,185 +213,28 @@ class DirectSearchSubprocessWorker(QThread):
         gamma = float(self.gamma)
         delta = float(self.delta)
         mode = self.mode
-        script = f"""
-import json, chromadb, ollama, re, numpy as np
-
-import json, chromadb, ollama, re, numpy as np, sys
-from groq import Groq
-from rank_bm25 import BM25Okapi
-from chromadb.config import Settings, DEFAULT_TENANT, DEFAULT_DATABASE
-path = {repr(self.chroma_path)}
-col_name = {repr(self.collection_name)}
-query = {repr(self.query)}
-embedding_model = {repr(self.embed_model)}
-rewrite_model = {repr(self.rewrite_model)}
-top_k = {int(self.n_results)}
-alpha = {alpha}
-beta = {beta}
-gamma = {gamma}
-delta = {delta}
-mode = {repr(mode)}
-
-def rewrite_input_and_generate_synonyms(user_input):
-    try:
-        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        system_prompt = (
-            "You are a helpful assistant. Your tasks are:\\n"
-            "1) Rephrase the given input to make it clearer in one sentence.\\n"
-            "2) Provide synonyms, spelling variants, plural/singular forms for keywords.\\n"
-            'Respond in JSON format:\\n{{"rephrased": "[sentence]", "keywords": {{"[word]": {{"synonyms": [], "spelling_variants": [], "plural_singular": [], "parts_of_speech": [], "related_terms": []}}}}}}'
-        )
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {{ "role": "system", "content": system_prompt }},
-                {{ "role": "user", "content": f'Rewrite and generate synonyms for: "{{user_input}}"' }},
-            ],
-            model=rewrite_model,
-            temperature=0.7,
-            stream=False,
-            response_format={{"type": "json_object"}},
-        )
-        response_json = chat_completion.choices[0].message.content.strip()
-        data = json.loads(response_json)
-        return data.get("rephrased", user_input), data.get("keywords", {{}})
-    except Exception:
-        return user_input, {{}}
-
-def build_keywords(rewritten, synonym_dict):
-    non_keywords = {{"is","a","an","and","the","of","in","on","at","by","with","for","to","from"}}
-    kws = [w for w in rewritten.lower().split() if w not in non_keywords]
-    for key, details in synonym_dict.items():
-        kws.append(key)
-        for field in ["synonyms","spelling_variants","plural_singular","parts_of_speech","related_terms"]:
-            vals = details.get(field) or []
-            kws.extend(vals)
-    return list(set(kws))
-
-def normalize_scores(items, key):
-    max_v = max([x.get(key,0) for x in items], default=1) or 1
-    for x in items:
-        x[key] = x.get(key,0) / max_v
-
-def phrase_boost(document, rewritten):
-    # Simple sequential phrase boost: count occurrences of the full rewritten input (lowercased) in doc and filename
-    if not rewritten:
-        return 0.0
-    phrase = rewritten.lower()
-    doc = (document or "").lower()
-    return doc.count(phrase)
-
-import os
-client = chromadb.PersistentClient(path=path, settings=Settings(), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
-col = client.get_collection(col_name)
-
-if mode == "phrase":
-    emb = ollama.embeddings(model=embedding_model, prompt=query, keep_alive=-1)["embedding"]
-    res = col.query(query_embeddings=[emb], n_results=top_k, include={self.include})
-    formatted = []
-    docs = res.get("documents",[[]])[0]
-    metas = res.get("metadatas",[[]])[0]
-    dists = res.get("distances",[[]])[0]
-    for meta, doc, dist in zip(metas, docs, dists):
-        similarity = 1.0 - dist if isinstance(dist,(int,float)) else None
-        formatted.append(
-            {{
-                "file_name": meta.get("file_name","Unknown") if isinstance(meta, dict) else "Unknown",
-                "file_path": meta.get("file_path") if isinstance(meta, dict) else None,
-                "document": doc,
-                "distance": dist,
-                "similarity": similarity,
-                "metadata": meta,
-                "final_score": similarity if similarity is not None else None,
-            }}
-        )
-    print(json.dumps({{"results": formatted}}))
-    sys.exit(0)
-
-rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(query)
-emb = ollama.embeddings(model=embedding_model, prompt=rewritten_input, keep_alive=-1)["embedding"]
-res = col.query(query_embeddings=[emb], n_results=50, include=["documents","metadatas","distances"])
-
-vector_results = [
-    {{
-        "meta": meta,
-        "document": doc,
-        "vector_score": 1.0 - dist,
-        "distance": dist,
-    }}
-    for meta, doc, dist in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0], res.get("distances",[[]])[0])
-]
-
-keywords = build_keywords(rewritten_input, synonym_dict)
-keyword_results = []
-phrase_results = []
-for meta, doc in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0]):
-    normalized_doc = re.sub(r"(?<=\\w)-\\s*(?=\\w)", "", (doc or "").lower())
-    match_score = sum(len(re.findall(rf"\\b{{re.escape(kw)}}\\b", normalized_doc)) + len(re.findall(rf"\\b{{re.escape(kw)}}\\b", str(meta.get("file_name","")).lower())) for kw in keywords)
-    if match_score > 0:
-        keyword_results.append({{"meta": meta, "document": doc, "keyword_score": match_score}})
-    phrase_score = phrase_boost(doc, rewritten_input)
-    if phrase_score > 0:
-        phrase_results.append({{"meta": meta, "document": doc, "phrase_score": phrase_score}})
-
-bm25_corpus = [doc or "" for doc in res.get("documents",[[]])[0]]
-bm25 = BM25Okapi([d.split() for d in bm25_corpus]) if bm25_corpus else None
-bm25_scores = bm25.get_scores(rewritten_input.split()) if bm25 else []
-bm25_results = [
-    {{"meta": meta, "document": doc, "bm25_score": score}}
-    for meta, doc, score in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0], bm25_scores)
-]
-
-normalize_scores(vector_results, "vector_score")
-normalize_scores(keyword_results, "keyword_score")
-normalize_scores(bm25_results, "bm25_score")
-normalize_scores(phrase_results, "phrase_score")
-
-combined = {{}}
-for item in vector_results:
-    name = item.get("meta",{{}}).get("file_name","Unknown")
-    combined[name] = {{"meta": item.get("meta",{{}}), "document": item.get("document",""), "final_score": alpha*item.get("vector_score",0), "distance": item.get("distance")}}
-
-for item in keyword_results:
-    name = item.get("meta",{{}}).get("file_name","Unknown")
-    combined.setdefault(name, {{"meta": item.get("meta",{{}}), "document": item.get("document",""), "final_score": 0}})["final_score"] += beta*item.get("keyword_score",0)
-
-for item in bm25_results:
-    name = item.get("meta",{{}}).get("file_name","Unknown")
-    combined.setdefault(name, {{"meta": item.get("meta",{{}}), "document": item.get("document",""), "final_score": 0}})["final_score"] += gamma*item.get("bm25_score",0)
-
-for item in phrase_results:
-    name = item.get("meta",{{}}).get("file_name","Unknown")
-    combined.setdefault(name, {{"meta": item.get("meta",{{}}), "document": item.get("document",""), "final_score": 0}})["final_score"] += delta*item.get("phrase_score",0)
-
-sorted_results = sorted(combined.values(), key=lambda x: x.get("final_score",0), reverse=True)[:top_k]
-formatted = []
-for item in sorted_results:
-    meta = item.get("meta") or {{}}
-    doc = item.get("document") or ""
-    dist = item.get("distance")
-    similarity = None
-    if dist is not None and isinstance(dist,(int,float)):
-        similarity = 1.0 - dist
-    formatted.append(
-        {{
-            "file_name": meta.get("file_name","Unknown") if isinstance(meta, dict) else "Unknown",
-            "file_path": meta.get("file_path") if isinstance(meta, dict) else None,
-            "document": doc,
-            "distance": dist,
-            "similarity": similarity,
-            "metadata": meta,
-            "final_score": item.get("final_score"),
-        }}
-    )
-
-print(json.dumps({{"results": formatted}}))
-"""
+        ds_args = json.dumps({
+            "path": self.chroma_path,
+            "col_name": self.collection_name,
+            "query": self.query,
+            "embedding_model": self.embed_model,
+            "rewrite_model": self.rewrite_model,
+            "top_k": int(self.n_results),
+            "alpha": alpha,
+            "beta": beta,
+            "gamma": gamma,
+            "delta": delta,
+            "mode": mode,
+            "include": self.include,
+        })
         try:
+            env = {**os.environ, "_DS_ARGS": ds_args}
             result = subprocess.run(
-                [sys.executable, "-c", script],
+                [sys.executable, "-c", _SEARCH_SCRIPT],
                 capture_output=True,
                 text=True,
                 timeout=30,
+                env=env,
             )
             if result.returncode != 0:
                 raise RuntimeError(
