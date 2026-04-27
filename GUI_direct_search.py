@@ -421,69 +421,41 @@ class DirectSearchMixin:
         if hasattr(self, "search_result_detail"):
             self.search_result_detail.setPlainText(detail)
 
+    _ALLOWED_OPEN_EXTENSIONS = {
+        ".pdf", ".txt", ".md", ".docx", ".doc", ".rtf",
+        ".csv", ".json", ".xml", ".html", ".htm",
+        ".py", ".js", ".ts", ".java", ".cs", ".cpp", ".c", ".h",
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg",
+        ".mp3", ".mp4", ".wav", ".ogg",
+    }
+
     def open_search_result_file(self, item):
         if not item:
             return
+        from pathlib import Path
         data = item.data(Qt.UserRole) or {}
-        path = data.get("file_path") or data.get("file_name")
-        print(f"[DirectSearch] open_search_result_file path={path!r}", flush=True)
-        if not path:
-            print("[DirectSearch] No file path available", flush=True)
+        raw = data.get("file_path") or data.get("file_name")
+        print(f"[DirectSearch] open_search_result_file raw={raw!r}", flush=True)
+        if not raw:
             QMessageBox.information(self, "Open File", "No file path available.")
             return
-        if not os.path.exists(path):
-            print(f"[DirectSearch] File not found: {path}", flush=True)
+        try:
+            path = Path(raw).resolve()
+        except Exception:
+            QMessageBox.warning(self, "Open File", "Invalid file path.")
+            return
+        if not path.is_file():
             QMessageBox.warning(self, "Open File", f"File not found:\n{path}")
             return
-        # Try multiple strategies to launch
-        
-
-        # Fallback 1: explorer (direct)
-        try:
-            print(f"[DirectSearch] Fallback explorer (open): {path}", flush=True)
-            subprocess.Popen(["explorer", path])
+        if path.suffix.lower() not in self._ALLOWED_OPEN_EXTENSIONS:
+            QMessageBox.warning(self, "Open File", f"File type not allowed to open:\n{path.suffix}")
             return
-        except Exception as e:
-            import traceback as _tb
-
-            print(f"[DirectSearch] explorer open failed: {e}", flush=True)
-            _tb.print_exc()
-
-        # Fallback 2: explorer /select to show file in folder
+        # Use explorer only — avoids cmd/start and webbrowser which can
+        # execute UNC paths, .lnk, .exe, and file:// script URLs.
         try:
-            print(f"[DirectSearch] Fallback explorer (/select): {path}", flush=True)
-            subprocess.Popen(["explorer", "/select,", path])
-            return
+            subprocess.Popen(["explorer", str(path)])
         except Exception as e:
-            import traceback as _tb
-
-            print(f"[DirectSearch] explorer select failed: {e}", flush=True)
-            _tb.print_exc()
-
-        # Fallback 3: cmd /c start "" "<path>"
-        try:
-            print(f"[DirectSearch] Fallback cmd start: {path}", flush=True)
-            subprocess.Popen(["cmd", "/c", "start", "", path], shell=False)
-            return
-        except Exception as e:
-            import traceback as _tb
-
-            print(f"[DirectSearch] cmd start failed: {e}", flush=True)
-            _tb.print_exc()
-
-        # Fallback 4: webbrowser (may pick default browser)
-        try:
-            print(f"[DirectSearch] Fallback webbrowser.open: {path}", flush=True)
-            webbrowser.open(path)
-            return
-        except Exception as e:
-            import traceback as _tb
-
-            print(f"[DirectSearch] webbrowser open failed: {e}", flush=True)
-            _tb.print_exc()
-
-        # If everything fails, inform the user
-        QMessageBox.warning(self, "Open File", f"Failed to open file via all methods:\n{path}")
+            QMessageBox.warning(self, "Open File", f"Failed to open file:\n{e}")
 
     def _on_search_worker_finished(self):
         print("[DirectSearchMixin._on_search_worker_finished] search worker finished", flush=True)
