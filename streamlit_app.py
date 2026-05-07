@@ -45,6 +45,7 @@ from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
 from conversation_import import sanitize_conversation_import
+from rag_prompting import CONTEXT_GUARD, build_guarded_context_block
 
 # Load environment variables
 load_dotenv()
@@ -175,14 +176,9 @@ def build_citation_prompt(prefix, prompt, numbered_sources):
         "Use [N] citations for every factual claim that comes from context. "
         "If context does not support a claim, say so."
     )
-    context_blocks = []
-    for source in numbered_sources:
-        context_blocks.append(
-            f"[{source['citation_id']}] {source['source_name']}\n{source['text']}"
-        )
-    formatted_context = "\n\n".join(context_blocks)
+    formatted_context = build_guarded_context_block(numbered_sources)
     return (
-        f"{prefix}\n\n{citation_instruction}\n\n"
+        f"{prefix}\n\n{CONTEXT_GUARD}\n{citation_instruction}\n\n"
         f"{formatted_context}\n\nQuery: {prompt}"
     )
 

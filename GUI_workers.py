@@ -12,6 +12,7 @@ from gtts import gTTS
 from pydub import AudioSegment
 from pydub.playback import play
 
+from rag_prompting import CONTEXT_GUARD, build_guarded_context_block
 
 class ChatWorker(QThread):
     """Worker thread for chat operations - only handles LLM calls, not ChromaDB"""
@@ -47,15 +48,28 @@ class ChatWorker(QThread):
                 self.response_complete.emit("")
                 return
 
-            relevant_context = "\n\n".join(
-                [res.get("document", "") for res in self.context_results]
-            )
+            guarded_sources = []
+            for idx, result in enumerate(self.context_results or [], start=1):
+                source = {
+                    "citation_id": idx,
+                    "file_name": (
+                        result.get("meta", {}).get("file_name")
+                        if isinstance(result.get("meta"), dict)
+                        else "unknown"
+                    ),
+                    "document": result.get("document", ""),
+                }
+                guarded_sources.append(source)
+
+            relevant_context = build_guarded_context_block(guarded_sources)
             print(
                 f"[ChatWorker.run] Context docs: {len(self.context_results)}; length={len(relevant_context)}"
             )
 
             if relevant_context:
-                user_input_with_context = f"{relevant_context}\n\n{self.user_input}"
+                user_input_with_context = (
+                    f"{CONTEXT_GUARD}\n\n{relevant_context}\n\nQuery: {self.user_input}"
+                )
             else:
                 user_input_with_context = self.user_input
 
