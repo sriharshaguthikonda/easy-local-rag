@@ -673,18 +673,21 @@ def get_relevant_context_hybrid(
         search_result = collection.query(
             query_embeddings=[input_embedding],
             n_results=50,
-            include=["documents", "metadatas", "distances"],
+            include=["documents", "metadatas", "distances", "embeddings"],
         )
 
         # Extract results with distances
         vector_results = [
             {
                 "meta": meta,
+                "embedding": emb,
                 "vector_score": 1.0
                 - dist,  # Convert distance to similarity (assuming normalized)
             }
-            for meta, dist in zip(
-                search_result["metadatas"][0], search_result["distances"][0]
+            for meta, dist, emb in zip(
+                search_result["metadatas"][0],
+                search_result["distances"][0],
+                search_result["embeddings"][0],
             )
         ]
 
@@ -735,6 +738,7 @@ def get_relevant_context_hybrid(
             file_name = res["meta"]["file_name"]
             combined_results[file_name] = {
                 "meta": res["meta"],
+                "embedding": res["embedding"],
                 "final_score": alpha * res["vector_score"],
             }
 
@@ -747,6 +751,7 @@ def get_relevant_context_hybrid(
             else:
                 combined_results[file_name] = {
                     "meta": res["meta"],
+                    "embedding": res.get("embedding"),
                     "final_score": beta * res["keyword_score"],
                 }
 
@@ -763,10 +768,15 @@ def get_relevant_context_hybrid(
         selected_additional_files = []
 
         for res in remaining_results:
+            current_embedding = res.get("embedding")
+            if current_embedding is None:
+                res["mmr_score"] = res["final_score"]
+                continue
             max_similarity = max(
                 [
-                    np.dot(res["meta"]["embedding"], selected["meta"]["embedding"])
+                    np.dot(current_embedding, selected["embedding"])
                     for selected in selected_additional_files
+                    if selected.get("embedding") is not None
                 ],
                 default=0,
             )
@@ -801,7 +811,7 @@ def get_relevant_context_hybrid(
 
     except Exception as e:
         print(f"An error occurred: {e}")
-        return "Answer this yourself!"
+        return "Answer this yourself!", []
 
 
 def print_relevant_context(results):
