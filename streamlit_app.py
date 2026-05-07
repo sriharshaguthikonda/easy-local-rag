@@ -1,17 +1,42 @@
 import streamlit as st
-from streamlit_groq_lama_chromadb_RAG_ETTS import (
-    get_relevant_context_hybrid,
-    groq_chat,
-    ollama_chat,
-    model,
-    groq_model,
-    ollama_model,
-    collection_name,
-    collection,  # Import the collection object
-    initialize_collection,  # Import the initialization function
-    text_to_speech_gtts,
-    TTS_Audio_play_queue,
-)
+
+RAG_BACKEND_IMPORT_ERROR = None
+try:
+    import streamlit_groq_lama_chromadb_RAG_ETTS as rag_backend
+except Exception as backend_error:
+    rag_backend = None
+    RAG_BACKEND_IMPORT_ERROR = backend_error
+
+
+def _require_rag_backend():
+    if rag_backend is None:
+        raise RuntimeError(
+            "RAG backend failed to load. "
+            f"Original error: {RAG_BACKEND_IMPORT_ERROR}"
+        )
+    return rag_backend
+
+
+if rag_backend is not None:
+    get_relevant_context_hybrid = rag_backend.get_relevant_context_hybrid
+    model = rag_backend.model
+    groq_model = rag_backend.groq_model
+    ollama_model = rag_backend.ollama_model
+    initialize_collection = rag_backend.initialize_collection
+    text_to_speech_gtts = rag_backend.text_to_speech_gtts
+else:
+    def get_relevant_context_hybrid(*args, **kwargs):  # type: ignore
+        _require_rag_backend()
+
+    model = "mxbai-embed-large"
+    groq_model = "llama-3.3-70b-versatile"
+    ollama_model = "phi-3"
+
+    def initialize_collection():  # type: ignore
+        _require_rag_backend()
+
+    async def text_to_speech_gtts(*args, **kwargs):  # type: ignore
+        _require_rag_backend()
 
 
 """TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
@@ -99,7 +124,11 @@ if "chroma_client" not in st.session_state:
         database=DEFAULT_DATABASE,
     )
 if "collection" not in st.session_state:
-    st.session_state.collection = initialize_collection()
+    try:
+        st.session_state.collection = initialize_collection()
+    except Exception as e:
+        st.session_state.collection = None
+        st.session_state.collection_init_error = str(e)
 if "chat_input_key" not in st.session_state:
     st.session_state.chat_input_key = 0
 if "message_timestamps" not in st.session_state:
@@ -367,6 +396,10 @@ def open_file(path):
 def main():
     # Create three columns: sources, main chat, and analytics
     sources_col, main_col, analytics_col = st.columns([1, 2, 1])
+    if RAG_BACKEND_IMPORT_ERROR:
+        st.warning(f"RAG backend import warning: {RAG_BACKEND_IMPORT_ERROR}")
+    if st.session_state.get("collection_init_error"):
+        st.warning(f"Collection initialization warning: {st.session_state.collection_init_error}")
 
     # Initialize all settings first in the sidebar
     with st.sidebar:
