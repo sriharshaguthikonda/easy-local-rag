@@ -4,6 +4,7 @@ import logging
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import nltk
+from pathlib import Path
 
 
 from Semantic_chunking import (
@@ -21,9 +22,12 @@ import json
 import chromadb
 from chromadb.config import Settings
 
+from rag_config import get_optional_path, get_path
 
-# Set the NLTK data path to include the specific directory
-nltk.data.path.append(r"C:\Users\deletable\AppData\Roaming\nltk_data")
+# Set the NLTK data path to include an optional user-configured directory.
+nltk_data_path = get_optional_path("EASY_RAG_NLTK_DATA")
+if nltk_data_path:
+    nltk.data.path.append(str(nltk_data_path))
 
 # Download the 'punkt_tab' resource if not already available
 nltk.download("punkt_tab")
@@ -276,7 +280,9 @@ def monitor_folder(folder_path):
 
 if __name__ == "__main__":
     # Specify the folder you want to monitor
-    FOLDER_TO_MONITOR = r"C:\Users\deletable\Google Drive"
+    FOLDER_TO_MONITOR = str(
+        get_path("EASY_RAG_MONITOR_DIR", Path.home() / "Google Drive")
+    )
 
     # Start monitoring the folder
     monitor_folder(FOLDER_TO_MONITOR)

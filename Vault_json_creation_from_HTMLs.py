@@ -8,6 +8,7 @@ import json
 import hashlib
 import nltk.data  # Import NLTK sentence tokenizer
 
+from rag_config import get_optional_path
 from vault_store import atomic_write_json, load_vault, merge_vault_entries
 
 
@@ -137,9 +138,14 @@ def convert_html_to_json(directory_path):
 
 # Main function to handle folder selection and processing
 def main():
-    root = Tk()
-    root.withdraw()  # Hide the main window
-    directory_path = filedialog.askdirectory()  # Open the folder selection dialog
+    configured_path = get_optional_path("EASY_RAG_VAULT_SOURCE_DIR")
+    if configured_path and configured_path.exists():
+        directory_path = str(configured_path)
+    else:
+        root = Tk()
+        root.withdraw()  # Hide the main window
+        directory_path = filedialog.askdirectory()  # Open the folder selection dialog
+
     if directory_path:
         convert_html_to_json(directory_path)
 
