@@ -15,6 +15,7 @@ import re
 import os
 import time
 
+from dotenv import load_dotenv
 
 from pymilvus import (
     MilvusClient,
@@ -283,9 +284,12 @@ def ollama_chat(
 """
 
 # Initialize Groq client
-client = Groq(
-    api_key="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",
-)
+load_dotenv()
+api_key = os.getenv("GROQ_API_KEY")
+if not api_key:
+    raise RuntimeError("Missing GROQ_API_KEY environment variable.")
+
+client = Groq(api_key=api_key)
 
 
 def groq_chat(

@@ -9,6 +9,9 @@ from pydub.playback import play
 import threading
 import queue
 import re
+import os
+
+from dotenv import load_dotenv
 
 from pymilvus import (
     connections,
@@ -239,9 +242,12 @@ def ollama_chat(
 """
 
 # Initialize Groq client
-client = Groq(
-    api_key="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",
-)
+load_dotenv()
+api_key = os.getenv("GROQ_API_KEY")
+if not api_key:
+    raise RuntimeError("Missing GROQ_API_KEY environment variable.")
+
+client = Groq(api_key=api_key)
 
 
 def groq_chat(
