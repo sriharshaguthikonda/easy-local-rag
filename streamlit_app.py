@@ -71,6 +71,7 @@ import matplotlib.pyplot as plt
 
 from conversation_import import sanitize_conversation_import
 from rag_prompting import CONTEXT_GUARD, build_guarded_context_block
+from token_budget import trim_messages_to_budget
 
 # Load environment variables
 load_dotenv()
@@ -279,6 +280,13 @@ def chat_with_model(
             *st.session_state.conversation_history[-context_window:],
             {"role": "user", "content": processed_input},
         ]
+        messages, was_trimmed = trim_messages_to_budget(
+            messages,
+            max_input_tokens=5000,
+            model_name=groq_model,
+        )
+        if was_trimmed:
+            st.info("Context was trimmed to fit token budget.")
 
         # Try Groq first
         try:
