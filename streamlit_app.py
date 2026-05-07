@@ -10,7 +10,6 @@ from streamlit_groq_lama_chromadb_RAG_ETTS import (
     collection,  # Import the collection object
     initialize_collection,  # Import the initialization function
     text_to_speech_gtts,
-    process_TTS_queue,
     TTS_Audio_play_queue,
 )
 
@@ -54,6 +53,41 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # Initialize Groq client
 groq_client = Groq(api_key=GROQ_API_KEY)
 
+
+def _tts_worker_loop(tts_queue):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    while True:
+        sentence = tts_queue.get()
+        if sentence is None:
+            break
+        if sentence.strip():
+            loop.run_until_complete(text_to_speech_gtts(sentence.strip()))
+        tts_queue.task_done()
+    loop.close()
+
+
+@st.cache_resource
+def get_tts_worker_resource():
+    tts_queue = queue.Queue()
+    worker = threading.Thread(target=_tts_worker_loop, args=(tts_queue,), daemon=True)
+    worker.start()
+    return {"queue": tts_queue, "worker": worker}
+
+
+def ensure_tts_worker():
+    resource = get_tts_worker_resource()
+    if not resource["worker"].is_alive():
+        resource["queue"] = queue.Queue()
+        resource["worker"] = threading.Thread(
+            target=_tts_worker_loop,
+            args=(resource["queue"],),
+            daemon=True,
+        )
+        resource["worker"].start()
+    return resource
+
+
 # Initialize session state
 if "conversation_history" not in st.session_state:
     st.session_state.conversation_history = []
@@ -73,13 +107,9 @@ if "confidence_scores" not in st.session_state:
     st.session_state.confidence_scores = []
 if "tts_enabled" not in st.session_state:
     st.session_state.tts_enabled = True
-if "tts_queue" not in st.session_state:
-    st.session_state.tts_queue = queue.Queue()
-if "tts_worker" not in st.session_state:
-    st.session_state.tts_worker = threading.Thread(
-        target=process_TTS_queue, args=(st.session_state.tts_queue,), daemon=True
-    )
-    st.session_state.tts_worker.start()
+tts_resource = ensure_tts_worker()
+st.session_state.tts_queue = tts_resource["queue"]
+st.session_state.tts_worker = tts_resource["worker"]
 if "current_sources" not in st.session_state:
     st.session_state.current_sources = []
 if "source_filters" not in st.session_state:
@@ -237,7 +267,7 @@ def chat_with_model(
                     # Check for sentence endings
                     if any(delimiter in content for delimiter in ".!?"):
                         if st.session_state.tts_enabled and current_sentence.strip():
-                            asyncio.run(text_to_speech_gtts(current_sentence.strip()))
+                            st.session_state.tts_queue.put(current_sentence.strip())
                         current_sentence = ""
 
                     response_placeholder.markdown(full_response + "▌")
@@ -261,7 +291,7 @@ def chat_with_model(
                     # Check for sentence endings
                     if any(delimiter in content for delimiter in ".!?"):
                         if st.session_state.tts_enabled and current_sentence.strip():
-                            asyncio.run(text_to_speech_gtts(current_sentence.strip()))
+                            st.session_state.tts_queue.put(current_sentence.strip())
                         current_sentence = ""
 
                     response_placeholder.markdown(full_response + "▌")
@@ -372,7 +402,10 @@ def main():
 
         # TTS controls
         st.subheader("Text-to-Speech Settings")
-        st.session_state.tts_enabled = st.toggle("Enable Text-to-Speech", value=True)
+        st.session_state.tts_enabled = st.toggle(
+            "Enable Text-to-Speech",
+            value=st.session_state.tts_enabled,
+        )
         if st.session_state.tts_enabled:
             tts_speed = st.slider("TTS Speed", 0.5, 2.0, 1.4, 0.1)
             tts_volume = st.slider("TTS Volume", 0.0, 2.0, 1.0, 0.1)
