@@ -121,13 +121,29 @@ for meta, doc in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0])
     if phrase_score > 0:
         phrase_results.append({"meta": meta, "document": doc, "phrase_score": phrase_score})
 
-bm25_corpus = [doc or "" for doc in res.get("documents",[[]])[0]]
-bm25 = BM25Okapi([d.split() for d in bm25_corpus]) if bm25_corpus else None
-bm25_scores = bm25.get_scores(rewritten_input.split()) if bm25 else []
-bm25_results = [
-    {"meta": meta, "document": doc, "bm25_score": score}
-    for meta, doc, score in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0], bm25_scores)
-]
+full = col.get(include=["documents","metadatas"])
+full_docs = full.get("documents", []) or []
+full_metas = full.get("metadatas", []) or []
+
+bm25_results = []
+if full_docs:
+    bm25 = BM25Okapi([(doc or "").split() for doc in full_docs])
+    bm25_scores = bm25.get_scores(rewritten_input.split())
+    ranked = sorted(
+        enumerate(bm25_scores),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )[: max(top_k * 10, 50)]
+    for idx, score in ranked:
+        if score <= 0:
+            continue
+        bm25_results.append(
+            {
+                "meta": full_metas[idx] if idx < len(full_metas) else {},
+                "document": full_docs[idx],
+                "bm25_score": score,
+            }
+        )
 
 normalize_scores(vector_results, "vector_score")
 normalize_scores(keyword_results, "keyword_score")
