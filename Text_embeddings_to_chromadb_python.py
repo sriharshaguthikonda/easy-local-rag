@@ -24,6 +24,10 @@ import chromadb
 from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 import winsound
 
+from embedding_contract import (
+    DEFAULT_EMBEDDING_MODEL,
+    ensure_collection_embedding_model,
+)
 """TODO 1: Update the `csv_path` variable to point to the location of your processed data CSV file."""
 """TODO 1: Update the `csv_path` variable to point to the location of your processed data CSV file."""
 """TODO 1: Update the `csv_path` variable to point to the location of your processed data CSV file."""
@@ -44,6 +48,7 @@ def init_chromadb():
 
     try:
         collection = client.get_or_create_collection(name=collection_name)
+        ensure_collection_embedding_model(collection, DEFAULT_EMBEDDING_MODEL)
 
     except Exception as e:
         print(f"An error occurred: {e}")
