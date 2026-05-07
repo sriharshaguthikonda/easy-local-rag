@@ -32,8 +32,8 @@ import json
 import asyncio
 import queue
 import threading
+import re
 from pathlib import Path
-from urllib.parse import urljoin
 import webbrowser
 import plotly.express as px
 import pandas as pd
@@ -160,6 +160,33 @@ st.markdown(
 )
 
 
+def build_numbered_sources(metadata):
+    sources = []
+    for idx, meta in enumerate(metadata or [], start=1):
+        source = dict(meta)
+        source["citation_id"] = idx
+        source["source_name"] = Path(meta["file_name"]).name
+        sources.append(source)
+    return sources
+
+
+def build_citation_prompt(prefix, prompt, numbered_sources):
+    citation_instruction = (
+        "Use [N] citations for every factual claim that comes from context. "
+        "If context does not support a claim, say so."
+    )
+    context_blocks = []
+    for source in numbered_sources:
+        context_blocks.append(
+            f"[{source['citation_id']}] {source['source_name']}\n{source['text']}"
+        )
+    formatted_context = "\n\n".join(context_blocks)
+    return (
+        f"{prefix}\n\n{citation_instruction}\n\n"
+        f"{formatted_context}\n\nQuery: {prompt}"
+    )
+
+
 def process_chat_mode(prompt, mode, context_window):
     """Handle different chat modes"""
     if mode == "Focused Search":
@@ -168,17 +195,13 @@ def process_chat_mode(prompt, mode, context_window):
             prompt, top_k=3, alpha=0.9, beta=0.1
         )
 
-        # Create formatted context with links
-        formatted_context = "Focusing on most relevant sources:\n\n"
-        for meta in metadata:
-            file_path = Path(meta["file_name"])
-            clickable_path = urljoin("file:", file_path.as_uri())
-            formatted_context += (
-                f"From [{file_path.name}]({clickable_path}):\n{meta['text']}\n\n"
-            )
-
-        processed_input = f"{formatted_context}\nQuery: {prompt}"
-        return context, processed_input, metadata
+        numbered_sources = build_numbered_sources(metadata)
+        processed_input = build_citation_prompt(
+            "Focusing on most relevant sources:",
+            prompt,
+            numbered_sources,
+        )
+        return context, processed_input, numbered_sources
 
     elif mode == "Brain Dump":
         # Get more diverse sources with lower relevance threshold
@@ -191,43 +214,30 @@ def process_chat_mode(prompt, mode, context_window):
             lambda_mmr=0.7,
         )
 
-        formatted_context = "Drawing from multiple sources:\n\n"
-        for meta in metadata:
-            file_path = Path(meta["file_name"])
-            clickable_path = urljoin("file:", file_path.as_uri())
-            formatted_context += (
-                f"From [{file_path.name}]({clickable_path}):\n{meta['text']}\n\n"
-            )
-
-        processed_input = f"{formatted_context}\nQuery: {prompt}"
-        return context, processed_input, metadata
+        numbered_sources = build_numbered_sources(metadata)
+        processed_input = build_citation_prompt(
+            "Drawing from multiple sources:",
+            prompt,
+            numbered_sources,
+        )
+        return context, processed_input, numbered_sources
 
     elif mode == "Summary":
         # Get context and ask for a summary
         context, metadata = get_relevant_context_hybrid(prompt, top_k=5)
-        formatted_context = "Please summarize the following context:\n\n"
-        for meta in metadata:
-            file_path = Path(meta["file_name"])
-            clickable_path = urljoin("file:", file_path.as_uri())
-            formatted_context += (
-                f"From [{file_path.name}]({clickable_path}):\n{meta['text']}\n\n"
-            )
-
-        processed_input = f"{formatted_context}\nSummarize: {prompt}"
-        return context, processed_input, metadata
+        numbered_sources = build_numbered_sources(metadata)
+        processed_input = build_citation_prompt(
+            "Please summarize the following context:",
+            prompt,
+            numbered_sources,
+        )
+        return context, processed_input, numbered_sources
 
     else:  # Standard mode
         context, metadata = get_relevant_context_hybrid(prompt, top_k=5)
-        formatted_context = ""
-        for meta in metadata:
-            file_path = Path(meta["file_name"])
-            clickable_path = urljoin("file:", file_path.as_uri())
-            formatted_context += (
-                f"From [{file_path.name}]({clickable_path}):\n{meta['text']}\n\n"
-            )
-
-        processed_input = f"{formatted_context}\nQuery: {prompt}"
-        return context, processed_input, metadata
+        numbered_sources = build_numbered_sources(metadata)
+        processed_input = build_citation_prompt("", prompt, numbered_sources)
+        return context, processed_input, numbered_sources
 
 
 def chat_with_model(
@@ -472,10 +482,25 @@ def main():
                     )
                     # Display sources with clickable links
                     if metadata:
+                        cited_ids = sorted(
+                            {
+                                int(match.group(1))
+                                for match in re.finditer(r"\[(\d+)\]", full_response or "")
+                            }
+                        )
+                        if not cited_ids:
+                            st.warning("No citations returned in response.")
+
+                        source_map = {meta.get("citation_id"): meta for meta in metadata}
+                        ids_to_render = cited_ids or sorted(source_map.keys())
+
                         with st.expander("Source Documents 📚", expanded=False):
-                            for idx, meta in enumerate(metadata):
+                            for citation_id in ids_to_render:
+                                meta = source_map.get(citation_id)
+                                if not meta:
+                                    continue
                                 file_path = Path(meta["file_name"])
-                                st.markdown(f"### Source {idx + 1}: {file_path.name}")
+                                st.markdown(f"### [{citation_id}] {file_path.name}")
 
                                 # Create two columns for the controls
                                 col1, col2 = st.columns([1, 1])
