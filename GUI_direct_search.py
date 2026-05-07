@@ -78,6 +78,16 @@ def phrase_boost(document, rewritten):
 
 client = chromadb.PersistentClient(path=path, settings=Settings(), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
 col = client.get_collection(col_name)
+collection_meta = getattr(col, "metadata", {}) or {}
+stored_model = collection_meta.get("embedding_model")
+if not stored_model:
+    try:
+        if int(col.count()) > 0:
+            raise RuntimeError("Collection missing embedding_model metadata; re-index or set metadata before querying.")
+    except Exception:
+        raise RuntimeError("Collection missing embedding_model metadata; re-index or set metadata before querying.")
+elif stored_model != embedding_model:
+    raise RuntimeError(f"Collection was indexed with {stored_model}, but query uses {embedding_model}.")
 
 if mode == "phrase":
     emb = ollama.embeddings(model=embedding_model, prompt=query, keep_alive=-1)["embedding"]
