@@ -7,7 +7,19 @@
 
 ## Dependencies
 
-Requires #2 secret remediation, #20B's destination integration, and the stable service contract from `.memory` #5/#23. Provider-core work may proceed in parallel with #21; `status`, `doctor`, and `chat` integration follows #21's client surface. It runs before #27 grounded-answer validation and #25 cutover. It protects offline/local operation throughout and must not delay evidence-only search.
+Requires #2 secret remediation, #20B's destination integration, and the
+service/retrieval contracts from `.memory` #5/#23. Before integration,
+reciprocal comments on
+[#22](https://github.com/sriharshaguthikonda/easy-local-rag/issues/22),
+[#23](https://github.com/sriharshaguthikonda/easy-local-rag/issues/23), and
+[`.memory` #5](https://github.com/sriharshaguthikonda/.memory/issues/5) must
+record each provider's exact commit SHA, API/schema version, compatibility-test
+command and passing result, and package name/version; branch names, `latest`,
+placeholders, and mutable references do not pass. Provider-core work may
+proceed in parallel with #21 after the shared interface is pinned;
+`status`, `doctor`, and `chat` integration additionally requires #21's
+reciprocal handoff with the same fields. It runs before #27 grounded-answer
+validation and #25 cutover.
 
 ## Implementation slices
 
@@ -44,7 +56,11 @@ Run an offline-mode network-denial test; simulate a dead local endpoint and asse
 
 ## Closure gate
 
-`status`/`doctor` truthfully identify offline, local, cloud-assisted, or mixed operation; offline search makes no network calls; local failures never fall back to cloud; cloud egress is explicit/testable; no secrets appear in tracked files or diagnostic output; and missing optional providers do not break CLI search.
+The immutable reciprocal dependency handoffs are recorded; `status`/`doctor`
+truthfully identify offline, local, cloud-assisted, or mixed operation; offline
+search makes no network calls; local failures never fall back to cloud; cloud
+egress is explicit/testable; no secrets appear in tracked files or diagnostic
+output; and missing optional providers do not break CLI search.
 
 ## Rollback constraints
 

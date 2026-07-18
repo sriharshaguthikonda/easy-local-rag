@@ -7,7 +7,16 @@
 
 ## Dependencies
 
-Blocked by `.memory` #5 and #23: evidence search, hydration, fusion, structured citations, and evaluation must be stable first. It follows #20B and precedes #27/#25/future GUI. Coordinate with #22 only at the provider interface; #21 must not embed provider policy in retrieval.
+Blocked by `.memory` #5 and #23: evidence search, hydration, fusion, structured
+citations, and evaluation must pass their immutable handoffs first. Reciprocal
+comments on [#21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21),
+[#23](https://github.com/sriharshaguthikonda/easy-local-rag/issues/23), and
+[`.memory` #5](https://github.com/sriharshaguthikonda/.memory/issues/5) must
+record each provider's exact commit SHA, API/schema version, compatibility-test
+command and passing result, and package name/version. No branch, `latest`,
+placeholder, or mutable artifact satisfies this gate. It follows #20B and
+precedes #27/#25/future GUI. Coordinate with #22 only at the provider
+interface; #21 must not embed provider policy in retrieval.
 
 ## Implementation slices
 
@@ -44,7 +53,11 @@ Use a fake service/provider to prove search does not call a model, failure leave
 
 ## Closure gate
 
-The CLI searches the PostgreSQL evidence store through the shared service boundary without GUI/TTS/STT/provider-specific imports; retrieval is fake-service testable; provider and database failures have distinct exits/messages; existing command-line workflow remains usable during migration.
+The immutable reciprocal dependency handoffs are recorded; the CLI searches
+the PostgreSQL evidence store through those exact shared-service package/schema
+versions without GUI/TTS/STT/provider-specific imports; retrieval is
+fake-service testable; provider and database failures have distinct
+exits/messages; existing command-line workflow remains usable during migration.
 
 ## Rollback constraints
 

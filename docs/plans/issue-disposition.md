@@ -8,7 +8,7 @@ closure gate unless GitHub has explicitly closed it as a duplicate.
 
 | Issue | Disposition | Canonical destination |
 |---|---|---|
-| #2 exposed credentials | **Keep — blocking** | Rotation/revocation, all-ref scan, history remediation; also gates #26. Never publish values. |
+| #2 exposed credentials | **Keep — blocking** | #2 owns containment/rotation and closes only after consuming #26B's clean all-ref evidence; #26B alone executes any approved rewrite. Never publish values. |
 | #3 subprocess injection | Closed on experimental history; **retain as regression requirement** | #21 client boundary and #24 GUI rules. Old commit is not on `main`. |
 | #4 arbitrary file open | Closed on experimental history; **retain as regression requirement** | #21/#24. Any future opener needs allowlisted roots/types and no shell fallback. |
 | #5 prompt injection | **Keep open** | Complete its own guarded-context closure gate; #27 extends it with citation validation and abstention. |
@@ -30,34 +30,41 @@ closure gate unless GitHub has explicitly closed it as a duplicate.
 | #21 thin CLI client | **Keep** | Start after retrieval contracts exist; the old CLI is the first supported client. |
 | #22 provider abstraction/modes | **Keep** | Provider core can proceed beside #21 after the shared service contract; integration follows #21. |
 | #23 retrieval parity/regression | **Keep — migration gate** | Required before PostgreSQL becomes primary. |
-| #24 future thin GUI | **Keep, defer** | No wholesale reuse; begin only after #21, #23 and #27 are stable. |
+| #24 future thin GUI | **Keep, specification only** | Close on the approved specification and PR #1 disposition. Any implementation is a separate post-#25 issue requiring stable #21/#22/#23/#27 contracts. |
 | #25 dual-run/rollback/retirement | **Keep — cutover gate** | Chroma remains read-only rollback until all gates pass. |
-| #26 history/layout/generated artefact cleanup | **Keep, split** | Early hygiene follows #2/#18; late layout/Chroma cleanup follows #25 and the future GUI decision. |
-| #27 grounded answers/citation validation | **Keep** | Replaces #5 and #14 as the answer-safety contract. |
+| #26 history/layout/generated artefact cleanup | **Keep, split** | 26A/26B follow #2 containment/#18 and supply #2 closure evidence before #19; 26C/26D follow #25 and the future GUI decision. |
+| #27 grounded answers/citation validation | **Keep** | Extends #5's guarded-context requirement and owns the structured validation/abstention scope associated with closed duplicate #14. |
 
 ## Recommended issue sequencing
 
-1. #2 credential containment and rotation.
+1. #2 credential containment and rotation (issue remains open).
 2. #18 public/local inventory and PR disposition.
-3. Early #26 generated/private-artifact hygiene.
-4. #19 read-only audit/export.
-5. #20A database-neutral ingestion package.
-6. `.memory` #4 evidence schema/import boundary.
-7. #20B destination integration and reconciliation.
-8. `.memory` #5 retrieval APIs.
-9. #23 parity/regression suite.
-10. #21/#22 thin-client and provider work after the shared contract.
-11. #27 grounded answers.
-12. #25 dual-run/cutover gate.
-13. Future GUI implementation issue, if still wanted.
-14. Late #26 layout/Chroma cleanup.
+3. Early #26A/#26B generated/private-artifact hygiene and the sole approved history rewrite.
+4. #2 final closure from post-rewrite all-ref evidence.
+5. #19 read-only audit/export.
+6. #20A database-neutral ingestion package.
+7. `.memory` #4 evidence schema/import boundary.
+8. #20B destination integration and reconciliation.
+9. `.memory` #5 retrieval APIs.
+10. #23 parity/regression suite.
+11. #21/#22 thin-client and provider work after the shared contract.
+12. #27 grounded answers.
+13. #25 dual-run/cutover gate.
+14. Future GUI implementation issue, if still wanted.
+15. Late #26C/#26D dependency, layout and Chroma cleanup.
 
 ## Closure policy for legacy issues
 
-Close #5–#16 only through each issue's canonical closure gate, except #14,
-which GitHub already closed as a duplicate. A closure requires:
+Close #5–#16 only through one explicitly selected canonical mode, except #14,
+which GitHub already closed as a duplicate:
 
-- its fix is part of a supported path and has a regression test;
-- the affected path is archived and marked unsupported, with the replacement linked.
+- **Maintained-path fix:** the supported path passes the issue's regression and
+  verification gate.
+- **Verified retirement:** the affected entry point is removed from the
+  supported surface, blocked from normal invocation, linked to its supported
+  replacement, and covered by a regression proving it cannot silently return.
+
+The modes are mutually exclusive for a closure record; evidence must name the
+chosen mode.
 
 A commit on a stale or deleted experimental ref is not enough to prove the maintained path is fixed.

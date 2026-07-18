@@ -7,9 +7,9 @@
 
 ## Implementation slices
 
-1. Load one valid JSON list, merge entries by normalized `file_name` and `modification_time`, then write a same-directory temporary file followed by `os.replace`.
+1. Load one valid JSON list and merge by stable normalized file identity (canonical relative path or persisted source ID). Treat `modification_time` and content hash as versions of that identity, not merge-key components, then write a same-directory temporary file followed by `os.replace`.
 2. On corrupt input, preserve a timestamped backup before rebuilding; remove old duplicate append and mistaken backup branches.
-3. Complete functional tests for unchanged repeat run (no duplicate), changed replacement, invalid input backup, and injected write/replace failure preserving the target.
+3. Complete functional tests for unchanged repeat run (no duplicate), the same file identity with changed modification time/content hash replacing exactly once, invalid input backup, and injected write/replace failure preserving the target.
 
 ## Affected interfaces, files, and artifacts
 
@@ -34,6 +34,7 @@ Manual: run the builder twice over one file and parse `vault.json`; expect one v
 
 ## Closure gate, rollback, and commit boundary
 
-- **Close only when:** repeat unchanged run has no duplicate, changed input replaces once, corruption backs up, injected failure preserves the old target, and no append mode remains.
+- **Maintained-path closure:** repeat unchanged run has no duplicate; the same stable file identity with changed time and content replaces once; corruption backs up; injected failure preserves the old target; no append mode remains.
+- **Retirement closure (mutually exclusive):** remove the vault builder from maintained entry points and docs, prove it cannot write generated vault data, and document the maintained persistence/export replacement with atomic-write evidence.
 - **Rollback constraint:** preserve the old vault until a successful `os.replace`; never revert to append writes.
 - **Commit:** `fix(#15): atomic-write vault json`.

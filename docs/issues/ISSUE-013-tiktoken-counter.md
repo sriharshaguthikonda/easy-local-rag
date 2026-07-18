@@ -32,6 +32,7 @@ python -m py_compile token_budget.py streamlit_groq_lama_chromadb_RAG_ETTS.py
 
 ## Closure gate, rollback, and commit boundary
 
-- **Close only when:** every Groq request uses the shared budget helper, regex is not primary, conservative fallback works, and trim ordering is tested.
+- **Maintained-path closure:** every maintained Groq request uses the shared budget helper, regex is not primary, conservative fallback works, and trim ordering is tested.
+- **Retirement closure (mutually exclusive):** remove uncovered Groq request builders from supported entry points and docs, prove they cannot issue requests, and identify the maintained budgeted replacement. Retirement cannot leave an unchecked request route.
 - **Rollback constraint:** retain a conservative fallback; never restore unchecked requests solely to avoid a dependency error.
 - **Commit:** `fix(#13): use tiktoken for Groq budgeting`.

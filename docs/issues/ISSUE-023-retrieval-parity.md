@@ -33,6 +33,16 @@ It is the blocking gate before #21/#22 become the maintained client path and
 before #25 can start cutover. Legacy defects #6, #10 and #11 must appear as
 regression cases rather than define the expected PostgreSQL behaviour.
 
+Steps 3–5 are satisfied only by reciprocal comments on
+[#23](https://github.com/sriharshaguthikonda/easy-local-rag/issues/23),
+[#20](https://github.com/sriharshaguthikonda/easy-local-rag/issues/20),
+[`.memory` #4](https://github.com/sriharshaguthikonda/.memory/issues/4), and
+[`.memory` #5](https://github.com/sriharshaguthikonda/.memory/issues/5).
+Each handoff records the exact provider commit SHA, API/schema version,
+compatibility-test command and passing result, and package name/version used by
+the parity run. Branch names, `latest`, placeholders, or mutable artifacts do
+not satisfy the gate.
+
 ## Implementation slices
 
 ### 23A — Versioned fixtures and judgements
@@ -68,6 +78,17 @@ regression cases rather than define the expected PostgreSQL behaviour.
 - Produce machine-readable JSON and human-readable Markdown reports with
   configuration, versions, snapshot hashes, per-query comparisons and
   approved exceptions.
+- Record every exception immutably before the final run with category
+  (`data-quarantine`, `judgement-error`, `known-backend-limit`, or
+  `environment-only`), affected query/chunk IDs, measured delta, rationale,
+  named approver, approval timestamp, maximum query/record scope, expiry, and
+  mandatory retest condition. One exception may cover at most one category and
+  5% of golden queries; it expires after 30 days or any corpus, parser,
+  chunker, embedding, retrieval, or schema version change, whichever comes
+  first.
+- Prohibit retroactive exceptions, aggregate-only waivers, security/privacy/
+  citation-resolution/data-loss waivers, threshold changes after results are
+  visible, and exceptions that hide an unexplained critical regression.
 - Make an unexplained critical regression return a non-zero exit code.
 - Run synthetic fixtures in CI; run the private corpus locally against immutable
   snapshots.
@@ -100,7 +121,8 @@ must not import GUI, provider or answer-generation modules.
 6. Run each retrieval lane independently, then the fused lane.
 7. Reconcile record and hash inventories before comparing rankings.
 8. Generate the per-query report and review every exception.
-9. Make #25 consume the final pass/fail artifact as a retirement gate.
+9. Freeze the pre-run exception record, reject any result requiring a new or
+   expanded exception, and make #25 consume the final pass/fail artifact.
 
 ## Verification
 
@@ -124,7 +146,8 @@ to tracked reports.
 - 100% of returned citations resolve to the recorded source and location.
 - Exact title/path cases rank the expected source at position 1.
 - No human-marked relevant source disappears from top 10 without an explicitly
-  documented and approved exception.
+  documented, pre-run approved, unexpired exception within the category/scope
+  limits above.
 - Fused Recall@10 and nDCG@10 are each at least as high as both individual
   lexical and vector lanes on the golden set.
 - Duplicate-hit and neighbour-order fixtures pass exactly.
@@ -138,8 +161,8 @@ to tracked reports.
 - Evaluation never writes to the frozen Chroma source.
 - A failed gate leaves Chroma read-only and blocks #25 cutover; thresholds are
   not weakened after results are known.
-- Snapshot manifests, reports and approved exceptions remain attached to the
-  migration batch.
+- Snapshot manifests, reports and immutable pre-run exception approvals remain
+  attached to the migration batch; expired exceptions block reuse until retest.
 - Sensitive corpus text never enters git, CI logs or public issue comments.
 
 ## Commit boundary

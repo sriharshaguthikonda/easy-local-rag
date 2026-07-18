@@ -11,9 +11,8 @@ Labels: `priority:P2`, `type:enhancement`
 ## Decision
 
 This issue documents the future GUI contract and the useful UX ideas found in
-experimental branches. It does **not** implement a GUI. GUI implementation must
-be tracked by a separate future issue after the shared service, parity and
-grounded-answer contracts are stable.
+experimental branches. It does **not** implement a GUI and closes as a
+documentation deliverable before #25 cutover.
 
 No existing GUI branch or PR #1 is a merge path.
 
@@ -21,20 +20,15 @@ No existing GUI branch or PR #1 is a merge path.
 
 - [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18)
   supplies the branch/PR inventory and salvage decision.
-- [#21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21)
-  defines the thin client/service contract.
-- [#22](https://github.com/sriharshaguthikonda/easy-local-rag/issues/22)
-  defines explicit offline/local/cloud provider modes.
-- [#23](https://github.com/sriharshaguthikonda/easy-local-rag/issues/23)
-  stabilizes retrieval records and score explanations.
-- [#27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27)
-  defines structured answers, citations and abstention.
-- [#25](https://github.com/sriharshaguthikonda/easy-local-rag/issues/25)
-  completes cutover before a future GUI becomes the next migration step.
+- #21, #22, #23, and #27 supply the planned record names and safety boundaries;
+  #24 may specify against their accepted plans and does not wait for their
+  implementations.
 
-This specification can close after its documentation and PR #1 disposition are
-recorded. Implementation remains deferred until all dependencies above expose
-stable contracts.
+This specification closes after its documentation and PR #1 disposition are
+recorded, before #25. The #25 transition checklist owns opening the later GUI
+implementation issue after successful cutover. That later issue is blocked at
+minimum by completed #22 provider modes and completed #25 cutover; it also
+consumes the completed #21/#23/#27 contracts.
 
 ## Implementation slices
 
@@ -73,11 +67,11 @@ Specify search-only as the default usable path, explicit generation opt-in,
 responsive cancellation, preserved unsent text, safe source opening, redacted
 exports and visible provider/data-egress state.
 
-### 24D — Future implementation issue
+### 24D — Post-cutover transition
 
-After #25, open a separate issue that selects the UI toolkit, creates a static
-mock from saved safe records, and then connects only to the stable service.
-Toolkit selection and application code are intentionally outside #24.
+Specify the title, scope, prerequisites, and handoff text that #25 will use to
+open the implementation issue after cutover. Toolkit selection, issue creation,
+and application code are intentionally outside #24.
 
 ## Affected interfaces, files and artifacts
 
@@ -103,7 +97,8 @@ than define replacements in UI code.
 4. Define loading, empty, error, cancellation, offline and abstention states.
 5. Define safe path-opening and export boundaries inherited from closed #4 and
    the open #9 import-safety contract.
-6. Require a separate future implementation issue after #25.
+6. Add the post-#25 issue template/handoff requirement, including completed #22
+   and #25 as prerequisites.
 
 ## Verification
 
@@ -123,8 +118,8 @@ git diff --check
 - PR #1 has a recorded SHA/disposition and is closed or retargeted only after
   its useful isolated concepts are documented.
 - No GUI source, dependency or toolkit is added by #24.
-- The future GUI implementation is represented by a separate issue whose
-  dependencies include #21, #22, #23, #25 and #27.
+- The post-#25 transition text assigns issue creation to #25 and names completed
+  #22/#25 as hard prerequisites plus #21/#23/#27 as consumed contracts.
 
 ## Rollback and safety constraints
 

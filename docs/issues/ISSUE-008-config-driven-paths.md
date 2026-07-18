@@ -32,6 +32,7 @@ $env:EASY_RAG_MONITOR_DIR = "$PWD"; python monitor_file_changes_update_chromaDB.
 
 ## Closure gate, rollback, and commit boundary
 
-- **Close only when:** no runtime hardcoded user path remains, overrides drive monitor/vault behavior, and picker/default behavior is tested.
+- **Maintained-path closure:** no maintained runtime contains a hardcoded user path, overrides drive monitor/vault behavior, and picker/default behavior is tested.
+- **Retirement closure (mutually exclusive):** remove an affected utility from supported entry points and docs, prove its machine-specific path is unreachable, and document the configurable maintained replacement. A retired file must not remain advertised as runnable.
 - **Rollback constraint:** preserve safe defaults and never restore a machine-specific path.
 - **Commit:** `fix(#8): make runtime paths configurable`.

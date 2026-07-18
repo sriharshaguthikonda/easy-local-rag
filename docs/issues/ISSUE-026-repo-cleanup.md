@@ -16,7 +16,7 @@ removal, legacy isolation and layout changes happen only after cutover.
 
 ## Dependencies and sequence
 
-### Early #26 hygiene
+### Early #26 phase — 26A and 26B
 
 Runs after:
 
@@ -24,13 +24,15 @@ Runs after:
 2. #18 inventories every branch, PR and local-only SHA.
 
 It runs before #19 so new migration work is not built on tracked runtime debris
-or an unsafe public history.
+or unsafe public history. Its handoff gate closes #2, but does not close #26.
 
-### Late #26 cleanup
+### Late #26 phase — 26C and 26D
 
-Runs after #25 succeeds, the future GUI decision is recorded and Chroma is no
-longer a supported runtime dependency. It must not remove a migration tool,
-branch, snapshot or rollback artifact needed by #19, #23 or #25.
+Runs after #25 succeeds and the future GUI implementation or explicit no-GUI
+decision is recorded. By then #21/#22 have frozen the supported dependency
+surface and Chroma is no longer a supported runtime dependency. It must not
+remove a migration tool, branch, snapshot or rollback artifact needed by #19,
+#23 or #25.
 
 ## Implementation slices
 
@@ -116,6 +118,8 @@ Operator artifacts:
 
 ## Verification
 
+### Early phase verification
+
 ```powershell
 git ls-files | rg "(__pycache__|\.pyc$|error\.log$|output\.log$|chroma\.sqlite3$|vault\.txt$)"
 git check-ignore -v .env chroma/chroma.sqlite3 output.log __pycache__/example.pyc
@@ -136,7 +140,12 @@ $scanExit | Set-Content (Join-Path $evidence "$phase-gitleaks.exit-code")
 if ($scanExit -ne 0) { throw "All-ref $phase scan found a secret or failed." }
 Get-FileHash (Join-Path $evidence "$phase-gitleaks.json") -Algorithm SHA256 |
   Format-List | Out-File (Join-Path $evidence "$phase-gitleaks-report.sha256")
+git diff --check
+```
 
+### Late phase verification
+
+```powershell
 python -m pytest tests -q
 python -m py_compile localrag.py
 python localrag.py status
@@ -155,7 +164,9 @@ scanner/config/report hashes and exit statuses. The acceptance result is
 post-rewrite exit `0` and zero findings across every ref in the #18 manifest;
 missing refs, scanner errors or findings all fail the gate.
 
-## Measurable closure gate
+## Measurable closure gates
+
+### Early phase handoff gate — 26A and 26B
 
 - Every credential found in any ref is revoked/rotated before rewrite.
 - The post-rewrite all-ref secret scan covers the complete #18 manifest, exits
@@ -163,6 +174,14 @@ missing refs, scanner errors or findings all fail the gate.
   version and config as the recorded pre-rewrite scan.
 - `git ls-files` reports no interpreter cache, runtime log, local database,
   embedding, source corpus or private exported session.
+- Ignore and secret/generated-file checks prevent recurrence.
+- The old-clone invalidation notice and access-controlled recovery bundle are
+  recorded.
+- Passing this gate supplies #2 final-closure evidence and unlocks #19; #26
+  remains open.
+
+### Final issue closure gate — 26C and 26D
+
 - A fresh clone contains only safe source/docs/fixtures and installs from the
   documented dependency set.
 - The full focused test suite and supported CLI smoke pass in the clean clone.
@@ -172,6 +191,7 @@ missing refs, scanner errors or findings all fail the gate.
   deprecation status.
 - Final tracked-file inventory and repository-size report are reviewed.
 - #25 rollback artifacts remain checksum-valid and available.
+- The post-#25 GUI implementation or explicit no-GUI decision is linked.
 
 ## Rollback and safety constraints
 
@@ -188,11 +208,11 @@ missing refs, scanner errors or findings all fail the gate.
 
 Keep these boundaries separate:
 
-1. early ignore/generated-file hygiene;
-2. CI/pre-commit safety checks;
-3. the sole coordinated history rewrite and public ref replacement;
-4. supported dependency/docs cleanup;
-5. late legacy/layout/Chroma retirement after #25.
+1. 26A early ignore/generated-file hygiene;
+2. 26A CI/pre-commit safety checks;
+3. 26B the sole coordinated history rewrite and public ref replacement;
+4. 26C supported dependency/docs cleanup after #25 and the GUI decision;
+5. 26D late legacy/layout/Chroma retirement after #25 and the GUI decision.
 
-No single bulk commit should mix history rewriting, layout moves and runtime
-behaviour changes.
+The early handoff and late final phase use separate PRs/commits. No bulk commit
+mixes history rewriting, layout moves and runtime behaviour changes.

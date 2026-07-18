@@ -8,7 +8,7 @@
 ## Implementation slices
 
 1. Read all collection documents and metadata, build a tokenized `BM25Okapi` index independently of vector-query results.
-2. Cache by Chroma path, collection name, and `collection.count()`; rebuild only when that identity changes.
+2. Cache by Chroma path and collection name plus a collection generation/fingerprint or explicit ingestion invalidation hook. Count may be diagnostic input but is not sufficient because content can change at the same count.
 3. Query vector and BM25 independently, fuse with a deterministic method such as reciprocal-rank fusion, and preserve document/metadata for BM25-only hits.
 
 ## Affected interfaces, files, and artifacts
@@ -21,6 +21,7 @@
 - Do not rebuild a BM25 corpus from the vector response.
 - Use the existing `rank_bm25` dependency; avoid a new persistence layer until corpus rebuild cost proves it necessary.
 - Test a fake collection in which vector returns A while BM25 recovers B.
+- Replace one document while preserving collection count; assert the next query rebuilds or invalidates the cache and returns the updated term rather than stale content.
 
 ## Verification
 
@@ -32,6 +33,7 @@ python -m py_compile GUI_direct_search.py
 
 ## Closure gate, rollback, and commit boundary
 
-- **Close only when:** test evidence shows a BM25-only hit joins the fused results, full corpus loading is independent, and cache rebuild behavior is observable.
+- **Maintained-path closure:** test evidence shows a BM25-only hit joins fused results, full-corpus loading is independent, and generation/fingerprint/hook invalidation passes a same-count content-update regression.
+- **Retirement closure (mutually exclusive):** remove BM25 claims and controls from supported paths/docs, prove the stale cache path cannot run, and document the maintained retrieval replacement without describing vector-top-N reranking as full-corpus BM25.
 - **Rollback constraint:** retain vector retrieval as a working fallback but do not label vector-top-N reranking as full-corpus BM25.
 - **Commit:** `fix(#10): search BM25 over full corpus`.

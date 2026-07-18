@@ -7,9 +7,9 @@
 
 ## Implementation slices
 
-1. Keep `conversation_import.py` as the pure whitelist boundary: only `history`, `tags`, and `favorites`; reject underscore-prefixed and all runtime-object keys.
+1. Keep `conversation_import.py` as the pure whitelist boundary: only `history`, `tags`, and `favorites`; reject underscore-prefixed and all runtime-object keys. Enforce an 8 MiB file limit, 1,000-message limit, 64 KiB per-message content limit, 100 tags, 100 favorites, and 256 characters per tag/favorite before allocating complete nested state.
 2. Assign validated fields explicitly in `streamlit_app.py`; display rejected-key/type warnings.
-3. Complete missing tests for crafted `current_sources`, oversized content, valid old exports, and preservation of the real collection/client state.
+3. Complete missing tests for crafted `current_sources`, each exact limit and one-over rejection, valid old exports, and preservation of the real collection/client state.
 
 ## Affected interfaces, files, and artifacts
 
@@ -19,7 +19,8 @@
 ## Concrete actions
 
 - Never call `st.session_state.update(imported_data)`.
-- Validate nested containers before assignment; ignore unknown values with user-visible warnings rather than trusting them.
+- Check raw byte size before JSON parsing; validate container counts and item sizes before building replacement lists, and complete validation before assigning any session-state field.
+- Reject over-limit imports atomically with a user-visible warning; do not partially import a prefix.
 - Test through the helper and the Streamlit integration boundary without needing a live Chroma client.
 
 ## Verification
@@ -34,6 +35,7 @@ Manual: import JSON containing `collection`, `tts_worker`, and `current_sources`
 
 ## Closure gate, rollback, and commit boundary
 
-- **Close only when:** malicious state keys, unsafe source paths, invalid roles, and oversized content are rejected; legacy valid history imports; warnings are shown.
+- **Maintained-path closure:** malicious state keys, unsafe source paths, invalid roles, and exact-limit violations are rejected before full state allocation or any assignment; valid legacy history imports; warnings are shown.
+- **Retirement closure (mutually exclusive):** remove conversation import from every maintained UI and setup document, prove no upload/import handler reaches JSON-to-session assignment, and document the supported replacement/export workflow. Retirement does not permit a hidden unsafe import route.
 - **Rollback constraint:** retain explicit assignments and the whitelist; never restore bulk session-state update.
 - **Commit:** `fix(#9): validate conversation imports`.
