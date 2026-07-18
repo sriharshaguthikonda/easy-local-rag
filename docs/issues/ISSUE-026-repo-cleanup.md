@@ -28,11 +28,11 @@ or unsafe public history. Its handoff gate closes #2, but does not close #26.
 
 ### Late #26 phase — 26C and 26D
 
-Runs after #25 succeeds and the future GUI implementation or explicit no-GUI
-decision is recorded. By then #21/#22 have frozen the supported dependency
-surface and Chroma is no longer a supported runtime dependency. It must not
-remove a migration tool, branch, snapshot or rollback artifact needed by #19,
-#23 or #25.
+Runs after #25 reaches `post_cutover_handoff`, whose immutable record names the
+future GUI issue or explicit no-GUI decision. By then #21/#22 have frozen the
+supported dependency surface and Chroma is no longer a supported runtime
+dependency. It must not remove a migration tool, branch, snapshot or rollback
+artifact needed by #19, #23 or #25.
 
 ## Implementation slices
 
@@ -133,13 +133,20 @@ git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/remotes ref
 gitleaks version | Set-Content (Join-Path $evidence "$phase-gitleaks-version.txt")
 Get-FileHash .gitleaks.toml -Algorithm SHA256 |
   Format-List | Out-File (Join-Path $evidence "$phase-gitleaks-config.sha256")
+$report = Join-Path $evidence "$phase-gitleaks.json"
 gitleaks git --redact --config .gitleaks.toml --log-opts='--all' --report-format json `
-  --report-path (Join-Path $evidence "$phase-gitleaks.json") --exit-code 1 .
+  --report-path $report --exit-code 3 .
 $scanExit = $LASTEXITCODE
 $scanExit | Set-Content (Join-Path $evidence "$phase-gitleaks.exit-code")
-if ($scanExit -ne 0) { throw "All-ref $phase scan found a secret or failed." }
-Get-FileHash (Join-Path $evidence "$phase-gitleaks.json") -Algorithm SHA256 |
+if (-not (Test-Path $report)) { throw 'Gitleaks did not produce the required report.' }
+$findings = @(Get-Content $report -Raw | ConvertFrom-Json)
+Get-FileHash $report -Algorithm SHA256 |
   Format-List | Out-File (Join-Path $evidence "$phase-gitleaks-report.sha256")
+if ($scanExit -notin 0,3) { throw "Gitleaks $phase scanner/configuration failure." }
+if (($scanExit -eq 0) -ne ($findings.Count -eq 0)) { throw "Gitleaks $phase exit/report mismatch." }
+if ($phase -eq 'post-rewrite' -and ($scanExit -ne 0 -or $findings.Count -ne 0)) {
+  throw 'Post-rewrite history is not clean.'
+}
 git diff --check
 ```
 
@@ -160,9 +167,11 @@ may allowlist only reviewed synthetic fixtures. No baseline or allowlist may
 hide the known revoked credential type. Run the block once before and once
 after rewriting, using the same pinned Gitleaks version and config hash. The
 private operator record contains both ref manifests, redacted JSON reports,
-scanner/config/report hashes and exit statuses. The acceptance result is
-post-rewrite exit `0` and zero findings across every ref in the #18 manifest;
-missing refs, scanner errors or findings all fail the gate.
+scanner/config/report hashes and exit statuses. Pre-rewrite exit `3` with a
+non-empty report is expected findings evidence; exits other than `0`/`3`, a
+missing/malformed report, or an exit/report mismatch are scanner failures. The
+acceptance result is post-rewrite exit `0` and zero findings across every ref in
+the #18 manifest; missing refs, scanner errors, or post-rewrite findings fail.
 
 ## Measurable closure gates
 
