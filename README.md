@@ -1,3 +1,17 @@
+# easy-local-rag
+
+> **Repository status:** `main` still contains the old Ollama/Chroma command-line project. The maintained direction is the PostgreSQL/pgvector consolidation in [issue #17](https://github.com/sriharshaguthikonda/easy-local-rag/issues/17). Do not merge the experimental GUI branches wholesale.
+
+Canonical planning documents:
+
+- [PostgreSQL migration sequence](docs/plans/README.md)
+- [Public branch and PR inventory](docs/plans/branch-inventory.md)
+- [Issue #2–#27 disposition map](docs/plans/issue-disposition.md)
+
+The legacy upstream instructions are retained below for reference while migration and export tooling are built.
+
+---
+
 # SuperEasy 100% Local RAG with Ollama + Email RAG
 
 ### YouTube Tutorials
