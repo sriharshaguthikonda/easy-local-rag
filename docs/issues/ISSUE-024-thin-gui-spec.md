@@ -102,7 +102,7 @@ than define replacements in UI code.
    #18.
 4. Define loading, empty, error, cancellation, offline and abstention states.
 5. Define safe path-opening and export boundaries inherited from closed #4 and
-   superseded #9.
+   the open #9 import-safety contract.
 6. Require a separate future implementation issue after #25.
 
 ## Verification

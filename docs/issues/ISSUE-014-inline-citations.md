@@ -1,37 +1,39 @@
 # Issue #14: Render inline source citations
 
-**Status:** CLOSED on GitHub — live code has numbered prompt blocks and missing-citation UI warning; retain this plan as closure evidence and verify before archival.
+**Status:** CLOSED as a GitHub duplicate; no independent implementation work remains.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/14
 **Labels / priority:** `priority:P1`, `type:enhancement`
-**Dependencies:** #5 guarded context formatter; #4 safe file-open behavior when links/actions are exposed.
+**Dependencies:** #27 is the canonical answer-grounding, citation-validation, and abstention issue; #5 and #13 remain separate open acceptance requirements.
 
 ## Implementation slices
 
-1. Assign stable IDs to the exact sources sent to the model and include numbered context blocks plus a citation instruction.
-2. Store source mapping with the answer, render only cited IDs that exist, and warn when the response returns no citation.
-3. Keep source paths/actions validated; do not invent or post-process unsupported citations.
+1. No new slice is authorized by #14.
+2. Retain existing numbered-source and missing-citation behavior only as historical evidence.
+3. Route invented-ID, quote-match, claim-support, conflict, and abstention work to #27.
 
 ## Affected interfaces, files, and artifacts
 
-- `streamlit_app.py`, `streamlit_groq_lama_chromadb_RAG_ETTS.py`, `rag_prompting.py`, citation tests.
-- Answer contract: context-backed claims use `[N]`; rendered footnotes map only to prompt-supplied sources.
+- Historical evidence: `streamlit_app.py`, `rag_prompting.py`, and citation tests.
+- Canonical future contract: `docs/issues/ISSUE-027-grounded-answers.md`.
+- No source file is owned or changed by this duplicate issue.
 
 ## Concrete actions
 
-- Verify source numbering starts at one, survives prompt assembly, and footnotes use the same map.
-- Regression-test missing citations, invalid IDs, and two-source ordering.
-- Verify manual output from two retrieved chunks before treating GitHub closure as implementation closure.
+- Keep the GitHub duplicate state and link #27 as the active destination.
+- Do not claim the closed duplicate proves #27's structured validation gates.
+- Reopen #14 only if GitHub issue taxonomy changes and #27 no longer owns the work.
 
 ## Verification
 
 ```powershell
-python -m pytest tests/test_streamlit_citations_config.py tests/test_rag_prompting.py -q
-python -m pytest tests -q
-python -m py_compile streamlit_app.py streamlit_groq_lama_chromadb_RAG_ETTS.py
+gh api repos/sriharshaguthikonda/easy-local-rag/issues/14 --jq '{state, state_reason}'
+python -m pytest tests/test_streamlit_citations_config.py -q -p no:cacheprovider
 ```
 
-## Closure gate, rollback, and commit boundary
+The current source-string citation assertion is retained as known historical evidence; its separate failure does not convert this duplicate into an implementation issue.
 
-- **Close/archive only when:** numbered context, inline citations, matching valid footnotes, and missing-citation warning are all demonstrated.
-- **Rollback constraint:** keep the source expander and source mapping; do not show links for unvalidated paths.
-- **Commit:** `feat(#14): render inline source citations`.
+## Closure gate, rollback constraints, and commit boundary
+
+- **Closure gate:** already satisfied administratively by GitHub's `closed` / `duplicate` state and the explicit #27 destination link.
+- **Rollback constraint:** do not reopen or create source changes from this plan without a new issue-triage decision.
+- **Commit boundary:** none; this file is historical duplicate disposition evidence only.

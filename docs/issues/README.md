@@ -7,7 +7,7 @@ This index is the authoritative execution map for the 24 tracked issues:
 GitHub remains authoritative for live issue state and discussion; the linked
 plan governs implementation scope, gates, verification, rollback, and commit
 boundaries. The status column reflects live state checked on 2026-07-18:
-#14 is closed, while #6 remains open and in progress.
+#14 is closed, while #6 has a merged GUI-lineage fix and remains open only until this canonical plan lands and receives reciprocal evidence links.
 
 ## Required execution order
 
@@ -24,7 +24,7 @@ own closure gates but must not bypass the consolidation sequence.
 |---|---|---|---|---|---|
 | #2 | P0 security | Open — immediate blocker | [Rotate Groq keys](ISSUE-002-rotate-groq-keys.md) | First gate; credential rotation and approved history remediation precede archive/export work. | [Issue #2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2) |
 | #5 | P1 security | Open — partial implementation | [Prompt-injection defense](ISSUE-005-prompt-injection.md) | Retained safety requirement; its structured validation continues in #27. | [Issue #5](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5) |
-| #6 | P0 bug | **Open — in progress** | [MMR embedding fix](ISSUE-006-mmr-embedding-keyerror.md) | Preserve #11's embedding contract; close only after the functional fake-collection regression passes. | [Issue #6](https://github.com/sriharshaguthikonda/easy-local-rag/issues/6) |
+| #6 | P0 bug | **Open — fix merged; plan-link closure pending** | [MMR embedding fix](ISSUE-006-mmr-embedding-keyerror.md) | PR #29 merged at `de74659`; preserve #11's embedding contract and close after the main-line plan/evidence comment is available. | [Issue #6](https://github.com/sriharshaguthikonda/easy-local-rag/issues/6) |
 | #7 | P1 bug | Open — partial implementation | [Lazy Chroma initialization](ISSUE-007-lazy-chromadb-init.md) | Depends on #11 creation metadata; required only while the Chroma path remains supported. | [Issue #7](https://github.com/sriharshaguthikonda/easy-local-rag/issues/7) |
 | #8 | P1 bug | Open — partial implementation | [Config-driven paths](ISSUE-008-config-driven-paths.md) | Coordinates with #16; early #26 owns repository hygiene, not user-path migration. | [Issue #8](https://github.com/sriharshaguthikonda/easy-local-rag/issues/8) |
 | #9 | P0 security | Open — partial implementation | [Conversation import validation](ISSUE-009-validate-conversation-import.md) | Independent small closure; imported sessions never restore trusted retrieval state. | [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) |

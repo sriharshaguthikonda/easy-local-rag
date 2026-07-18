@@ -7,7 +7,7 @@
 
 ## Dependencies
 
-Requires #2 secret remediation, #20B's destination integration, and the stable service/CLI contract from `.memory` #5/#23/#21. It runs before #27 grounded-answer validation and #25 cutover. It protects offline/local operation throughout and must not delay evidence-only search.
+Requires #2 secret remediation, #20B's destination integration, and the stable service contract from `.memory` #5/#23. Provider-core work may proceed in parallel with #21; `status`, `doctor`, and `chat` integration follows #21's client surface. It runs before #27 grounded-answer validation and #25 cutover. It protects offline/local operation throughout and must not delay evidence-only search.
 
 ## Implementation slices
 
