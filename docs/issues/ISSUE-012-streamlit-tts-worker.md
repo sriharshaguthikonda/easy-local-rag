@@ -7,9 +7,10 @@
 
 ## Implementation slices
 
-1. Use one managed queue and one background worker per cached resource/session.
+1. Give each Streamlit session an owned queue, worker, and routing/session ID; never route audio through a process-global queue shared by sessions.
 2. Run asynchronous TTS with one worker-owned event loop, or make it synchronous inside that worker; do not call `asyncio.run()` per sentence in a long-lived worker.
-3. Add stop sentinel, idempotent start, and rerun/death recovery tests.
+3. Add a session-owned stop sentinel, idempotent start, rerun/death recovery, and shutdown that joins only that session's worker.
+4. Run two sessions concurrently with distinct fake synthesis payloads; assert no cross-session audio, queue consumption, stop, or shutdown interference.
 
 ## Affected interfaces, files, and artifacts
 
@@ -19,7 +20,7 @@
 ## Concrete actions
 
 - Trace all thread creation sites; remove or isolate legacy global workers from the Streamlit path.
-- Cache the worker resource, store only simple flags in session state, and provide clean shutdown.
+- Cache or own the worker at session scope, store only simple routing/lifecycle state in session state, and provide clean session shutdown.
 - Add a small fake synthesis test rather than calling a live audio provider.
 
 ## Verification
@@ -34,6 +35,7 @@ Manual: submit three prompts with TTS on, toggle it off/on, and confirm one audi
 
 ## Closure gate, rollback, and commit boundary
 
-- **Close only when:** start is idempotent, stop is clean, reruns reuse one worker, and manual toggling produces no duplicate audio.
+- **Maintained-path closure:** start is idempotent, stop/shutdown are session-owned and clean, reruns reuse that session's worker, the concurrent two-session isolation regression passes, and manual toggling produces no duplicate audio.
+- **Retirement closure (mutually exclusive):** remove TTS from maintained Streamlit controls and setup docs, prove no worker/queue starts from that path, and document any maintained TTS replacement with its own session isolation evidence.
 - **Rollback constraint:** retain a safe disabled-TTS path; do not restore unbounded daemon-thread creation.
 - **Commit:** `fix(#12): stabilize Streamlit TTS worker`.

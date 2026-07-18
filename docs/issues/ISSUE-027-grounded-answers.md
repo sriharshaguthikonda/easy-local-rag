@@ -70,6 +70,10 @@ Raw provider prose is never the final application contract.
 - Reject cited IDs absent from the supplied context.
 - Require corpus-derived factual claims to map to one or more supplied evidence
   IDs.
+- Validate semantic support, not citation presence alone: for each factual
+  claim, the validator must identify the supporting evidence span and classify
+  it as `supported`, `contradicted`, or `not_supported`. Contradicted or
+  not-supported claims cannot appear in a `grounded` answer.
 - Validate direct quotations against normalized source text.
 - Verify source/chunk status, location resolution and privacy inclusion.
 - Surface conflicting sources rather than silently selecting one.
@@ -114,6 +118,8 @@ private content in public logs.
 2. Build a deterministic evidence package from `.memory` #5 search hits.
 3. Fence untrusted text and preserve source boundaries/provenance.
 4. Parse provider output strictly and validate every claim/citation/quotation.
+   Include an adversarial case whose citation resolves to a topically related
+   chunk that does not support—and another that contradicts—the stated claim.
 5. Implement explicit abstention and provider/validation failure results.
 6. Add one constrained repair attempt with the same evidence set.
 7. Add the medical/clinical policy and source-age/conflict warnings.
@@ -139,6 +145,10 @@ git diff --check
 - 100% of no-result, low-evidence, decisive-truncation and malformed-output
   fixtures return a non-success status.
 - Fully supported fixtures have 100% citation precision and recall.
+- 100% of cited-but-unsupported and cited-but-contradicted adversarial claims
+  are detected; the unsafe claim is omitted and the result is `partial`, or the
+  whole result is `validation_failed`/`insufficient_evidence` when omission
+  would change the answer's meaning. Raw provider prose is never displayed.
 - Deterministic fixtures contain zero unmarked unsupported corpus claims.
 - Prompt-injection text inside evidence cannot alter the system instruction or
   requested output schema.

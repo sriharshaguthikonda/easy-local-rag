@@ -32,6 +32,7 @@ streamlit run streamlit_app.py
 
 ## Closure gate, rollback, and commit boundary
 
-- **Close only when:** module import makes no Chroma call; an empty temporary Chroma path launches with setup guidance or a new collection; an existing collection still loads.
+- **Maintained-path closure:** module import makes no Chroma call; an empty temporary Chroma path launches with setup guidance or a new collection; an existing collection still loads.
+- **Retirement closure (mutually exclusive):** remove an affected entry point from supported docs and launch surfaces, prove importing every maintained entry point makes no eager Chroma call, and link its maintained lazy-initialized replacement.
 - **Rollback constraint:** do not reintroduce import-time `get_collection`; retain data and metadata on any creation-path rollback.
 - **Commit:** `fix(#7): lazy-init Chroma collection`.

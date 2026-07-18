@@ -32,6 +32,7 @@ python -m py_compile embedding_contract.py monitor_file_changes_update_chromaDB.
 
 ## Closure gate, rollback, and commit boundary
 
-- **Close only when:** empty initialization works, matching models pass, mismatch and non-empty missing metadata fail before querying, and all active paths use the helper.
+- **Maintained-path closure:** empty initialization works, matching models pass, mismatch and non-empty missing metadata fail before querying, and all maintained ingest/query paths use the helper.
+- **Retirement closure (mutually exclusive):** remove uncovered ingest/query paths from supported entry points and docs, prove they cannot generate or query embeddings, and link a maintained contract-enforcing replacement. Every remaining path must still reject mismatches.
 - **Rollback constraint:** never silently alter non-empty metadata to bypass an error.
 - **Commit:** `fix(#11): enforce embedding model contract`.

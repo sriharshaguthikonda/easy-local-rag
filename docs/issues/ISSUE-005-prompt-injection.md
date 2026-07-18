@@ -33,6 +33,7 @@ Manual: use a chunk containing an instruction override and a literal closing sou
 
 ## Closure gate, rollback, and commit boundary
 
-- **Close only when:** all retrieval-backed model paths use guarded blocks, wrapper escaping and source order are tested, and the malicious-chunk smoke succeeds.
+- **Maintained-path closure:** all maintained retrieval-backed model paths use guarded blocks, wrapper escaping and source order are tested, and the malicious-chunk smoke succeeds.
+- **Retirement closure (mutually exclusive):** every unguarded legacy model path is removed from supported entry points and setup docs, cannot be invoked, and points to a guarded replacement with regression evidence. Retirement never permits an unguarded maintained path; #27 extends answer validation and does not replace this boundary.
 - **Rollback constraint:** do not remove the guard or revert to raw concatenation; compatibility rollback may retain the formatter while disabling only optional display features.
 - **Commit:** `fix(#5): fence retrieved context against prompt injection`.

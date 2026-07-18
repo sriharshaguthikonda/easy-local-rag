@@ -33,6 +33,7 @@ python -m py_compile streamlit_groq_lama_chromadb_RAG_ETTS.py
 
 ## Closure gate, rollback, and commit boundary
 
-- **Close only when:** the focused fake-collection regression passes with metadata containing only filename/time, document-array content, separate embeddings, `top_k > 0`, and `additional_unique_files > 0`; the backend compiles; PR #29 is merged; and the closing comment links this main-line plan, exact fix commit, and verification evidence.
+- **Maintained-path closure:** the focused fake-collection regression passes with metadata containing only filename/time, document-array content, separate embeddings, `top_k > 0`, and `additional_unique_files > 0`; the backend compiles; PR #29 is merged; and the closing comment links this main-line plan, exact fix commit, and verification evidence.
+- **Retirement closure (mutually exclusive):** if the legacy GUI retrieval path is withdrawn instead, remove it from supported entry points and setup docs, prove it cannot be invoked, and identify a maintained retrieval replacement that reads Chroma documents and embeddings from their proper result arrays.
 - **Rollback constraint:** retain the `embeddings` include and top-level result shape; never restore embedding-in-metadata access.
 - **Commit:** `fix(#6): use Chroma documents in hybrid retrieval`.

@@ -10,13 +10,13 @@
 
 This epic makes PostgreSQL/pgvector the single production data platform while retaining separate durable-memory and evidence/chunk domains. Raw chunks never enter durable `memories` and evidence is never injected into every prompt.
 
-`#2 -> #18 -> early #26 hygiene -> #19 -> #20A -> .memory #4 -> #20B -> .memory #5 -> #23 -> #21/#22 -> #27 -> #25 -> future GUI -> late #26`
+`#2 containment -> #18 -> early #26A/#26B -> #2 final closure -> #19 -> #20A -> .memory #4 -> #20B -> .memory #5 -> #23 -> #21/#22 -> #27 -> #25 -> future GUI decision/implementation -> late #26C/#26D`
 
 `#18` and early #26 hygiene may only preserve/sanitize and inventory; they must not delete branches, data, or Chroma rollback material. #21 stays blocked until the service contract from `.memory` #5/#23 is stable. #24/future GUI is deferred.
 
 ## Implementation slices
 
-1. **Preserve and contain:** complete #2 credential rotation/remediation, #18 inventory, archive decisions, and early #26 generated-artifact/path hygiene.
+1. **Preserve and contain:** pass #2 credential containment, complete #18 inventory, then complete early #26A hygiene and #26B's sole approved rewrite; close #2 from its clean post-rewrite evidence before #19.
 2. **Export before destination:** #19 creates a read-only Chroma audit plus deterministic export manifest.
 3. **Database-neutral ingestion (#20A):** parsers, normalized records, deterministic chunk IDs, and package/reconciliation format run offline without database imports.
 4. **Evidence store and destination integration:** `.memory` #4 supplies the evidence/source schema/import API; #20B imports packages idempotently and handles lifecycle reconciliation.
@@ -31,7 +31,7 @@ This epic makes PostgreSQL/pgvector the single production data platform while re
 
 ## Concrete actions
 
-- Maintain an issue-to-gate matrix in the canonical plans; mark legacy #5-#16 requirements as retained, absorbed, or superseded per `issue-disposition.md`.
+- Maintain an issue-to-gate matrix in the canonical plans; close legacy #5-#16 through a named maintained-path or verified-retirement mode, except closed duplicate #14, per `issue-disposition.md`.
 - Require every migration run to be idempotent and emit counts, hashes, warnings, provenance, and an operator-readable reconciliation report.
 - Keep search-only usable with no LLM or speech provider; require independently generated lexical and vector candidates before fusion.
 - Keep read-only Chroma rollback data through #25 acceptance; do not copy Chroma persistence directories as a PostgreSQL migration method.

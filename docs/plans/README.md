@@ -15,16 +15,17 @@ The `.memory` repository will own the PostgreSQL/pgvector evidence store and sha
 
 ### 0. Contain and freeze
 
-1. Complete credential rotation and history remediation in [#2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2). Never publish secret values in reports or issue comments.
-2. Treat every non-default branch as read-only salvage material until [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18) records its SHA, risks, useful ideas, and disposition.
+1. Pass [#2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2)'s credential containment gate. Never publish secret values in reports or issue comments.
+2. Treat every non-default branch as read-only salvage material until [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18) records its SHA, risks, useful ideas, and disposition; early #26B then solely owns any approved history rewrite and supplies #2 final-closure evidence.
 3. Do not merge PR #1 or either GUI branch wholesale.
 
 ### 1. Preserve the current evidence
 
 1. Finish the public and local branch inventory in [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18).
-2. Perform only the early generated/private-artifact hygiene slice of [#26](https://github.com/sriharshaguthikonda/easy-local-rag/issues/26).
-3. Build the read-only Chroma audit and deterministic export tool in [#19](https://github.com/sriharshaguthikonda/easy-local-rag/issues/19).
-4. Freeze a named Chroma snapshot and record checksums before any migration write.
+2. Perform early #26A generated/private-artifact hygiene and early #26B's sole approved history rewrite.
+3. Close #2 from the clean post-rewrite all-ref evidence.
+4. Build the read-only Chroma audit and deterministic export tool in [#19](https://github.com/sriharshaguthikonda/easy-local-rag/issues/19).
+5. Freeze a named Chroma snapshot and record checksums before any migration write.
 
 ### 2. Define data contracts
 
@@ -49,8 +50,8 @@ The `.memory` repository will own the PostgreSQL/pgvector evidence store and sha
 
 1. Use the dual-run and rollback gates in [#25](https://github.com/sriharshaguthikonda/easy-local-rag/issues/25).
 2. Keep Chroma read-only until counts, hashes, provenance, retrieval quality, and rollback have passed.
-3. Rebuild a thin GUI only after the shared contracts are stable, as described in [#24](https://github.com/sriharshaguthikonda/easy-local-rag/issues/24).
-4. Perform only the late legacy-layout and Chroma-removal slice of [#26](https://github.com/sriharshaguthikonda/easy-local-rag/issues/26).
+3. After cutover, open the separate future GUI implementation issue from the specification in [#24](https://github.com/sriharshaguthikonda/easy-local-rag/issues/24), or record an explicit no-GUI decision.
+4. Perform late #26C/#26D dependency, legacy-layout, and Chroma-removal cleanup.
 
 ## Stop conditions
 

@@ -69,6 +69,11 @@ Skipping a state is invalid.
 
 - Make PostgreSQL the configured primary only after explicit user approval.
 - Retain Chroma snapshot/export and a tested backend-selection rollback.
+- For every accepted post-freeze ingestion, retain its deterministic #20 package
+  and append it to a checksummed rollback manifest before acknowledging the
+  ingest. A rollback replays that manifest into a separate Chroma delta
+  collection and searches the immutable frozen snapshot plus the delta; it
+  never writes to the frozen snapshot.
 - Run for 14 consecutive days without an unexplained P0/P1 parity, citation,
   ingestion or data-loss regression.
 
@@ -96,6 +101,7 @@ Required retained artifacts:
 - #23 retrieval report;
 - rollback demonstration record;
 - list of post-freeze sources that exist only in PostgreSQL;
+- checksummed post-freeze package manifest and rebuilt rollback delta;
 - machine-readable migration state.
 
 ## Concrete actions
@@ -106,7 +112,7 @@ Required retained artifacts:
 4. Attach the passing #23 report.
 5. Exercise dual-run with Chroma opened read-only.
 6. Demonstrate rollback from PostgreSQL-primary configuration to the frozen
-   Chroma backend.
+   Chroma-plus-delta backend, including a source ingested only after freeze.
 7. Record approval, begin the 14-day PostgreSQL-primary hold and monitor.
 8. Run the supported client with Chroma uninstalled.
 9. Record separate archive approval; leave deletion manual.
@@ -135,6 +141,10 @@ supported PostgreSQL client dependencies.
 - #23 passes with 100% citation resolution and no unexplained critical
   regression.
 - Rollback is executed successfully, not merely documented.
+- Rollback has an RPO of zero acknowledged ingestion packages: every accepted
+  post-freeze package is present in the checksummed manifest and replayed into
+  the delta. A regression fixture proves a post-freeze-only source is
+  discoverable with its citation/source location while PostgreSQL is disabled.
 - PostgreSQL remains primary for 14 consecutive days without an unexplained
   P0/P1 migration regression.
 - The supported CLI searches successfully with Chroma uninstalled.
@@ -148,6 +158,9 @@ supported PostgreSQL client dependencies.
 - **No archive deletion or local data deletion without separate explicit user
   approval after the hold period.**
 - Chroma is read-only throughout validation and dual-run.
+- The frozen Chroma snapshot is immutable; only the disposable rollback delta
+  is rebuilt from retained packages. A missing or checksum-invalid package
+  blocks acknowledgement or rollback rather than silently losing the source.
 - A failed gate returns to the preceding state; it never advances by waiver
   hidden in code.
 - Refuse destructive paths resolving to a drive root, home directory,
