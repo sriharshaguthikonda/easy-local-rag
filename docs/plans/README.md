@@ -23,7 +23,8 @@ The `.memory` repository will own the PostgreSQL/pgvector evidence store and sha
 
 1. Finish the public and local branch inventory in [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18).
 2. Perform early #26A generated/private-artifact hygiene and early #26B's sole approved history rewrite.
-3. Close #2 from the clean post-rewrite all-ref evidence.
+3. Close #2 from the canonical clean or explicitly accepted immutable-residual
+   terminal evidence.
 4. Build the read-only Chroma audit and deterministic export tool in [#19](https://github.com/sriharshaguthikonda/easy-local-rag/issues/19).
 5. Freeze a named Chroma snapshot and record checksums before any migration write.
 

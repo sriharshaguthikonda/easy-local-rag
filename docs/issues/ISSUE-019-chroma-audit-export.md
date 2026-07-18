@@ -7,7 +7,10 @@
 
 ## Dependencies
 
-Requires #18 inventory/archive evidence, the complete early #26A/#26B handoff, and #2 final closure from the clean post-rewrite all-ref evidence. Blocks #20A, `.memory` #4, #20B, #23, #25, and late #26. Chroma remains untouched and available as rollback data.
+Requires #18 inventory/archive evidence, the complete early #26A/#26B handoff,
+and #2 final closure from #26B's clean or explicitly accepted
+immutable-residual terminal evidence. Blocks #20A, `.memory` #4, #20B, #23,
+#25, and late #26. Chroma remains untouched and available as rollback data.
 
 ## Implementation slices
 
