@@ -43,6 +43,7 @@ The machine-readable state records these ordered transitions:
 7. `postgres_primary`
 8. `chroma_retired`
 9. `archive_approved`
+10. `post_cutover_handoff`
 
 Every transition records timestamp, actor, source/export hashes, importer and
 exporter commits, migration batch ID, reports, approval and previous state.
@@ -84,6 +85,17 @@ Skipping a state is invalid.
 - Require a second explicit user approval before archive/deletion eligibility.
 - Actual local data deletion is a separate manual action, not part of #25.
 
+### 25E — Post-cutover GUI decision handoff
+
+- After cutover and hold gates pass, either create the separate GUI
+  implementation issue from #24's handoff text or record an explicit no-GUI
+  decision.
+- A created issue is blocked by completed #22 and #25 and links the consumed
+  #21/#23/#24/#27 contracts; #25 does not implement GUI code.
+- Record the immutable issue URL/number or dated no-GUI decision hash in
+  migration state, then transition to `post_cutover_handoff` to unlock
+  #26C/#26D.
+
 ## Affected interfaces, files and artifacts
 
 Planned files:
@@ -102,6 +114,7 @@ Required retained artifacts:
 - rollback demonstration record;
 - list of post-freeze sources that exist only in PostgreSQL;
 - checksummed post-freeze package manifest and rebuilt rollback delta;
+- immutable future-GUI issue link or explicit no-GUI decision record;
 - machine-readable migration state.
 
 ## Concrete actions
@@ -116,6 +129,8 @@ Required retained artifacts:
 7. Record approval, begin the 14-day PostgreSQL-primary hold and monitor.
 8. Run the supported client with Chroma uninstalled.
 9. Record separate archive approval; leave deletion manual.
+10. Create the correctly blocked post-cutover GUI issue or record the explicit
+    no-GUI decision, persist its immutable reference, and unlock #26C/#26D.
 
 ## Verification
 
@@ -136,7 +151,7 @@ supported PostgreSQL client dependencies.
 
 ## Measurable closure gate
 
-- All nine states are recorded in order with immutable evidence references.
+- All ten states are recorded in order with immutable evidence references.
 - Source/chunk counts and hashes reconcile for every non-quarantined record.
 - #23 passes with 100% citation resolution and no unexplained critical
   regression.
@@ -148,6 +163,9 @@ supported PostgreSQL client dependencies.
 - PostgreSQL remains primary for 14 consecutive days without an unexplained
   P0/P1 migration regression.
 - The supported CLI searches successfully with Chroma uninstalled.
+- `post_cutover_handoff` records either a correctly blocked GUI implementation
+  issue URL/number or a dated no-GUI decision hash; this reference is the only
+  GUI-decision prerequisite consumed by #26C/#26D.
 - Chroma snapshot/export checksums still verify after the hold.
 - Two explicit approvals are recorded: one for PostgreSQL-primary cutover and
   one for archive eligibility.
@@ -163,6 +181,8 @@ supported PostgreSQL client dependencies.
   blocks acknowledgement or rollback rather than silently losing the source.
 - A failed gate returns to the preceding state; it never advances by waiver
   hidden in code.
+- Reversing the GUI/no-GUI choice requires a new recorded decision; it does not
+  roll back the successful data cutover or silently remove the handoff record.
 - Refuse destructive paths resolving to a drive root, home directory,
   repository root or an unverified snapshot.
 - Never restore an unsanitized secret-containing git ref to a public remote.
@@ -173,6 +193,7 @@ Use separate commits for:
 
 1. state schema, runbook and tests;
 2. read-only dual-run evidence integration;
-3. supported-runtime Chroma dependency removal after the hold.
+3. supported-runtime Chroma dependency removal after the hold;
+4. post-cutover GUI/no-GUI handoff record.
 
 Do not include database deletion, history rewriting or broad layout cleanup.

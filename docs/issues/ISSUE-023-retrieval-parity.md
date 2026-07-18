@@ -82,8 +82,12 @@ not satisfy the gate.
   (`data-quarantine`, `judgement-error`, `known-backend-limit`, or
   `environment-only`), affected query/chunk IDs, measured delta, rationale,
   named approver, approval timestamp, maximum query/record scope, expiry, and
-  mandatory retest condition. One exception may cover at most one category and
-  5% of golden queries; it expires after 30 days or any corpus, parser,
+  mandatory retest condition. One exception may cover at most one category.
+  Across all active exceptions, the union of waived query IDs must not exceed
+  `min(5, floor(0.05 * golden_query_count))`, and the union of affected record
+  IDs must not exceed `min(20, floor(0.01 * compared_record_count))`; a zero
+  result permits no waiver. The run fails before scoring when either cumulative
+  cap is exceeded. Each exception expires after 30 days or any corpus, parser,
   chunker, embedding, retrieval, or schema version change, whichever comes
   first.
 - Prohibit retroactive exceptions, aggregate-only waivers, security/privacy/
@@ -147,7 +151,8 @@ to tracked reports.
 - Exact title/path cases rank the expected source at position 1.
 - No human-marked relevant source disappears from top 10 without an explicitly
   documented, pre-run approved, unexpired exception within the category/scope
-  limits above.
+  limits above; the cumulative union of all waived queries/records remains
+  within both caps.
 - Fused Recall@10 and nDCG@10 are each at least as high as both individual
   lexical and vector lanes on the golden set.
 - Duplicate-hit and neighbour-order fixtures pass exactly.

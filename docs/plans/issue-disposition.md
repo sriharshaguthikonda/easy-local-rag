@@ -24,7 +24,7 @@ closure gate unless GitHub has explicitly closed it as a duplicate.
 | #15 corrupt append-only `vault.json` | **Keep open** | Complete atomic/idempotent failure regressions; #20 later consumes the contract. |
 | #16 `.env.example`, AGENTS and dependency lock | **Split, keep open for now** | Add safe contributor/env guidance early; finish the supported dependency lock after #21/#22 define the maintained package surface. Broader cleanup belongs to #26. |
 | #17 PostgreSQL/pgvector consolidation | **Epic — canonical** | Sequenced by `docs/issues/README.md`. |
-| #18 branch inventory/archive | **Keep — early** | Complete public and local inventories, sanitised archives, and PR #1 disposition. |
+| #18 branch inventory/archive | **Keep — early inventory** | Record immutable public/local ref inventory, pre-rewrite scan evidence, proposed archive dispositions, and PR #1 disposition; #26B alone sanitizes/replaces refs and creates approved archives. |
 | #19 read-only Chroma audit/export | **Keep — first implementation** | Must precede schema migration or Chroma cleanup. |
 | #20 deterministic ingestion contracts | **Keep** | Build #20A before `.memory` #4 and #20B after it. |
 | #21 thin CLI client | **Keep** | Start after retrieval contracts exist; the old CLI is the first supported client. |
