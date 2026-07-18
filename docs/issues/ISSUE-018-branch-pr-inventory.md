@@ -15,7 +15,9 @@ and creates any approved archive.
 ## Implementation slices
 
 1. **Enumerate:** collect remote, local-only, tag, PR, and default refs; branch names, immutable tip SHAs, unique commits/files, entry points, database/provider assumptions, tests, generated files, and private paths.
-2. **Classify:** record salvage candidates, broken behavior, credential findings by type/location (never values), and disposition: port, archive, close, or delete after verification.
+2. **Classify:** record salvage candidates, broken behavior, credential findings
+   by type/location (never values), affected PR numbers/refs, and disposition:
+   port, archive, close, or delete after verification.
 3. **Preserve safely:** secret-scan all refs, record immutable tips, and propose
    archive names/dispositions without creating or publishing archive refs.
 4. **Dispose deliberately:** document PR #1's superseded status and focused destination issues before closing it; no deletion until #19 and #25 gates.
@@ -27,6 +29,8 @@ and creates any approved archive.
 - New evidence: local-ref appendix, all-ref secret-scan summary, proposed
   archive-ref register, PR #1 disposition note, and generated-artifact
   classification.
+- Conditional Support handoff: affected PR numbers/refs and finding commit IDs,
+  without secret values; #26B adds `git-filter-repo` first-changed commits.
 - Proposed only: `archive/easy-rag-main-before-postgres`,
   `archive/easy-rag-gui-experiments`, and
   `archive/easy-rag-streamlit-experiments`. #18 does not create them.
@@ -77,9 +81,11 @@ archive creation, and the required exit-`0` post-rewrite scan.
 
 Every non-default and local-only branch has a SHA, comparison, classification,
 and proposed disposition; the pre-rewrite all-ref manifest and redacted report
-are retained privately with scanner/config/report hashes and exit status; PR #1
-has a documented superseded disposition; and useful concepts plus proposed
-archives have explicit destination/26B handoffs. No archive ref is created.
+are retained privately with scanner/config/report hashes and exit status;
+affected PR numbers/refs are recorded for #26B's conditional GitHub Support
+handoff; PR #1 has a documented superseded disposition; and useful concepts
+plus proposed archives have explicit destination/26B handoffs. No archive ref
+is created.
 
 ## Rollback constraints
 
