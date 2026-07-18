@@ -1,6 +1,9 @@
-# Canonical PostgreSQL migration plan
+# Historical PostgreSQL migration notes
 
-This directory is the maintained plan for [issue #17](https://github.com/sriharshaguthikonda/easy-local-rag/issues/17). GitHub issues track work and discussion; these files hold the sequencing and architectural decisions. When an old issue conflicts with this plan, update the issue or mark it superseded rather than reviving an experimental implementation.
+This directory is supporting historical context. The authoritative issue status,
+sequencing, and closure gates are in the
+[canonical issue-plan index](../issues/README.md) and its per-issue plans.
+Where these notes differ, `docs/issues/` governs.
 
 ## Target boundary
 
@@ -19,14 +22,16 @@ The `.memory` repository will own the PostgreSQL/pgvector evidence store and sha
 ### 1. Preserve the current evidence
 
 1. Finish the public and local branch inventory in [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18).
-2. Build the read-only Chroma audit and deterministic export tool in [#19](https://github.com/sriharshaguthikonda/easy-local-rag/issues/19).
-3. Freeze a named Chroma snapshot and record checksums before any migration write.
+2. Perform only the early generated/private-artifact hygiene slice of [#26](https://github.com/sriharshaguthikonda/easy-local-rag/issues/26).
+3. Build the read-only Chroma audit and deterministic export tool in [#19](https://github.com/sriharshaguthikonda/easy-local-rag/issues/19).
+4. Freeze a named Chroma snapshot and record checksums before any migration write.
 
 ### 2. Define data contracts
 
-1. Implement the PostgreSQL evidence/source boundary in `.memory` issue #4.
-2. Define deterministic discovery, fingerprinting, parsing, chunking, metadata, embedding provenance, and reconciliation in [#20](https://github.com/sriharshaguthikonda/easy-local-rag/issues/20).
-3. Require stable source IDs, chunk IDs, content hashes, parser/chunker versions, and idempotent imports.
+1. Implement #20A's database-neutral discovery, fingerprinting, parsing, chunking, metadata, and package contract in [#20](https://github.com/sriharshaguthikonda/easy-local-rag/issues/20).
+2. Implement the PostgreSQL evidence/source boundary in `.memory` issue #4 against that frozen contract.
+3. Implement #20B's destination integration and reconciliation.
+4. Require stable source IDs, chunk IDs, content hashes, parser/chunker versions, and idempotent imports.
 
 ### 3. Prove retrieval before changing clients
 
@@ -36,8 +41,8 @@ The `.memory` repository will own the PostgreSQL/pgvector evidence store and sha
 
 ### 4. Move the useful interface
 
-1. Refactor the old command-line workflow into a thin client in [#21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21).
-2. Add explicit offline-search, local-chat, and cloud-chat provider modes in [#22](https://github.com/sriharshaguthikonda/easy-local-rag/issues/22).
+1. After the shared service contract is stable, refactor the old command-line workflow into a thin client in [#21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21) while provider-core work proceeds in parallel in [#22](https://github.com/sriharshaguthikonda/easy-local-rag/issues/22).
+2. Integrate explicit offline-search, local-chat, and cloud-chat provider modes after #21 exposes the shared client surface.
 3. Add structured evidence-grounding, citation validation, and abstention in [#27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27).
 
 ### 5. Cut over, then clean up
@@ -45,7 +50,7 @@ The `.memory` repository will own the PostgreSQL/pgvector evidence store and sha
 1. Use the dual-run and rollback gates in [#25](https://github.com/sriharshaguthikonda/easy-local-rag/issues/25).
 2. Keep Chroma read-only until counts, hashes, provenance, retrieval quality, and rollback have passed.
 3. Rebuild a thin GUI only after the shared contracts are stable, as described in [#24](https://github.com/sriharshaguthikonda/easy-local-rag/issues/24).
-4. Perform history, generated-file, dependency, and layout cleanup last in [#26](https://github.com/sriharshaguthikonda/easy-local-rag/issues/26).
+4. Perform only the late legacy-layout and Chroma-removal slice of [#26](https://github.com/sriharshaguthikonda/easy-local-rag/issues/26).
 
 ## Stop conditions
 
@@ -65,6 +70,8 @@ Stop the migration or merge when any of these occurs:
 - [Public branch and PR inventory](branch-inventory.md)
 - [Issue #2–#27 disposition map](issue-disposition.md)
 
-## Immediate bounded work
+## Current authority
 
-The first bounded issue resolution is to close [#14](https://github.com/sriharshaguthikonda/easy-local-rag/issues/14) as superseded by #27. Issue #27 deliberately replaces prose-only `[N]` parsing with a structured answer contract, citation validation, and abstention.
+Use [the canonical issue-plan index](../issues/README.md) for immediate work.
+Issue #14 is already closed as a duplicate; its historical evidence is retained
+under `docs/issues/`, while #27 owns structured answer validation.
