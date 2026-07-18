@@ -679,12 +679,14 @@ def get_relevant_context_hybrid(
         # Extract results with distances
         vector_results = [
             {
+                "document": document,
                 "meta": meta,
                 "embedding": emb,
                 "vector_score": 1.0
                 - dist,  # Convert distance to similarity (assuming normalized)
             }
-            for meta, dist, emb in zip(
+            for document, meta, dist, emb in zip(
+                search_result["documents"][0],
                 search_result["metadatas"][0],
                 search_result["distances"][0],
                 search_result["embeddings"][0],
@@ -708,15 +710,26 @@ def get_relevant_context_hybrid(
             # Use a set to remove duplicates
             keywords = set(keywords)
 
-            for meta in search_result["metadatas"][0]:
+            for document, meta, emb in zip(
+                search_result["documents"][0],
+                search_result["metadatas"][0],
+                search_result["embeddings"][0],
+            ):
                 # Match against both original keywords and their synonyms
                 match_score = sum(
-                    meta["text"].lower().count(keyword)
+                    document.lower().count(keyword)
                     + meta["file_name"].lower().count(keyword)
                     for keyword in keywords
                 )
                 if match_score > 0:
-                    keyword_results.append({"meta": meta, "keyword_score": match_score})
+                    keyword_results.append(
+                        {
+                            "document": document,
+                            "meta": meta,
+                            "embedding": emb,
+                            "keyword_score": match_score,
+                        }
+                    )
 
         # Normalize scores for both vector and keyword results
         max_vector_score = max(
@@ -737,6 +750,7 @@ def get_relevant_context_hybrid(
         for res in vector_results:
             file_name = res["meta"]["file_name"]
             combined_results[file_name] = {
+                "document": res["document"],
                 "meta": res["meta"],
                 "embedding": res["embedding"],
                 "final_score": alpha * res["vector_score"],
@@ -750,6 +764,7 @@ def get_relevant_context_hybrid(
                 )
             else:
                 combined_results[file_name] = {
+                    "document": res["document"],
                     "meta": res["meta"],
                     "embedding": res.get("embedding"),
                     "final_score": beta * res["keyword_score"],
@@ -760,48 +775,48 @@ def get_relevant_context_hybrid(
             combined_results.values(), key=lambda x: x["final_score"], reverse=True
         )
 
-        # Limit results to top_k
-        final_results = [res["meta"] for res in sorted_results[:top_k]]
-
-        # Use MMR to select additional_unique_files
+        # Seed MMR with the top-k results, then add one diverse result at a time.
+        selected_results = sorted_results[:top_k]
         remaining_results = [res for res in sorted_results[top_k:]]
-        selected_additional_files = []
+        for _ in range(additional_unique_files):
+            if not remaining_results:
+                break
 
-        for res in remaining_results:
-            current_embedding = res.get("embedding")
-            if current_embedding is None:
-                res["mmr_score"] = res["final_score"]
-                continue
-            max_similarity = max(
-                [
-                    np.dot(current_embedding, selected["embedding"])
-                    for selected in selected_additional_files
-                    if selected.get("embedding") is not None
-                ],
-                default=0,
-            )
-            mmr_score = (
-                lambda_mmr * res["final_score"] - (1 - lambda_mmr) * max_similarity
-            )
-            res["mmr_score"] = mmr_score
+            best_result = None
+            best_score = None
+            for res in remaining_results:
+                current_embedding = res.get("embedding")
+                max_similarity = max(
+                    [
+                        np.dot(current_embedding, selected["embedding"])
+                        for selected in selected_results
+                        if current_embedding is not None
+                        and selected.get("embedding") is not None
+                    ],
+                    default=0,
+                )
+                mmr_score = (
+                    res["final_score"]
+                    if current_embedding is None
+                    else lambda_mmr * res["final_score"]
+                    - (1 - lambda_mmr) * max_similarity
+                )
+                if best_score is None or mmr_score > best_score:
+                    best_result = res
+                    best_score = mmr_score
 
-        # Sort by MMR score to get the most relevant and diverse results
-        sorted_additional_files = sorted(
-            remaining_results, key=lambda x: x["mmr_score"], reverse=True
-        )
+            selected_results.append(best_result)
+            remaining_results.remove(best_result)
 
-        selected_additional_files = sorted_additional_files[:additional_unique_files]
-
-        # Combine the top_k and the selected additional unique files
-        final_results.extend([res["meta"] for res in selected_additional_files])
+        final_results = [res["meta"] for res in selected_results]
 
         # Prepare relevant context
-        relevant_context = "\n\n".join([res["text"] for res in final_results])
+        relevant_context = "\n\n".join([res["document"] for res in selected_results])
 
         # Start a worker thread to print details of the results
         worker_thread = threading.Thread(
             target=print_relevant_context,
-            args=(final_results,),
+            args=(selected_results,),
             daemon=True,
         )
         worker_thread.start()
@@ -816,10 +831,11 @@ def get_relevant_context_hybrid(
 
 def print_relevant_context(results):
     print("Context Pulled from Documents:\n")
-    for meta in results:
+    for result in results:
+        meta = result["meta"]
         file_name = meta["file_name"]
         modification_time = meta.get("modification_time", "Unknown")
-        text = meta["text"]
+        text = result["document"]
 
         clickable_file_path = urljoin("file:", Path(file_name).as_uri())
 
