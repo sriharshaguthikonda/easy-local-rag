@@ -47,11 +47,14 @@ branch, snapshot or rollback artifact needed by #19, #23 or #25.
 ### 26B — Credential-history remediation
 
 - Complete rotation before rewriting any ref.
-- Scan branches, tags, PR refs and local refs without printing secret values.
+- Consume #18's immutable ref manifest, then fetch and scan local heads, remote
+  heads, tags and PR refs without printing secret values.
 - Coordinate the rewrite window, force-push consequences and old-clone
   invalidation.
-- Re-scan rewritten history and keep affected secret types/ref names in a
-  private operator record.
+- Execute the single approved history rewrite and public-ref replacement; no
+  other issue owns or performs this operation.
+- Re-scan rewritten history with the same pinned command/config and keep
+  affected secret types/ref names in a private operator record.
 - Sanitized public archive refs may be created only after the clean scan.
 
 ### 26C — Supported surface and dependencies
@@ -104,7 +107,7 @@ Operator artifacts:
 3. Repair ignore rules and untrack generated/private artifacts without deleting
    local copies.
 4. Add secret and generated-file checks.
-5. Coordinate and execute the history rewrite; force-push once.
+5. Coordinate and execute the sole approved history rewrite; force-push once.
 6. Re-scan every rewritten ref and invalidate old clones.
 7. Continue migration work through #19–#25.
 8. After #25, document supported commands and isolate legacy code.
@@ -116,6 +119,24 @@ Operator artifacts:
 ```powershell
 git ls-files | rg "(__pycache__|\.pyc$|error\.log$|output\.log$|chroma\.sqlite3$|vault\.txt$)"
 git check-ignore -v .env chroma/chroma.sqlite3 output.log __pycache__/example.pyc
+
+$phase = 'pre-rewrite' # repeat with 'post-rewrite' after ref replacement
+$evidence = $env:EASY_RAG_SECURITY_EVIDENCE_DIR
+if (-not $evidence) { throw 'Set EASY_RAG_SECURITY_EVIDENCE_DIR to an access-controlled directory outside the repository.' }
+git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' '+refs/pull/*/head:refs/remotes/origin/pr/*'
+git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/remotes refs/tags |
+  Set-Content (Join-Path $evidence "$phase-all-refs.txt")
+gitleaks version | Set-Content (Join-Path $evidence "$phase-gitleaks-version.txt")
+Get-FileHash .gitleaks.toml -Algorithm SHA256 |
+  Format-List | Out-File (Join-Path $evidence "$phase-gitleaks-config.sha256")
+gitleaks git --redact --config .gitleaks.toml --log-opts='--all' --report-format json `
+  --report-path (Join-Path $evidence "$phase-gitleaks.json") --exit-code 1 .
+$scanExit = $LASTEXITCODE
+$scanExit | Set-Content (Join-Path $evidence "$phase-gitleaks.exit-code")
+if ($scanExit -ne 0) { throw "All-ref $phase scan found a secret or failed." }
+Get-FileHash (Join-Path $evidence "$phase-gitleaks.json") -Algorithm SHA256 |
+  Format-List | Out-File (Join-Path $evidence "$phase-gitleaks-report.sha256")
+
 python -m pytest tests -q
 python -m py_compile localrag.py
 python localrag.py status
@@ -125,15 +146,21 @@ git count-objects -vH
 git diff --check
 ```
 
-The approved full-history secret scanner must run across all branches, tags and
-PR refs before and after rewriting. Its command and sanitized output belong to
-the private operator record because affected secret locations must not be
-published casually.
+`.gitleaks.toml` is the committed configuration, extends the default rules, and
+may allowlist only reviewed synthetic fixtures. No baseline or allowlist may
+hide the known revoked credential type. Run the block once before and once
+after rewriting, using the same pinned Gitleaks version and config hash. The
+private operator record contains both ref manifests, redacted JSON reports,
+scanner/config/report hashes and exit statuses. The acceptance result is
+post-rewrite exit `0` and zero findings across every ref in the #18 manifest;
+missing refs, scanner errors or findings all fail the gate.
 
 ## Measurable closure gate
 
 - Every credential found in any ref is revoked/rotated before rewrite.
-- The post-rewrite all-ref secret scan reports zero known exposed credentials.
+- The post-rewrite all-ref secret scan covers the complete #18 manifest, exits
+  `0`, and reports zero known exposed credentials using the same pinned scanner
+  version and config as the recorded pre-rewrite scan.
 - `git ls-files` reports no interpreter cache, runtime log, local database,
   embedding, source corpus or private exported session.
 - A fresh clone contains only safe source/docs/fixtures and installs from the
@@ -163,7 +190,7 @@ Keep these boundaries separate:
 
 1. early ignore/generated-file hygiene;
 2. CI/pre-commit safety checks;
-3. coordinated history rewrite and public ref replacement;
+3. the sole coordinated history rewrite and public ref replacement;
 4. supported dependency/docs cleanup;
 5. late legacy/layout/Chroma retirement after #25.
 

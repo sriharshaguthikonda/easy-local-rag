@@ -38,13 +38,26 @@ git show-ref
 git branch -a --no-merged main
 gh pr view 1 --repo sriharshaguthikonda/easy-local-rag
 gh issue view 18 --repo sriharshaguthikonda/easy-local-rag
+
+$evidence = $env:EASY_RAG_SECURITY_EVIDENCE_DIR
+if (-not $evidence) { throw 'Set EASY_RAG_SECURITY_EVIDENCE_DIR to an access-controlled directory outside the repository.' }
+git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' '+refs/pull/*/head:refs/remotes/origin/pr/*'
+git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/remotes refs/tags |
+  Set-Content (Join-Path $evidence 'pre-rewrite-all-refs.txt')
+gitleaks git --redact --config .gitleaks.toml --log-opts='--all' --report-format json `
+  --report-path (Join-Path $evidence 'pre-rewrite-gitleaks.json') --exit-code 1 .
+if ($LASTEXITCODE -ne 0) { throw 'All-ref scan found a secret or failed; do not publish archive refs.' }
 ```
 
-Run the approved secret scanner across all refs and retain a redacted result that identifies only ref, finding type, and remediation state.
+Record `gitleaks version`, the `.gitleaks.toml` SHA-256, command exit status, and
+report SHA-256 beside the private report. The ref manifest must cover local
+heads, remote heads, tags, and fetched PR refs. Exit `0` and zero findings are
+required before an archive can be classified as sanitized; #26B owns any
+rewrite and the matching post-rewrite scan.
 
 ## Closure gate
 
-Every non-default and local-only branch has a SHA, comparison, classification, and disposition; every retained archive has passed secret remediation and has an immutable recorded ref; PR #1 has a documented superseded disposition; and useful concepts have explicit destination issues.
+Every non-default and local-only branch has a SHA, comparison, classification, and disposition; the pre-rewrite all-ref manifest and redacted report are retained privately with scanner/config hashes and exit status; every retained archive has passed secret remediation and has an immutable recorded ref; PR #1 has a documented superseded disposition; and useful concepts have explicit destination issues.
 
 ## Rollback constraints
 
