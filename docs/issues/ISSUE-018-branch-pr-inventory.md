@@ -75,7 +75,8 @@ report SHA-256 beside the private report. The ref manifest must cover local
 heads, remote heads, tags, and fetched PR refs. Exit `3` with a non-empty,
 redacted report is valid pre-rewrite inventory evidence and does not block #18
 closure; any other nonzero exit is a scanner failure. #26B owns remediation,
-archive creation, and the required exit-`0` post-rewrite scan.
+archive creation, and the post-rewrite clean-or-explicitly-accepted-residual
+terminal gate.
 
 ## Closure gate
 

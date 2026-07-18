@@ -1,6 +1,6 @@
 # Issue #2: Rotate and remove committed Groq credentials
 
-**Status:** OPEN — immediate containment blocker. Rotation/revocation and active-source cleanup unlock #18; the issue remains open until early #26B supplies clean post-rewrite all-ref evidence.
+**Status:** OPEN — immediate containment blocker. Rotation/revocation and active-source cleanup unlock #18; the issue remains open until early #26B supplies one of the two explicit post-rewrite terminal outcomes in the final closure gate.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/2
 **Labels / priority:** `priority:P0`, `type:security`
 **Dependencies:** Owner access to the Groq console; #18's immutable ref inventory; early #26B as the sole executor of any separately approved shared-history rewrite.
@@ -24,7 +24,10 @@
 - Search tracked text without displaying values; replace only the two known active call sites and audit all callers of Groq construction.
 - Add a missing-key error path before API use; do not log the environment value.
 - Run the active-tree scan below. After rotation, record explicit rewrite approval and hand the #18 inventory to #26B.
-- Accept #26B's post-rewrite evidence only when its pinned all-ref command covers local heads, remote heads, tags, and fetched PR refs, exits `0`, and reports zero known exposed credentials.
+- Accept #26B's post-rewrite evidence only when its pinned command covers local
+  heads, remote heads, tags, and fetched PR refs and reaches either the clean
+  exit-`0` outcome or the narrowly defined, user-approved immutable-residual
+  outcome in the final closure gate.
 
 ## Verification
 
@@ -46,8 +49,13 @@ or allowlist may suppress the known revoked credential type.
 
 - **Containment gate (unlocks #18):** old credentials are revoked; both clients use `GROQ_API_KEY`; and the missing-key path plus active-tree scan pass. Passing this gate does not close #2.
 - **Final closure gate (after early #26B, before #19):** rewrite approval is
-  recorded; GitHub Support remediation is confirmed when affected read-only PR
-  refs/cached views exist; and #26B's fresh-clone post-rewrite all-ref scan exits
-  `0` with zero known exposed credentials across every remaining GitHub ref.
+  recorded and #26B supplies one of two terminal outcomes: **clean** — GitHub
+  Support remediation is confirmed when needed and the fresh-clone all-ref scan
+  exits `0` with zero findings; or **accepted immutable residual** — Support
+  declines specifically because revocation/rotation mitigated the risk, every
+  remaining finding is reachable only from the recorded read-only PR/cached
+  refs, writable refs scan clean, and the user explicitly accepts the dated,
+  hashed residual-risk record. Any other Support disposition or missing
+  acceptance keeps #2 and migration blocked.
 - **Rollback constraint:** never restore an exposed value; revert only code/config while retaining revoked credentials and scanner protections. History rewrite requires collaborator coordination and recovery guidance.
 - **Commit:** `fix(#2): remove hardcoded Groq keys`. Rotation records are external operational evidence; history rewrite/ref replacement belongs only to #26B.

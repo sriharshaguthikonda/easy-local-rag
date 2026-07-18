@@ -7,7 +7,8 @@ order are in the [canonical issue-plan index](docs/issues/README.md).
    use, and record the separately approved history-remediation decision.
 2. Complete #18's branch, PR, local-ref, salvage, and secret-scan inventory.
 3. Complete early #26A/#26B hygiene and the sole approved rewrite, then close
-   #2 from the clean post-rewrite all-ref evidence.
+   #2 from the canonical clean or explicitly accepted immutable-residual
+   terminal evidence.
 4. Only then implement #19's read-only Chroma audit and deterministic export.
 5. Implement the offline, database-neutral #20A ingestion package.
 6. Hand the verified #20A contract to `.memory` #4; do not start #20B before

@@ -63,10 +63,17 @@ artifact needed by #19, #23 or #25.
 - If any PR ref or GitHub cached view retains an affected commit, open a GitHub
   Support sensitive-data-removal request with repository identity, affected PR
   count/numbers, first-changed commits, and any orphaned-LFS artifact. Wait for
-  Support confirmation that PR references/cached views were removed.
+  Support's written disposition.
+- If Support removes the references, record confirmation and require a clean
+  scan. If Support declines specifically because rotation/revocation mitigated
+  the risk, map each remaining finding to read-only PR/cached refs, prove no
+  writable ref reaches it, and request explicit user residual-risk acceptance.
+  Any other refusal or missing acceptance permanently blocks #2/#19.
 - Re-scan rewritten history with the same pinned command/config and keep
   affected secret types/ref names in a private operator record.
-- Sanitized public archive refs may be created only after the clean scan.
+- Sanitized public archive refs may be created only after the clean outcome or
+  the explicitly accepted immutable-residual gate; no archive may reach a
+  residual affected commit.
 
 ### 26C — Supported surface and dependencies
 
@@ -107,9 +114,11 @@ Operator artifacts:
 
 - private secret/ref inventory without values;
 - before/after tracked-file and repository-size reports;
-- clean-history scan report;
+- post-rewrite security scan report;
 - `git-filter-repo` changed-refs/first-changed-commit record and, when needed,
-  GitHub Support ticket/confirmation without secret values;
+  GitHub Support ticket/disposition without secret values;
+- conditional hashed residual-ref/finding inventory and explicit user
+  residual-risk acceptance;
 - old-clone invalidation notice;
 - #25 retention/rollback inventory.
 
@@ -122,9 +131,9 @@ Operator artifacts:
 4. Add secret and generated-file checks.
 5. Coordinate and execute the sole approved history rewrite; force-push all
    writable refs once and record expected read-only PR-ref failures.
-6. Complete conditional GitHub Support remediation for affected PR refs/cached
-   views, then re-clone, re-fetch every remaining ref, scan, and invalidate old
-   clones.
+6. Obtain the conditional GitHub Support disposition for affected PR
+   refs/cached views, apply the clean or accepted-residual terminal branch,
+   then re-clone, re-fetch every remaining ref, scan, and invalidate old clones.
 7. Continue migration work through #19–#25.
 8. After #25, document supported commands and isolate legacy code.
 9. Remove Chroma from core dependencies and prove a clean clone/install.
@@ -158,8 +167,8 @@ Get-FileHash $report -Algorithm SHA256 |
   Format-List | Out-File (Join-Path $evidence "$phase-gitleaks-report.sha256")
 if ($scanExit -notin 0,3) { throw "Gitleaks $phase scanner/configuration failure." }
 if (($scanExit -eq 0) -ne ($findings.Count -eq 0)) { throw "Gitleaks $phase exit/report mismatch." }
-if ($phase -eq 'post-rewrite' -and ($scanExit -ne 0 -or $findings.Count -ne 0)) {
-  throw 'Post-rewrite history is not clean.'
+if ($phase -eq 'post-rewrite' -and $scanExit -eq 3) {
+  Write-Warning 'Post-rewrite findings require the Support-declined residual-risk branch; do not advance automatically.'
 }
 git diff --check
 ```
@@ -186,24 +195,30 @@ remain, finish the
 before the post-rewrite run. Run that final block in a fresh verification clone
 so stale local PR refs cannot mask GitHub state. The private operator record
 contains both ref manifests, redacted JSON reports, scanner/config/report
-hashes, exit statuses, first-changed commits, affected PR numbers, and
-conditional Support confirmation. Pre-rewrite exit `3` with a non-empty report
+hashes, exit statuses, first-changed commits, affected PR numbers, and the
+conditional Support disposition. Pre-rewrite exit `3` with a non-empty report
 is expected findings evidence; exits other than `0`/`3`, a missing/malformed
-report, or an exit/report mismatch are scanner failures. The acceptance result
-is fresh-clone post-rewrite exit `0` and zero findings across every remaining
-GitHub ref; missing expected refs, scanner errors, or findings fail.
+report, or an exit/report mismatch are scanner failures.
+
+The preferred acceptance result is fresh-clone post-rewrite exit `0` and zero
+findings. A post-rewrite exit `3` is terminal only when Support's written
+decline says rotation/revocation mitigated the risk, the report exactly equals
+a dated/hashed residual inventory, reachability evidence proves every finding
+exists only in read-only PR/cached refs and no writable ref, and the user
+explicitly accepts that residual risk. Do not baseline or allowlist those
+findings. Any mismatch, other refusal, or missing approval blocks #2/#19.
 
 ## Measurable closure gates
 
 ### Early phase handoff gate — 26A and 26B
 
 - Every credential found in any ref is revoked/rotated before rewrite.
-- The post-rewrite evidence reconciles the complete #18 manifest: every
-  writable ref is rewritten, every affected read-only PR ref is covered by
-  Support confirmation, and the fresh-clone scan of all remaining refs exits
-  `0` with zero known exposed credentials using the pinned scanner/config.
-- Every affected read-only PR ref/cached view has GitHub Support confirmation
-  before the fresh-clone post-rewrite scan; if none were affected, the
+- The post-rewrite evidence reconciles the complete #18 manifest and proves
+  every writable ref scans clean with the pinned scanner/config.
+- Every affected read-only PR ref/cached view has a written GitHub Support
+  disposition. The gate records either removal plus all-ref exit `0`, or the
+  narrowly allowed Support-declined residual inventory/reachability evidence
+  plus explicit user risk acceptance. If none were affected, the
   `changed-refs`/inventory evidence records that fact.
 - `git ls-files` reports no interpreter cache, runtime log, local database,
   embedding, source corpus or private exported session.
@@ -232,8 +247,9 @@ GitHub ref; missing expected refs, scanner errors, or findings fail.
 - Do not delete user-local data while untracking generated files.
 - Keep an offline, access-controlled pre-rewrite recovery bundle; never push
   unsanitized history back to a public remote.
-- Do not claim read-only PR refs or cached views were remediated by force-push;
-  their removal requires the conditional GitHub Support confirmation above.
+- Do not claim read-only PR refs or cached views were remediated by force-push.
+  Support removal is preferred; the only alternative is the explicit,
+  revocation-mitigated residual-risk branch above.
 - Do not delete branches, migration exports or Chroma snapshots required by
   #19/#23/#25.
 - Late layout moves are reversible commits separate from the history rewrite.

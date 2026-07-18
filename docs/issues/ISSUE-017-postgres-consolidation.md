@@ -16,7 +16,7 @@ This epic makes PostgreSQL/pgvector the single production data platform while re
 
 ## Implementation slices
 
-1. **Preserve and contain:** pass #2 credential containment, complete #18 inventory, then complete early #26A hygiene and #26B's sole approved rewrite; close #2 from its clean post-rewrite evidence before #19.
+1. **Preserve and contain:** pass #2 credential containment, complete #18 inventory, then complete early #26A hygiene and #26B's sole approved rewrite; close #2 from #26B's clean or explicitly accepted immutable-residual terminal evidence before #19.
 2. **Export before destination:** #19 creates a read-only Chroma audit plus deterministic export manifest.
 3. **Database-neutral ingestion (#20A):** parsers, normalized records, deterministic chunk IDs, and package/reconciliation format run offline without database imports.
 4. **Evidence store and destination integration:** `.memory` #4 supplies the evidence/source schema/import API; #20B imports packages idempotently and handles lifecycle reconciliation.
