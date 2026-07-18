@@ -45,6 +45,9 @@ or allowlist may suppress the known revoked credential type.
 ## Closure gate, rollback, and commit boundary
 
 - **Containment gate (unlocks #18):** old credentials are revoked; both clients use `GROQ_API_KEY`; and the missing-key path plus active-tree scan pass. Passing this gate does not close #2.
-- **Final closure gate (after early #26B, before #19):** rewrite approval is recorded and #26B's post-rewrite all-ref scan exits `0` with zero known exposed credentials across the complete #18 ref manifest.
+- **Final closure gate (after early #26B, before #19):** rewrite approval is
+  recorded; GitHub Support remediation is confirmed when affected read-only PR
+  refs/cached views exist; and #26B's fresh-clone post-rewrite all-ref scan exits
+  `0` with zero known exposed credentials across every remaining GitHub ref.
 - **Rollback constraint:** never restore an exposed value; revert only code/config while retaining revoked credentials and scanner protections. History rewrite requires collaborator coordination and recovery guidance.
 - **Commit:** `fix(#2): remove hardcoded Groq keys`. Rotation records are external operational evidence; history rewrite/ref replacement belongs only to #26B.
