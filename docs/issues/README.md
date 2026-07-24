@@ -50,8 +50,8 @@ unresolved placeholder, implementer choice, or speculative dependency.
 |---|---|---|
 | #2 | blocked-awaiting-user | Await user rotation evidence; no containment closure is inferred from docs. |
 | #9 | closed | Completed through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`; [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) is closed. |
-| #15 | planning | [2026-07-24 atomic-vault implementation packet](../superpowers/plans/2026-07-24-issue-015-atomic-vault-write-implementation.md) is under ChatGPT/GSD review. After the reviewed docs merge, only the merge commit of activation branch `codex/issue-015-activate` into `main` activates work. |
-| Active issue | none | Zero active issues is allowed while the #15 packet and activation PR are under review. The activation PR changes this row to `#15` and the #15 state to `active`; no earlier event is activation. |
+| #15 | active | [2026-07-24 atomic-vault implementation packet](../superpowers/plans/2026-07-24-issue-015-atomic-vault-write-implementation.md) completed final review at `14df1b7fcea0775c56b6a774c4047c3f14e29c9d` and merged as immutable docs evidence `61fdb3b30d19451fd47b38c618c8d34630b8f547`. Code work remains gated on this activation PR's future GitHub merge commit SHA. |
+| Active issue | #15 | #15 is the sole active issue. Code work remains gated on this activation PR's future GitHub merge commit SHA. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
@@ -64,12 +64,13 @@ invariant, closure gate, approval, or rollback constraint.
 The #15 activation PR owns only
 `docs/issues/ISSUE-015-atomic-vault-write.md` and this ledger. In one commit it
 changes canonical `PLANNING` to `ACTIVE`, roadmap #15 `planning` to `active`,
-and `Active issue` `none` to `#15`; it also records the actual final reviewed
-packet SHA, immutable docs merge SHA, frozen GUI SHA
-`619365224f6db3770d3369fd84a295589699e513`, implementation branch
-`codex/fix-issue-15`, and worker ownership of `vault_store.py`,
+and `Active issue` `none` to `#15`; the final reviewed packet SHA is
+`14df1b7fcea0775c56b6a774c4047c3f14e29c9d`, the immutable docs merge SHA is
+`61fdb3b30d19451fd47b38c618c8d34630b8f547`, the frozen GUI SHA is
+`619365224f6db3770d3369fd84a295589699e513`, the implementation branch is
+`codex/fix-issue-15`, and worker ownership is `vault_store.py`,
 `Vault_json_creation_from_HTMLs.py`, and `tests/test_vault_store.py`. Only the
-GitHub merge commit SHA of that activation PR authorizes code work.
+future GitHub merge commit SHA of that activation PR authorizes code work.
 
 The #15 implementation branch is created exactly at the frozen GUI SHA and its
 code PR targets
@@ -153,7 +154,7 @@ approval, rollback, or scope means a separate packet.
 | #12 | P1 bug | Open — partial implementation | [Streamlit TTS worker](ISSUE-012-streamlit-tts-worker.md) | Legacy client closure only; future provider/UI behavior is governed by #22 and future GUI work. | [Issue #12](https://github.com/sriharshaguthikonda/easy-local-rag/issues/12) |
 | #13 | P1 bug | Open — partial implementation | [Tokenizer budgeting](ISSUE-013-tiktoken-counter.md) | #16 carries the dependency; #27 extends the requirement into structured answer validation. | [Issue #13](https://github.com/sriharshaguthikonda/easy-local-rag/issues/13) |
 | #14 | P1 enhancement | **Closed — duplicate/superseded** | [Inline citations](ISSUE-014-inline-citations.md) | Retained as closure evidence; #27 owns citation-resolution validation and abstention. | [Issue #14](https://github.com/sriharshaguthikonda/easy-local-rag/issues/14) |
-| #15 | P0 bug | **Open — planning; packet under review, not active** | [Atomic vault write](ISSUE-015-atomic-vault-write.md) | Executes with #8's approved env/picker fallback while #8 remains open; #20A later replaces production append behavior with deterministic atomic packages. | [Issue #15](https://github.com/sriharshaguthikonda/easy-local-rag/issues/15) |
+| #15 | P0 bug | **Open — active; implementation remains gated on the future activation-PR merge SHA** | [Atomic vault write](ISSUE-015-atomic-vault-write.md) | Executes with #8's approved env/picker fallback while #8 remains open; #20A later replaces production append behavior with deterministic atomic packages. | [Issue #15](https://github.com/sriharshaguthikonda/easy-local-rag/issues/15) |
 | #16 | P1 developer experience | Open — split into 16A/16B | [Setup and dependency docs](ISSUE-016-dx-setup-docs.md) | 16A adds secret-safe contributor setup early; 16B freezes supported entry points/dependencies only after #21/#22. | [Issue #16](https://github.com/sriharshaguthikonda/easy-local-rag/issues/16) |
 | #17 | P0 enhancement | Open — canonical parent epic | [PostgreSQL consolidation](ISSUE-017-postgres-consolidation.md) | Governs the full required execution order and the #18-#27 closure gates. | [Issue #17](https://github.com/sriharshaguthikonda/easy-local-rag/issues/17) |
 | #18 | P0 security | Open — early preservation gate | [Branch and PR inventory](ISSUE-018-branch-pr-inventory.md) | After #2 containment; before early #26, #19, and any branch/PR deletion. | [Issue #18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18) |
