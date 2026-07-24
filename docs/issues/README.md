@@ -9,8 +9,10 @@ Canonical issue files are acceptance contracts, not implementation evidence.
 Authority precedence is: **GitHub issue = live state and human decisions;
 canonical plan = scope, invariants, and closure gates; roadmap ledger =
 ordering and handoffs; JIT packet = implementation detail and cannot weaken a
-canonical plan.** The status column reflects live state checked on 2026-07-18:
-#14 is closed, while #6 has a merged GUI-lineage fix and remains open only until this canonical plan lands and receives reciprocal evidence links.
+canonical plan.** The status column reflects live state checked on 2026-07-24:
+#9 is closed through PR #33 at merge `619365224f6db3770d3369fd84a295589699e513`;
+#14 is closed, while #6 has a merged GUI-lineage fix and remains open only
+until its canonical plan lands and receives reciprocal evidence links.
 
 ## Required execution order
 
@@ -47,12 +49,12 @@ unresolved placeholder, implementer choice, or speculative dependency.
 | Issue | State | Packet / next gate |
 |---|---|---|
 | #2 | blocked-awaiting-user | Await user rotation evidence; no containment closure is inferred from docs. |
-| #9 | active | [2026-07-24 validation implementation packet](../superpowers/plans/2026-07-24-issue-009-validate-conversation-import-implementation.md) merged through [PR #31](https://github.com/sriharshaguthikonda/easy-local-rag/pull/31) as `fd11bb7d706665b4094a088aaa0a97546b205135`; implementation starts from the frozen GUI base and remains unproven until code evidence lands. |
-| #15 | queued | Starts only after #9 closes and an execution slot is available. |
-| Active issue | #9 | Sole active issue; no other packet or implementation may become active before #9 closes or is explicitly blocked. |
+| #9 | closed | Completed through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`; [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) is closed. |
+| #15 | planning | [2026-07-24 atomic-vault implementation packet](../superpowers/plans/2026-07-24-issue-015-atomic-vault-write-implementation.md) is under ChatGPT/GSD review; activation requires the later reviewed docs merge. |
+| Active issue | none | Zero active issues is allowed while the #15 packet is under review; #15 must not become active until a later activation PR. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
-corrector -> docs merge -> implementer initial TDD commit -> code-review agent ->
+corrector -> docs merge -> activation -> implementer initial TDD commit -> code-review agent ->
 accepted-finding fixer commit(s) -> verifier -> orchestrator PR merge/evidence/close`.
 ChatGPT review is advisory and does not require code to exist; code review starts after the
 initial code commit. A packet may
@@ -127,13 +129,13 @@ approval, rollback, or scope means a separate packet.
 | #6 | P0 bug | **Open — fix merged; plan-link closure pending** | [MMR embedding fix](ISSUE-006-mmr-embedding-keyerror.md) | PR #29 merged at `de74659`; preserve #11's embedding contract and close after the main-line plan/evidence comment is available. | [Issue #6](https://github.com/sriharshaguthikonda/easy-local-rag/issues/6) |
 | #7 | P1 bug | Open — partial implementation | [Lazy Chroma initialization](ISSUE-007-lazy-chromadb-init.md) | Depends on #11 creation metadata; required only while the Chroma path remains supported. | [Issue #7](https://github.com/sriharshaguthikonda/easy-local-rag/issues/7) |
 | #8 | P1 bug | Open — partial implementation | [Config-driven paths](ISSUE-008-config-driven-paths.md) | Coordinates with #16; early #26 owns repository hygiene, not user-path migration. | [Issue #8](https://github.com/sriharshaguthikonda/easy-local-rag/issues/8) |
-| #9 | P0 security | Open — partial implementation | [Conversation import validation](ISSUE-009-validate-conversation-import.md) | Independent small closure; imported sessions never restore trusted retrieval state. | [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) |
+| #9 | P0 security | **Closed — completed through PR #33 at merge `619365224f6db3770d3369fd84a295589699e513`** | [Conversation import validation](ISSUE-009-validate-conversation-import.md) | Independent small closure completed; imported sessions never restore trusted retrieval state. | [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) |
 | #10 | P1 performance | Open — needs proof | [Full-corpus BM25](ISSUE-010-full-corpus-bm25.md) | Retained by `.memory` #5 and measured by #23; follows the embedding contract in #11. | [Issue #10](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10) |
 | #11 | P1 bug | Open — partial implementation | [Embedding-model contract](ISSUE-011-embedding-model-match.md) | Governs #7/#10 and migration provenance in #19/#20; no silent model drift. | [Issue #11](https://github.com/sriharshaguthikonda/easy-local-rag/issues/11) |
 | #12 | P1 bug | Open — partial implementation | [Streamlit TTS worker](ISSUE-012-streamlit-tts-worker.md) | Legacy client closure only; future provider/UI behavior is governed by #22 and future GUI work. | [Issue #12](https://github.com/sriharshaguthikonda/easy-local-rag/issues/12) |
 | #13 | P1 bug | Open — partial implementation | [Tokenizer budgeting](ISSUE-013-tiktoken-counter.md) | #16 carries the dependency; #27 extends the requirement into structured answer validation. | [Issue #13](https://github.com/sriharshaguthikonda/easy-local-rag/issues/13) |
 | #14 | P1 enhancement | **Closed — duplicate/superseded** | [Inline citations](ISSUE-014-inline-citations.md) | Retained as closure evidence; #27 owns citation-resolution validation and abstention. | [Issue #14](https://github.com/sriharshaguthikonda/easy-local-rag/issues/14) |
-| #15 | P0 bug | Open — partial implementation | [Atomic vault write](ISSUE-015-atomic-vault-write.md) | Depends on #8; #20A replaces production append behavior with deterministic atomic packages. | [Issue #15](https://github.com/sriharshaguthikonda/easy-local-rag/issues/15) |
+| #15 | P0 bug | **Open — planning; packet under review, not active** | [Atomic vault write](ISSUE-015-atomic-vault-write.md) | Executes with #8's approved env/picker fallback while #8 remains open; #20A later replaces production append behavior with deterministic atomic packages. | [Issue #15](https://github.com/sriharshaguthikonda/easy-local-rag/issues/15) |
 | #16 | P1 developer experience | Open — split into 16A/16B | [Setup and dependency docs](ISSUE-016-dx-setup-docs.md) | 16A adds secret-safe contributor setup early; 16B freezes supported entry points/dependencies only after #21/#22. | [Issue #16](https://github.com/sriharshaguthikonda/easy-local-rag/issues/16) |
 | #17 | P0 enhancement | Open — canonical parent epic | [PostgreSQL consolidation](ISSUE-017-postgres-consolidation.md) | Governs the full required execution order and the #18-#27 closure gates. | [Issue #17](https://github.com/sriharshaguthikonda/easy-local-rag/issues/17) |
 | #18 | P0 security | Open — early preservation gate | [Branch and PR inventory](ISSUE-018-branch-pr-inventory.md) | After #2 containment; before early #26, #19, and any branch/PR deletion. | [Issue #18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18) |
