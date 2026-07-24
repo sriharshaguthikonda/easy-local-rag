@@ -2,20 +2,20 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** OPEN — `vault_store.py` and basic integration exist; this is the next small closure after missing unchanged-entry and write-failure regressions.
+**Status:** PLANNING — the [decision-complete JIT packet](../superpowers/plans/2026-07-24-issue-015-atomic-vault-write-implementation.md) is under review; no code work is active.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/15
 **Labels / priority:** `priority:P0`, `type:bug`
-**Dependencies:** #8 supplies configurable source paths; generated vault data remains untracked.
+**Dependencies:** #8 remains open. This issue may use its already-landed `EASY_RAG_VAULT_SOURCE_DIR`/folder-picker fallback but does not satisfy or close #8. Generated vault data remains untracked.
 
 ## Implementation slices
 
-1. Load one valid JSON list and merge by stable normalized file identity (canonical relative path or persisted source ID). Treat `modification_time` and content hash as versions of that identity, not merge-key components, then write a same-directory temporary file followed by `os.replace`.
+1. Load one valid JSON list and merge by stable normalized absolute file identity. Treat `modification_time` and the additive `content_hash` as versions of that identity, not merge-key components, then write a same-directory temporary file followed by `os.replace`.
 2. On corrupt input, preserve a timestamped backup before rebuilding; remove old duplicate append and mistaken backup branches.
 3. Complete functional tests for unchanged repeat run (no duplicate), the same file identity with changed modification time/content hash replacing exactly once, invalid input backup, and injected write/replace failure preserving the target.
 
 ## Affected interfaces, files, and artifacts
 
-- `vault_store.py`, `Vault_json_creation_from_HTMLs.py`, `.gitignore`, `tests/test_vault_store.py`.
+- Worker-owned files are `vault_store.py`, `Vault_json_creation_from_HTMLs.py`, and `tests/test_vault_store.py`; `.gitignore` already ignores generated JSON and is verification-only.
 - Artifact contract: `vault.json` is exactly one JSON array; no generated vault is committed.
 
 ## Concrete actions
