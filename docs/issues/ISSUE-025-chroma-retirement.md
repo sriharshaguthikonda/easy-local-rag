@@ -1,6 +1,6 @@
 # Issue #25 Plan: Chroma dual-run, rollback and retirement
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 Status: **Open — cutover and retirement gate**
 

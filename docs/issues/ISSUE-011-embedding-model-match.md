@@ -1,11 +1,11 @@
 # Issue #11: Enforce the embedding-model contract
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** OPEN — `embedding_contract.py` and GUI checks exist; complete ingest/query coverage and legacy-collection tests are required.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/11
 **Labels / priority:** `priority:P1`, `type:bug`
-**Dependencies:** #7 creation path, #10 retrieval, and future Qwen migration must use this contract.
+**Dependencies:** Carry model provenance through #19/#20 and test the maintained legacy caller; otherwise close from retirement proof. #7 creation and #10 retrieval use this contract only while supported.
 
 ## Implementation slices
 

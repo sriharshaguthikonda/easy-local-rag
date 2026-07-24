@@ -1,6 +1,6 @@
 # Issue #18: Branch and PR inventory before cleanup
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** Open; early preservation/security gate.
 **GitHub:** [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18)
@@ -77,8 +77,8 @@ report SHA-256 beside the private report. The ref manifest must cover local
 heads, remote heads, tags, and fetched PR refs. Exit `3` with a non-empty,
 redacted report is valid pre-rewrite inventory evidence and does not block #18
 closure; any other nonzero exit is a scanner failure. #26B owns remediation,
-archive creation, and the post-rewrite clean-or-explicitly-accepted-residual
-terminal gate.
+archive creation, and the post-rewrite clean terminal gate or documented,
+explicitly accepted immutable-ref residual outcome terminal gate.
 
 ## Closure gate
 

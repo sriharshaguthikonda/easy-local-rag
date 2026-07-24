@@ -1,11 +1,11 @@
 # Issue #7: Lazy-initialize Chroma for fresh installs
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** OPEN — live code has lazy call sites, but initialization semantics and fresh-path proof remain incomplete.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/7
 **Labels / priority:** `priority:P1`, `type:bug`
-**Dependencies:** #11 collection metadata must be set correctly when a collection is first created.
+**Dependencies:** After #22B freezes supported clients, create a dedicated packet only if Chroma UI remains supported; otherwise close from #25 retirement proof. #11 collection metadata applies only while that path remains supported.
 
 ## Implementation slices
 

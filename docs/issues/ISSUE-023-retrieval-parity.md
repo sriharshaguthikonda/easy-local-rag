@@ -1,6 +1,6 @@
 # Issue #23 Plan: Chroma-to-PostgreSQL retrieval parity
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 Status: **Open — migration gate**
 

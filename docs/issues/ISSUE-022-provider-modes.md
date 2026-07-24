@@ -1,6 +1,6 @@
 # Issue #22: Explicit provider modes and local/cloud truthfulness
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** Open; follows the thin service boundary.
 **GitHub:** [#22](https://github.com/sriharshaguthikonda/easy-local-rag/issues/22)

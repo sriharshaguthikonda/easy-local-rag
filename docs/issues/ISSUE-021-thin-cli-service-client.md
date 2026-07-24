@@ -1,6 +1,6 @@
 # Issue #21: Thin CLI over the stable RAG service contract
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** Open; blocked pending stable retrieval/service contract.
 **GitHub:** [#21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21)
