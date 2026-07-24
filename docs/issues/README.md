@@ -47,9 +47,9 @@ unresolved placeholder, implementer choice, or speculative dependency.
 | Issue | State | Packet / next gate |
 |---|---|---|
 | #2 | blocked-awaiting-user | Await user rotation evidence; no containment closure is inferred from docs. |
-| #9 | planning | [2026-07-24 validation implementation packet](../superpowers/plans/2026-07-24-issue-009-validate-conversation-import-implementation.md) is in packet review. After docs merge, transition #9 to `active` before implementation starts; keep it the sole active issue. |
+| #9 | active | [2026-07-24 validation implementation packet](../superpowers/plans/2026-07-24-issue-009-validate-conversation-import-implementation.md) merged through [PR #31](https://github.com/sriharshaguthikonda/easy-local-rag/pull/31) as `fd11bb7d706665b4094a088aaa0a97546b205135`; implementation starts from the frozen GUI base and remains unproven until code evidence lands. |
 | #15 | queued | Starts only after #9 closes and an execution slot is available. |
-| Active issue | none | Zero active issues is permitted only while the packet-review/docs-merge approval gate blocks execution. |
+| Active issue | #9 | Sole active issue; no other packet or implementation may become active before #9 closes or is explicitly blocked. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> implementer initial TDD commit -> code-review agent ->
