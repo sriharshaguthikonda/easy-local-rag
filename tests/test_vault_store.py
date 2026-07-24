@@ -162,39 +162,72 @@ def test_dump_encode_write_flush_and_close_failures_preserve_target(tmp_path, mo
         old = b"old target"
         vault.write_bytes(old)
         sentinel = RuntimeError(event)
+        events = []
+        payload = _valid_payload()
+        payload_before = copy.deepcopy(payload)
         original_dump = vault_store.json.dump
         original_temp = vault_store.tempfile.NamedTemporaryFile
+        original_fsync = vault_store.os.fsync
+        original_chmod = vault_store.os.chmod
+        original_replace = vault_store.os.replace
 
         if event == "dump":
             def fail_dump(data, handle, **kwargs):
+                events.extend(("dump", "dump-fail"))
                 handle.write("[")
                 raise sentinel
             monkeypatch.setattr(vault_store.json, "dump", fail_dump)
         else:
+            def recording_dump(*args, **kwargs):
+                events.append("dump")
+                return original_dump(*args, **kwargs)
+            monkeypatch.setattr(vault_store.json, "dump", recording_dump)
             class Wrapped:
                 def __init__(self, handle): self._handle = handle
                 @property
                 def name(self): return self._handle.name
                 def write(self, value):
-                    if event == "write": raise sentinel
+                    if event == "write":
+                        events.append("encode-write-fail")
+                        raise sentinel
                     return self._handle.write(value)
                 def flush(self):
-                    if event == "flush": raise sentinel
+                    if event == "flush":
+                        events.append("flush-fail")
+                        raise sentinel
+                    events.append("flush")
                     return self._handle.flush()
                 def fileno(self): return self._handle.fileno()
                 def close(self):
                     result = self._handle.close()
-                    if event == "close": raise sentinel
+                    if event == "close":
+                        events.append("close-fail")
+                        raise sentinel
                     return result
             def wrapped_temp(*args, **kwargs): return Wrapped(original_temp(*args, **kwargs))
             monkeypatch.setattr(vault_store.tempfile, "NamedTemporaryFile", wrapped_temp)
+        monkeypatch.setattr(vault_store.os, "fsync", lambda descriptor: (events.append("fsync"), original_fsync(descriptor))[1])
+        monkeypatch.setattr(vault_store.os, "chmod", lambda *_: events.append("chmod"))
+        monkeypatch.setattr(vault_store.os, "replace", lambda *_: events.append("replace"))
         with pytest.raises(RuntimeError) as raised:
-            atomic_write_json(vault, _valid_payload())
+            atomic_write_json(vault, payload)
         assert raised.value is sentinel
         assert vault.read_bytes() == old
+        assert payload == payload_before
+        expected_prefix = {
+            "dump": ["dump", "dump-fail"],
+            "write": ["dump", "encode-write-fail"],
+            "flush": ["dump", "flush-fail"],
+            "close": ["dump", "flush", "fsync", "close-fail"],
+        }[event]
+        assert events[:len(expected_prefix)] == expected_prefix
+        assert "chmod" not in events and "replace" not in events
         assert not list(tmp_path.glob(f".{vault.name}.*.tmp"))
         monkeypatch.setattr(vault_store.json, "dump", original_dump)
         monkeypatch.setattr(vault_store.tempfile, "NamedTemporaryFile", original_temp)
+        monkeypatch.setattr(vault_store.os, "fsync", original_fsync)
+        monkeypatch.setattr(vault_store.os, "chmod", original_chmod)
+        monkeypatch.setattr(vault_store.os, "replace", original_replace)
 
 
 def test_fsync_failure_preserves_target_cleans_temp_and_reraises(tmp_path, monkeypatch):
