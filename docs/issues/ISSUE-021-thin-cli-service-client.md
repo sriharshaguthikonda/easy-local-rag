@@ -9,16 +9,18 @@
 
 ## Dependencies
 
-Blocked by `.memory` #5 and #23: evidence search, hydration, fusion, structured
-citations, and evaluation must pass their immutable handoffs first. Reciprocal
-comments on [#21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21),
-[#23](https://github.com/sriharshaguthikonda/easy-local-rag/issues/23), and
-[`.memory` #5](https://github.com/sriharshaguthikonda/.memory/issues/5) must
-record each provider's exact commit SHA, API/schema version, compatibility-test
-command and passing result, and package name/version. No branch, `latest`,
-placeholder, or mutable artifact satisfies this gate. It follows #20B and
-precedes #27/#25/future GUI. Coordinate with #22 only at the provider
-interface; #21 must not embed provider policy in retrieval.
+#21A begins only after `.memory` #5's immutable handoff for evidence search,
+hydration, fusion, and structured citations. #21B alone requires #23's
+immutable evaluation/parity handoff. Reciprocal comments for #21A on
+[#21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21) and
+[`.memory` #5](https://github.com/sriharshaguthikonda/.memory/issues/5), and
+for #21B on [#21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21)
+and [#23](https://github.com/sriharshaguthikonda/easy-local-rag/issues/23),
+must record each provider's exact commit SHA, API/schema version,
+compatibility-test command and passing result, and package name/version. No
+branch, `latest`, placeholder, or mutable artifact satisfies either gate. It
+follows #20B and precedes #27/#25/future GUI. Coordinate with #22 only at the
+provider interface; #21 must not embed provider policy in retrieval.
 
 ## Implementation slices
 
