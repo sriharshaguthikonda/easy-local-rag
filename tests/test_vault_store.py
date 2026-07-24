@@ -104,6 +104,16 @@ def test_legacy_hash_upgrade_merge_winners_and_no_mutation():
     assert kept[0] is hashed[0]
     assert kept[0] == old_hashed[0]
     assert hashed == old_hashed and missing == old_missing
+    alias = str(Path("alias-parent") / "." / "nested" / ".." / "a.html")
+    native = str(Path("alias-parent") / "a.html")
+    neighbors = [_entry("before.html"), _entry(alias, 1, None, chunks=[{"id": HASH_A, "text": "old"}], retained="yes"), _entry("after.html")]
+    replacement = [_entry(native, 1, HASH_B, chunks=[{"id": HASH_B, "text": "new"}], incoming_only="yes")]
+    old_neighbors, old_replacement = copy.deepcopy(neighbors), copy.deepcopy(replacement)
+    merged_neighbors = merge_vault_entries(neighbors, replacement)
+    assert merged_neighbors[0] is neighbors[0] and merged_neighbors[2] is neighbors[2]
+    assert merged_neighbors[1]["file_name"] == native and merged_neighbors[1]["chunks"] == replacement[0]["chunks"]
+    assert merged_neighbors[1]["retained"] == "yes" and merged_neighbors[1]["incoming_only"] == "yes"
+    assert neighbors == old_neighbors and replacement == old_replacement
 
 
 def test_schema_backward_compatibility_and_invalid_in_memory_data(tmp_path):
