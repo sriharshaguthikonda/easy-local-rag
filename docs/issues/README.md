@@ -50,11 +50,11 @@ unresolved placeholder, implementer choice, or speculative dependency.
 |---|---|---|
 | #2 | blocked-awaiting-user | Await user rotation evidence; no containment closure is inferred from docs. |
 | #9 | closed | Completed through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`; [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) is closed. |
-| #15 | planning | [2026-07-24 atomic-vault implementation packet](../superpowers/plans/2026-07-24-issue-015-atomic-vault-write-implementation.md) is under ChatGPT/GSD review; activation requires the later reviewed docs merge. |
-| Active issue | none | Zero active issues is allowed while the #15 packet is under review; #15 must not become active until a later activation PR. |
+| #15 | planning | [2026-07-24 atomic-vault implementation packet](../superpowers/plans/2026-07-24-issue-015-atomic-vault-write-implementation.md) is under ChatGPT/GSD review; after the reviewed docs merge, code work requires a separate merged activation PR. Closure records that PR's URL and immutable merge SHA. |
+| Active issue | none | Zero active issues is allowed while the #15 packet is under review; #15 must not become active until the separate activation PR merges. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
-corrector -> docs merge -> activation -> implementer initial TDD commit -> code-review agent ->
+corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
 accepted-finding fixer commit(s) -> verifier -> orchestrator PR merge/evidence/close`.
 ChatGPT review is advisory and does not require code to exist; code review starts after the
 initial code commit. A packet may
