@@ -109,14 +109,25 @@ def test_schema_backward_compatibility_and_invalid_in_memory_data(tmp_path):
     legacy = [_entry(content_hash=None, extra="ok")]
     atomic_write_json(tmp_path / "legacy.json", legacy)
     assert load_vault(tmp_path / "legacy.json") == legacy
+    compatible = [_entry(
+        entry_unknown={"nested": [1, {"value": "ok"}]},
+        chunks=[{"id": HASH_A, "text": "text", "chunk_unknown": {"nested": [True, None]}}],
+    )]
+    compatible_path = tmp_path / "compatible.json"
+    atomic_write_json(compatible_path, compatible)
+    assert load_vault(compatible_path) == compatible
     invalids = [
         {},
         ["entry"],
         [{"file_name": "", "modification_time": 1, "chunks": []}],
+        [{"file_name": "a", "chunks": []}],
+        [{"file_name": "a", "modification_time": 1}],
         [{"file_name": "a", "modification_time": True, "chunks": []}],
         [{"file_name": "a", "modification_time": float("nan"), "chunks": []}],
+        [{"file_name": "a", "modification_time": 1, "chunks": [], "unknown": {"nested": float("inf")}}],
         [{"file_name": "a", "modification_time": 1, "chunks": ["chunk"]}],
         [{"file_name": "a", "modification_time": 1, "chunks": [{"id": "x", "text": "x"}]}],
+        [{"file_name": "a", "modification_time": 1, "chunks": [{"id": HASH_A, "text": "x", "unknown": {1: "bad"}}]}],
         [{"file_name": "a", "modification_time": 1, "chunks": [], "content_hash": "x"}],
         [{"file_name": "a", "modification_time": 1, "chunks": [], 1: "bad"}],
         [{"file_name": "a", "modification_time": 1, "chunks": [], "unknown": object()}],
