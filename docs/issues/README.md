@@ -42,6 +42,15 @@ rollback behavior; TDD exact commands with expected failure/pass evidence;
 commit boundaries, approval stops, and closure evidence. It may contain no
 unresolved placeholder, implementer choice, or speculative dependency.
 
+## Current JIT state
+
+| Issue | State | Packet / next gate |
+|---|---|---|
+| #2 | blocked-awaiting-user | Await user rotation evidence; no containment closure is inferred from docs. |
+| #9 | planning | [2026-07-24 validation implementation packet](../superpowers/plans/2026-07-24-issue-009-validate-conversation-import-implementation.md) is awaiting packet review and merge. |
+| #15 | queued | Starts only after #9 closes and an execution slot is available. |
+| Active issue | none | No implementation is active. |
+
 Workers use this lifecycle: `planner agent -> ChatGPT -> GSD checker ->
 corrector agent -> implementation agent -> code-review agent -> fixer agent ->
 verifier -> orchestrator`. A packet may
