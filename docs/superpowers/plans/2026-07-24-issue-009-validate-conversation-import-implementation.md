@@ -423,7 +423,7 @@ There must be no `json.loads(uploaded_file.read())`, broad exception handler, or
 
 The lifecycle is exactly: **planner packet -> ChatGPT review -> GSD checker -> corrector -> docs merge -> implementer initial TDD commit -> code-review agent -> accepted-finding fixer commit(s) -> verifier -> orchestrator PR merge/evidence/close**. ChatGPT returned no review content after repeated waits; record that fact and do not invent a finding. No review is required before code exists; code review occurs after the initial implementation commit.
 
-After docs merge, the implementer writes the test file, records its red collection result, implements the locked code, and makes `fix(#9): validate conversation imports`. Then the code-review agent reviews that commit; only accepted findings get atomic `fix(#9): ...` commits. The verifier evaluates the final code SHA. Closure evidence names the docs merge SHA, initial code SHA, every review-fix SHA (or `none accepted`), final verifier SHA, code PR URL, exact commands/outcomes, and the frozen/post-change comparison.
+After docs merge, the implementer writes the test file, records its red collection result, implements the locked code, and makes `fix(#9): validate conversation imports`. Then the code-review agent reviews that commit; each accepted finding gets an atomic `fix(#9): address accepted review finding` commit. The verifier evaluates the final code SHA. Closure evidence names the docs merge SHA, initial code SHA, every review-fix SHA (or `none accepted`), final verifier SHA, code PR URL, exact commands/outcomes, and the frozen/post-change comparison.
 
 Run after change with bytecode disabled and record command, exit code, full summary, and failing test IDs:
 
