@@ -332,15 +332,22 @@ def test_builder_rerun_and_same_mtime_content_change(tmp_path, monkeypatch):
     sys.modules.pop("Vault_json_creation_from_HTMLs", None)
     import Vault_json_creation_from_HTMLs as builder
     source = tmp_path / "source"; source.mkdir(); html = source / "a.html"; html.write_text("<p>first text.</p>", encoding="utf-8")
+    neighbor = source / "b.html"; neighbor.write_text("<p>neighbor text.</p>", encoding="utf-8")
     vault = tmp_path / "vault.json"
     monkeypatch.setattr(builder, "_get_sentence_tokenizer", lambda: type("T", (), {"tokenize": lambda _, text: [text]})())
     monkeypatch.setattr(builder, "Pool", lambda *_: type("P", (), {"__enter__": lambda s: s, "__exit__": lambda *a: None, "imap": lambda s, fn, values: map(fn, values)})())
     monkeypatch.setattr(builder, "tqdm", lambda values, **_: values)
     builder.convert_html_to_json(source, vault); first = load_vault(vault)
+    original_index = next(index for index, entry in enumerate(first) if entry["file_name"] == str(html.resolve()))
+    first_a = first[original_index]
     builder.convert_html_to_json(source, vault); assert load_vault(vault) == first
     mtime = html.stat().st_mtime; html.write_text("<p>second text.</p>", encoding="utf-8"); os.utime(html, (mtime, mtime))
     builder.convert_html_to_json(source, vault); changed = load_vault(vault)
-    assert len(changed) == 1 and changed[0]["content_hash"] != first[0]["content_hash"]
+    changed_a_index = next(index for index, entry in enumerate(changed) if entry["file_name"] == str(html.resolve()))
+    changed_a = changed[changed_a_index]
+    assert len(changed) == 2 and changed_a_index == original_index
+    assert changed_a["content_hash"] != first_a["content_hash"]
+    assert changed_a["chunks"] == builder.split_into_chunks("second text. ")
 
 
 def test_builder_import_is_side_effect_free(tmp_path):
