@@ -56,8 +56,10 @@ def test_unchanged_rerun_keeps_one_entry_and_object_value(tmp_path):
     vault = tmp_path / "vault.json"
     atomic_write_json(vault, merged)
     first = vault.read_bytes()
+    assert load_vault(vault) == [existing[0]]
     merged_again = merge_vault_entries(merged, incoming)
     atomic_write_json(vault, merged_again)
+    assert load_vault(vault) == [existing[0]]
     assert len(merged_again) == 1
     assert merged_again[0] is merged[0]
     assert vault.read_bytes() == first
