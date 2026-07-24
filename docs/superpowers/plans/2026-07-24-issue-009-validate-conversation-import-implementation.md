@@ -32,7 +32,7 @@ No other Python callers were found by that exact `git grep` command. The replace
 | `tags` | dict with at most 100 string keys and **at most 100 string values total across all keys**; values are lists of strings; every key and value at most 256 characters | `tags` |
 | `favorites` | list of at most 100 dicts; all keys are strings, all values are scalar `str`, `int`, finite `float`, `bool`, or `null`; every string key/value at most 256 characters | `favorite_responses` |
 
-Absent `history`, `tags`, or `favorites` causes no write for that destination. `bool` is accepted only as a favorite scalar. `NaN`, `Infinity`, and `-Infinity` reject. Every accepted container is newly built. A failed validation makes zero writes; import data never assigns `sources`, `current_sources`, `collection`, `chroma_client`, `source_filters`, TTS objects, underscore keys, or any runtime key. Importing these modules must not initialize Chroma or Streamlit in tests.
+Absent `history`, `tags`, or `favorites` causes no write for that destination. `bool` is accepted only as a favorite scalar. `NaN`, infinities, and numeric-overflow literals such as `1e999` reject globally, including under ignored `sources`. Every accepted container is newly built. A failed validation makes zero writes; import data never assigns `sources`, `current_sources`, `collection`, `chroma_client`, `source_filters`, TTS objects, underscore keys, or any runtime key. Importing these modules must not initialize Chroma or Streamlit in tests.
 
 Errors are deterministic: raw type/size, decode/JSON failure, non-object root, unsupported key, and field violations each raise `ConversationImportError` with the exact messages in the implementation below. The UI renders only `Conversation import rejected: {error}`. This makes rejected-input assertions stable and rollback a bounded reverse-order revert of the implementation and any accepted review-fix commits.
 
@@ -43,8 +43,7 @@ In the clean code worktree at `daecce8a27f50da39284f5519d77b835905209f6`, run an
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
 python -m pytest tests -q
-python -m py_compile streamlit_app.py rag_gui.py GUI_direct_search.py
-python -m py_compile conversation_import.py
+python -m py_compile conversation_import.py streamlit_app.py rag_gui.py GUI_direct_search.py
 gh issue list --repo sriharshaguthikonda/easy-local-rag --state open
 ```
 
@@ -227,10 +226,19 @@ def test_invalid_utf8_malformed_json_and_array_root_reject(raw_bytes: bytes, mes
         sanitize_conversation_import(raw_bytes)
 
 
-@pytest.mark.parametrize("value", [b"NaN", b"Infinity", b"-Infinity"])
-def test_non_finite_json_constants_reject_even_in_ignored_sources(value: bytes) -> None:
+@pytest.mark.parametrize("raw_bytes", [
+    b'{"sources":NaN}', b'{"sources":Infinity}', b'{"sources":-Infinity}',
+    b'{"sources":1e999}', b'{"favorites":[{"score":1e999}]}',
+])
+def test_non_finite_json_numbers_reject_even_in_ignored_sources(raw_bytes: bytes) -> None:
     with pytest.raises(ConversationImportError, match="^" + re.escape("Import contains a non-finite number.") + "$"):
-        sanitize_conversation_import(b'{"sources":' + value + b'}')
+        sanitize_conversation_import(raw_bytes)
+
+
+def test_finite_favorite_float_passes() -> None:
+    safe, warnings = sanitize_conversation_import(b'{"favorites":[{"score":1.25}]}')
+    assert warnings == []
+    assert safe == {"favorites": [{"score": 1.25}]}
 
 
 def test_uploaded_handler_reads_bytes_applies_valid_data_and_warns_rejection() -> None:
@@ -312,13 +320,24 @@ def _reject_non_finite(value: str) -> None:
     raise ConversationImportError("Import contains a non-finite number.")
 
 
+def _parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ConversationImportError("Import contains a non-finite number.")
+    return parsed
+
+
 def sanitize_conversation_import(raw: bytes) -> tuple[dict[str, object], list[str]]:
     if not isinstance(raw, bytes):
         raise ConversationImportError("Import must be raw bytes.")
     if len(raw) > MAX_IMPORT_BYTES:
         raise ConversationImportError("Import exceeds 8 MiB limit.")
     try:
-        payload = json.loads(raw.decode("utf-8"), parse_constant=_reject_non_finite)
+        payload = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=_reject_non_finite,
+            parse_float=_parse_finite_float,
+        )
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ConversationImportError("Import must be UTF-8 JSON bytes.") from error
     if not isinstance(payload, dict):
@@ -423,16 +442,23 @@ There must be no `json.loads(uploaded_file.read())`, broad exception handler, or
 
 The lifecycle is exactly: **planner packet -> ChatGPT review -> GSD checker -> corrector -> docs merge -> implementer initial TDD commit -> code-review agent -> accepted-finding fixer commit(s) -> verifier -> orchestrator PR merge/evidence/close**. ChatGPT returned no review content after repeated waits; record that fact and do not invent a finding. No review is required before code exists; code review occurs after the initial implementation commit.
 
+Before docs merge/implementation and again before code-PR merge/closure, the orchestrator confirms that the standing Q&A authorization—“you can merge” plus “continue one by one, commit by commit, don’t stop”—has not been revoked and that every named review/evidence gate has passed. If either condition fails: **STOP; do not proceed**. While that standing authorization remains current, no new per-packet reply is required.
+
 After docs merge, the implementer writes the test file, records its red collection result, implements the locked code, and makes `fix(#9): validate conversation imports`. Then the code-review agent reviews that commit; each accepted finding gets an atomic `fix(#9): address accepted review finding` commit. The verifier evaluates the final code SHA. Closure evidence names the docs merge SHA, initial code SHA, every review-fix SHA (or `none accepted`), final verifier SHA, code PR URL, exact commands/outcomes, and the frozen/post-change comparison.
 
-Run after change with bytecode disabled and record command, exit code, full summary, and failing test IDs:
+Run this identical comparison block after change, with bytecode disabled, and record command, exit code, full summary, and failing test IDs:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
-python -m pytest tests/test_conversation_import.py -q
 python -m pytest tests -q
 python -m py_compile conversation_import.py streamlit_app.py rag_gui.py GUI_direct_search.py
 gh issue list --repo sriharshaguthikonda/easy-local-rag --state open
+```
+
+Run these extra gates outside the identical comparison block:
+
+```powershell
+python -m pytest tests/test_conversation_import.py -q
 git diff --check
 ```
 
