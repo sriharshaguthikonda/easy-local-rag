@@ -1,6 +1,6 @@
 # Issue #15: Atomically write vault JSON
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** OPEN — `vault_store.py` and basic integration exist; this is the next small closure after missing unchanged-entry and write-failure regressions.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/15

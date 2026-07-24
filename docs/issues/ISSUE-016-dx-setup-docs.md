@@ -1,11 +1,11 @@
 # Issue #16: Make fresh-clone setup runnable
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** OPEN — setup documentation and dependency inventory need a fresh-environment proof.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/16
 **Labels / priority:** `priority:P1`, `type:dx`
-**Dependencies:** 16A depends on #2's secret-handling rules and may land immediately; 16B depends on #21/#22 defining the maintained client/provider surface, plus #8 path variables and #13's shipped `tiktoken` use where those paths remain supported.
+**Dependencies:** 16A proceeds via #2A safe environment setup; 16B proceeds via #26C after #21/#22 freeze supported entry points. #8 path variables and #13's shipped `tiktoken` apply only where those paths remain supported.
 
 ## Implementation slices
 

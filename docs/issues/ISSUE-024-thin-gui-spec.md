@@ -1,6 +1,6 @@
 # Issue #24 Plan: Future thin GUI specification
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 Status: **Open — specification only**
 

@@ -1,11 +1,11 @@
 # Issue #10: Search BM25 over the full corpus
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** OPEN — current GUI code appears to load a broader document set, but independent full-corpus behavior and cache invalidation need proof.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/10
 **Labels / priority:** `priority:P1`, `type:perf`
-**Dependencies:** #11 must reject model/collection mismatch before retrieval; do not couple this to the Qwen migration.
+**Dependencies:** Prefer `.memory` #5/#23 lexical replacement; create a dedicated legacy-cache packet only if legacy BM25 remains supported. #11 must reject model/collection mismatch before retrieval.
 
 ## Implementation slices
 

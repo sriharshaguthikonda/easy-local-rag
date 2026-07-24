@@ -1,8 +1,9 @@
 # Historical PostgreSQL migration notes
 
-This directory is supporting historical context. The authoritative issue status,
-sequencing, and closure gates are in the
-[canonical issue-plan index](../issues/README.md) and its per-issue plans.
+This directory is supporting historical context. The authoritative issue/plan/status
+index, sequencing, and closure gates are in the
+[roadmap ledger](../issues/README.md) and its per-issue plans; this directory
+is not a second authority.
 Where these notes differ, `docs/issues/` governs.
 
 ## Target boundary
@@ -23,8 +24,8 @@ The `.memory` repository will own the PostgreSQL/pgvector evidence store and sha
 
 1. Finish the public and local branch inventory in [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18), then complete #26A.
 2. Perform only the separately approved #26B history rewrite.
-3. Close #2 from the canonical clean or explicitly accepted immutable-ref residual
-   terminal evidence.
+3. Close #2 from the canonical clean or documented, explicitly accepted
+   immutable-ref residual outcome.
 4. Build #19A's read-only Chroma audit, then #19B's deterministic export tool in [#19](https://github.com/sriharshaguthikonda/easy-local-rag/issues/19).
 5. Freeze a named Chroma snapshot and record checksums before any migration write.
 

@@ -1,6 +1,6 @@
 # Issue #26 Plan: Repository hygiene, history and layout cleanup
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 Status: **Open — split into early hygiene and late retirement cleanup**
 
@@ -74,7 +74,7 @@ artifact needed by #19, #23 or #25.
 - Re-scan rewritten history with the same pinned command/config and keep
   affected secret types/ref names in a private operator record.
 - Sanitized public archive refs may be created only after the clean outcome or
-  the explicitly accepted immutable-residual gate; no archive may reach a
+  the documented, explicitly accepted immutable-ref residual outcome; no archive may reach a
   residual affected commit.
 
 ### 26C — Supported surface and dependencies
@@ -134,7 +134,7 @@ Operator artifacts:
 5. Coordinate and execute the sole approved history rewrite; force-push all
    writable refs once and record expected read-only PR-ref failures.
 6. Obtain the conditional GitHub Support disposition for affected PR
-   refs/cached views, apply the clean or accepted-residual terminal branch,
+   refs/cached views, apply the clean or documented, explicitly accepted immutable-ref residual outcome,
    then re-clone, re-fetch every remaining ref, scan, and invalidate old clones.
 7. Continue migration work through #19–#25.
 8. After #25, document supported commands and isolate legacy code.

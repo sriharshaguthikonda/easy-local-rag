@@ -1,6 +1,6 @@
 # Issue #2: Rotate and remove committed Groq credentials
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** OPEN — immediate containment blocker. Rotation/revocation and active-source cleanup unlock #18; the issue remains open until early #26B supplies one of the two explicit post-rewrite terminal outcomes in the final closure gate.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/2
@@ -28,7 +28,7 @@
 - Run the active-tree scan below. After rotation, record explicit rewrite approval and hand the #18 inventory to #26B.
 - Accept #26B's post-rewrite evidence only when its pinned command covers local
   heads, remote heads, tags, and fetched PR refs and reaches either the clean
-  exit-`0` outcome or the narrowly defined, user-approved immutable-residual
+  exit-`0` outcome or the documented, explicitly accepted immutable-ref residual
   outcome in the final closure gate.
 
 ## Verification
@@ -53,7 +53,7 @@ or allowlist may suppress the known revoked credential type.
 - **Final closure gate (after early #26B, before #19):** rewrite approval is
   recorded and #26B supplies one of two terminal outcomes: **clean** — GitHub
   Support remediation is confirmed when needed and the fresh-clone all-ref scan
-  exits `0` with zero findings; or **accepted immutable residual** — Support
+  exits `0` with zero findings; or **documented, explicitly accepted immutable-ref residual outcome** — Support
   declines specifically because revocation/rotation mitigated the risk, every
   remaining finding is reachable only from the recorded read-only PR/cached
   refs, writable refs scan clean, and the user explicitly accepts the dated,

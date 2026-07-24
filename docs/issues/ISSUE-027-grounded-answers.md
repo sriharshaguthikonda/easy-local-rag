@@ -1,6 +1,6 @@
 # Issue #27 Plan: Structured grounded answers and abstention
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 Status: **Open — answer-safety contract**
 

@@ -8,21 +8,21 @@ closure gate unless GitHub has explicitly closed it as a duplicate.
 
 | Issue | Disposition | Canonical destination |
 |---|---|---|
-| #2 exposed credentials | **Keep — blocking** | #2 owns containment/rotation and closes only after #26B supplies either clean all-ref evidence or the documented explicitly accepted immutable-ref residual outcome; #26B alone executes any approved rewrite. Never publish values. |
+| #2 exposed credentials | **Keep — blocking** | #2 owns containment/rotation and closes only after #26B supplies either clean all-ref evidence or the documented, explicitly accepted immutable-ref residual outcome; #26B alone executes any approved rewrite. Never publish values. |
 | #3 subprocess injection | Closed on experimental history; **retain as regression requirement** | #21 client boundary and #24 GUI rules. Old commit is not on `main`. |
 | #4 arbitrary file open | Closed on experimental history; **retain as regression requirement** | #21/#24. Any future opener needs allowlisted roots/types and no shell fallback. |
-| #5 prompt injection | **Keep open** | Complete its own guarded-context closure gate; #27 extends it with citation validation and abstention. |
+| #5 prompt injection | **Keep open** | Resolve through #27's maintained request boundary; #25 retires unsafe legacy builders. Its guarded-context closure gate remains required. |
 | #6 missing metadata embedding/MMR crash | **Keep until linked closure** | GUI-lineage fix `de74659` is merged; close after the main-line plan and evidence comment land. |
-| #7 eager Chroma collection initialisation | **Keep open** | Complete its fresh-path/import closure gate; #24 carries the future thin-client rule. |
-| #8 hard-coded Windows paths | **Keep open** | Complete retained-entry-point configuration coverage; #20/#26 consume the result. |
+| #7 eager Chroma collection initialisation | **Conditional** | After #22B freezes supported clients, create a dedicated packet only if Chroma UI remains supported; otherwise close from #25 retirement proof. |
+| #8 hard-coded Windows paths | **Keep open** | Use #26A early hygiene, then #26C final supported-path proof. |
 | #9 Streamlit state import hijack | **Keep open** | Complete its allowlisted-import regression gate; #24 inherits the contract. |
-| #10 BM25 over vector top-50 | **Keep open** | Complete its own full-corpus retrieval gate; `.memory` #5/#23 later preserve parity. |
-| #11 embedding-model mismatch | **Keep open** | Complete ingest/query enforcement; #20/#23 reuse the provenance contract. |
-| #12 Streamlit TTS worker deadlock | **Keep open** | Complete its worker-lifecycle gate; #22/#24 later consume the boundary. |
-| #13 regex token counter/provider overflow | **Keep open** | Complete active-path token-budget coverage; #22/#27 reuse it. |
+| #10 BM25 over vector top-50 | **Conditional** | Prefer `.memory` #5/#23 lexical replacement; create a dedicated legacy-cache packet only if legacy BM25 remains supported. |
+| #11 embedding-model mismatch | **Conditional** | Carry model provenance through #19/#20 and test the maintained legacy caller; otherwise close from retirement proof. |
+| #12 Streamlit TTS worker deadlock | **Conditional** | Decide at #22B; default retirement, with a per-session worker packet only if speech remains supported. |
+| #13 regex token counter/provider overflow | **Keep open** | Use #22/#27 maintained request budgeting; #25 retires remaining regex builders. |
 | #14 prose-only inline citations | **Closed — duplicate** | Historical display evidence only; #27 owns structured validation and abstention. |
 | #15 corrupt append-only `vault.json` | **Keep open** | Complete atomic/idempotent failure regressions; #20 later consumes the contract. |
-| #16 `.env.example`, AGENTS and dependency lock | **Split, keep open for now** | Add safe contributor/env guidance early; finish the supported dependency lock after #21/#22 define the maintained package surface. Broader cleanup belongs to #26. |
+| #16 `.env.example`, AGENTS and dependency lock | **Split, keep open for now** | 16A proceeds via #2A safe environment setup; 16B proceeds via #26C after #21/#22 freeze supported entry points. |
 | #17 PostgreSQL/pgvector consolidation | **Epic — canonical** | Sequenced by `docs/issues/README.md`. |
 | #18 branch inventory/archive | **Keep — early inventory** | Record immutable public/local ref inventory, pre-rewrite scan evidence, proposed archive dispositions, and PR #1 disposition; #26B alone sanitizes/replaces refs and creates approved archives. |
 | #19 read-only Chroma audit/export | **Keep — first implementation** | Must precede schema migration or Chroma cleanup. |

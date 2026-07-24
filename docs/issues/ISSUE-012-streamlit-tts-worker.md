@@ -1,11 +1,11 @@
 # Issue #12: Stabilize the Streamlit TTS worker
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** OPEN — `@st.cache_resource` appears in Streamlit, but the legacy backend still contains ad hoc threads and repeated event-loop startup.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/12
 **Labels / priority:** `priority:P1`, `type:bug`
-**Dependencies:** Preserve the TTS-disabled fast path; no new audio dependency is required.
+**Dependencies:** Decide at #22B; default retirement, with a per-session worker packet only if speech remains supported. Preserve the TTS-disabled fast path; no new audio dependency is required.
 
 ## Implementation slices
 

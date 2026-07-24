@@ -1,6 +1,7 @@
 # Canonical issue-plan index
 
-This index is the authoritative execution map for the 24 tracked issues:
+This index is the authoritative issue/plan/status index and roadmap ledger for
+the 24 tracked issues:
 [#2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2) and
 [#5](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5) through
 [#27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27).
@@ -23,16 +24,25 @@ must not bypass the consolidation sequence.
 
 ## JIT packet policy
 
-The packet directory is `docs/issues/jit/`; each filename names its canonical
-issue number and slice. A packet names one canonical issue/slice, the exact acceptance gates it consumes, its
-implementation boundary, verification commands, rollback boundary, and the
-required reciprocal evidence comment. Exactly one packet may be active.
-Its state machine is `planned -> active -> review -> verified -> closed`, or
-`active -> blocked-awaiting-user -> planned`. A blocked-awaiting-user #2 parks
-#2; work may then proceed through #9, then #15, without advancing #18 or #26.
+Only the next unblocked packet may be created, at
+`docs/superpowers/plans/YYYY-MM-DD-issue-NNN-<slug>-implementation.md`.
+Each packet names one canonical issue/slice and its canonical plan links to it
+once created; this ledger tracks its state. The only states are `queued`,
+`planning`, `active`, `review`, `blocked-awaiting-user`, and `closed`. Exactly
+one issue may be `active` at a time (zero only between packets or while
+approvals block execution). A blocked-awaiting-user #2 parks #2; work may then
+proceed through #9, then #15, without advancing #18 or #26.
 
-Workers use this lifecycle: `planner -> ChatGPT -> GSD -> corrector ->
-implementer -> reviewer -> fixer -> verifier -> orchestrator`. A packet may
+Each packet must contain issue/canonical/roadmap links; exact target branch and
+frozen base SHA; maintained-path or retirement mode chosen first; current
+caller map/files owned; locked interfaces, schemas, I/O, limits, failure, and
+rollback behavior; TDD exact commands with expected failure/pass evidence;
+commit boundaries, approval stops, and closure evidence. It may contain no
+unresolved placeholder, implementer choice, or speculative dependency.
+
+Workers use this lifecycle: `planner agent -> ChatGPT -> GSD checker ->
+corrector agent -> implementation agent -> code-review agent -> fixer agent ->
+verifier -> orchestrator`. A packet may
 describe implementation detail only; it cannot relax a canonical scope,
 invariant, closure gate, approval, or rollback constraint.
 
@@ -42,7 +52,7 @@ invariant, closure gate, approval, or rollback constraint.
 |---|---|---|---|---|
 | #2A containment | Not yet produced | revocation, active-tree scan, missing-key behavior | #18 | Not passed; docs are not proof. |
 | #18 inventory/proposed disposition | Not yet produced | immutable ref manifest, redacted scan, proposed dispositions | #26A/#26B, #19A | Not passed; docs are not proof. |
-| #26B separately approved rewrite | Not yet produced | all-ref post-rewrite evidence or accepted immutable-ref residual record | #2 closure, #19A | Not passed; docs are not proof. |
+| #26B separately approved rewrite | Not yet produced | all-ref post-rewrite evidence or documented, explicitly accepted immutable-ref residual outcome | #2 closure, #19A | Not passed; docs are not proof. |
 | #19A audit / #19B export | Not yet produced | frozen snapshot, manifest, checksums, read-only proof | #20A, #25 | Not passed; docs are not proof. |
 | #20A | Not yet produced | deterministic package and identity verification | `.memory` #4 | Not passed; docs are not proof. |
 | `.memory` #4 | Not yet produced | reciprocal SHA, schema, package version, compatibility command/result | #20B | Not passed; docs are not proof. |
@@ -82,18 +92,18 @@ before work, verification runs exactly for each named secondary gate, and a
 separate evidence comment is posted for each secondary issue. Independent
 approval, rollback, or scope means a separate packet.
 
-## Legacy unlock matrix
+## Legacy closure routes
 
 | Issue | Maintained default | Retirement default | Closure route |
 |---|---|---|---|
-| #5 | guarded retrieval-backed model paths | remove every unguarded legacy model path | its guarded-context regression; #27 does not replace it |
-| #7 | lazy Chroma initialization | remove affected launch surface | fresh-path/import regression or verified removal |
-| #8 | configurable runtime paths | remove machine-specific utility | maintained-entry-point coverage or verified removal |
-| #10 | full-corpus BM25 | remove BM25 claim/control | full-corpus regression or verified replacement |
-| #11 | ingest/query model contract | remove uncovered embedding route | mismatch regression or verified removal |
-| #12 | session-owned TTS worker | remove maintained TTS control | worker-lifecycle regression or verified replacement |
-| #13 | shared tokenizer budget | remove uncovered Groq request builder | active-path budget regression or verified replacement |
-| #16 | 16A safe setup, then 16B supported dependency lock | remove unsupported entry point from docs | its named 16A/16B gate or verified retirement |
+| #5 | #27 maintained request boundary | #25 retires unsafe legacy builders | guarded-context regression; #27 does not replace it |
+| #7 | after #22B freezes supported clients, create a dedicated packet only if Chroma UI remains supported | close from #25 retirement proof | fresh-path/import regression or verified retirement |
+| #8 | #26A early hygiene | #26C final supported-path proof | maintained-entry-point coverage or verified retirement |
+| #10 | `.memory` #5/#23 lexical replacement | dedicated legacy-cache packet only if legacy BM25 remains supported | full-corpus regression or verified replacement |
+| #11 | carry model provenance through #19/#20 and test the maintained legacy caller | close from retirement proof | mismatch regression or verified retirement |
+| #12 | decide at #22B; per-session worker packet only if speech remains supported | retirement | worker-lifecycle regression or verified retirement |
+| #13 | #22/#27 maintained request budgeting | #25 retires remaining regex builders | active-path budget regression or verified retirement |
+| #16 | 16A via #2A safe environment setup; 16B via #26C after #21/#22 freeze supported entry points | n/a | its named 16A/16B gate |
 
 ## Tracked issues
 

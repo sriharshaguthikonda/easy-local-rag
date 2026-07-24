@@ -1,6 +1,6 @@
 # Issue #20: Deterministic ingestion, chunking, and change detection
 
-[Roadmap ledger](../plans/README.md)
+[Roadmap ledger](README.md)
 
 **Status:** Open; split into #20A and #20B.
 **GitHub:** [#20](https://github.com/sriharshaguthikonda/easy-local-rag/issues/20)
