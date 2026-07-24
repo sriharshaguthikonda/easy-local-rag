@@ -69,7 +69,7 @@ import tempfile
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
-from conversation_import import sanitize_conversation_import
+from conversation_import import apply_uploaded_conversation
 from rag_prompting import CONTEXT_GUARD, build_guarded_context_block
 from token_budget import trim_messages_to_budget
 
@@ -621,24 +621,7 @@ def main():
 
         uploaded_file = st.file_uploader("Import Conversation")
         if uploaded_file:
-            try:
-                imported_data = json.loads(uploaded_file.read())
-                safe_data, import_warnings = sanitize_conversation_import(imported_data)
-
-                if "history" in safe_data:
-                    st.session_state.conversation_history = safe_data["history"]
-                if "tags" in safe_data:
-                    st.session_state.tags = safe_data["tags"]
-                if "favorites" in safe_data:
-                    st.session_state.favorite_responses = safe_data["favorites"]
-
-                for warning in import_warnings:
-                    st.warning(warning)
-
-                if not import_warnings:
-                    st.success("Conversation import complete.")
-            except Exception as e:
-                st.error(f"Import failed: {e}")
+            apply_uploaded_conversation(uploaded_file, st.session_state, st.warning, st.success)
 
     # Auto-focus script
     st.markdown(
