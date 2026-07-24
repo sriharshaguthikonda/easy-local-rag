@@ -2,6 +2,8 @@
 
 **Goal:** validate legacy conversation uploads before any Streamlit session write.
 
+[GitHub Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) · [canonical plan](../../issues/ISSUE-009-validate-conversation-import.md) · [roadmap](../../issues/README.md)
+
 **Docs packet lineage:** `codex/issue-009-plan`, based on `8497efca7aa021bef3757c6b87ba8f4a7824fbc5`. Git history carries the packet commits; the immutable final docs-merge SHA is required closure evidence.
 
 **Code lineage:** create `codex/fix-issue-9` directly at frozen GUI base `daecce8a27f50da39284f5519d77b835905209f6`. It targets `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`; never merge or rebase main/docs into this lineage.
@@ -155,9 +157,11 @@ def test_exact_raw_8_mib_passes() -> None:
 
 
 def test_exact_message_64_kib_passes() -> None:
-    safe, warnings = sanitize_conversation_import(raw({"history": [{"role": "user", "content": "x" * MAX_MESSAGE_BYTES}]}))
+    content = "é" * (MAX_MESSAGE_BYTES // len("é".encode("utf-8")))
+    assert len(content.encode("utf-8")) == MAX_MESSAGE_BYTES
+    safe, warnings = sanitize_conversation_import(raw({"history": [{"role": "user", "content": content}]}))
     assert warnings == []
-    assert safe["history"][0]["content"] == "x" * MAX_MESSAGE_BYTES
+    assert safe["history"][0]["content"] == content
 
 
 def test_exact_other_limits_pass() -> None:
@@ -189,8 +193,11 @@ def test_history_entry_over_limit_rejects() -> None:
 
 
 def test_message_utf8_byte_over_limit_rejects() -> None:
+    content = "é" * (MAX_MESSAGE_BYTES // len("é".encode("utf-8")) + 1)
+    assert len(content) < MAX_MESSAGE_BYTES
+    assert len(content.encode("utf-8")) > MAX_MESSAGE_BYTES
     with pytest.raises(ConversationImportError, match="^" + re.escape("Message content exceeds 64 KiB.") + "$"):
-        sanitize_conversation_import(raw({"history": [{"role": "user", "content": "x" * (MAX_MESSAGE_BYTES + 1)}]}))
+        sanitize_conversation_import(raw({"history": [{"role": "user", "content": content}]}))
 
 
 def test_tag_count_and_value_count_over_limits_reject() -> None:
