@@ -1,5 +1,7 @@
 # Issue #2: Rotate and remove committed Groq credentials
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** OPEN — immediate containment blocker. Rotation/revocation and active-source cleanup unlock #18; the issue remains open until early #26B supplies one of the two explicit post-rewrite terminal outcomes in the final closure gate.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/2
 **Labels / priority:** `priority:P0`, `type:security`

@@ -1,5 +1,7 @@
 # Issue #10: Search BM25 over the full corpus
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** OPEN — current GUI code appears to load a broader document set, but independent full-corpus behavior and cache invalidation need proof.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/10
 **Labels / priority:** `priority:P1`, `type:perf`

@@ -1,5 +1,7 @@
 # Issue #16: Make fresh-clone setup runnable
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** OPEN — setup documentation and dependency inventory need a fresh-environment proof.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/16
 **Labels / priority:** `priority:P1`, `type:dx`

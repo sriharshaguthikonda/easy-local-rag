@@ -1,5 +1,7 @@
 # Issue #17: PostgreSQL/pgvector consolidation epic
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** Canonical epic; open.
 **GitHub:** [#17](https://github.com/sriharshaguthikonda/easy-local-rag/issues/17)
 **Labels / priority:** `priority:P0`, `type:enhancement`.
@@ -10,7 +12,7 @@
 
 This epic makes PostgreSQL/pgvector the single production data platform while retaining separate durable-memory and evidence/chunk domains. Raw chunks never enter durable `memories` and evidence is never injected into every prompt.
 
-`#2 containment -> #18 -> early #26A/#26B -> #2 final closure -> #19 -> #20A -> .memory #4 -> #20B -> .memory #5 -> #23 -> #21/#22 -> #27 -> #25 -> future GUI decision/implementation -> late #26C/#26D`
+`#2A -> #18 -> #26A -> separately approved #26B -> #2 closure -> #19A -> #19B -> #20A -> .memory #4 handoff -> #20B -> .memory #5 handoff -> #21A -> #22A -> #23 -> #21B -> #22B -> #24 specification -> #27 -> #25 -> GUI/no-GUI handoff -> #26C -> #26D`
 
 `#18` and early #26 hygiene may only preserve/sanitize and inventory; they must not delete branches, data, or Chroma rollback material. #21 stays blocked until the service contract from `.memory` #5/#23 is stable. #24/future GUI is deferred.
 
@@ -20,7 +22,7 @@ This epic makes PostgreSQL/pgvector the single production data platform while re
 2. **Export before destination:** #19 creates a read-only Chroma audit plus deterministic export manifest.
 3. **Database-neutral ingestion (#20A):** parsers, normalized records, deterministic chunk IDs, and package/reconciliation format run offline without database imports.
 4. **Evidence store and destination integration:** `.memory` #4 supplies the evidence/source schema/import API; #20B imports packages idempotently and handles lifecycle reconciliation.
-5. **Retrieval then clients:** `.memory` #5 supplies independent lexical/vector/metadata retrieval and hydration; #23 proves parity; #21/#22 consume that stable boundary; #27 validates grounding/citations; #25 controls cutover.
+5. **Retrieval then clients:** `.memory` #5 owns retrieval/search/hydration; #21A owns CLI/service ports, transport and errors, while #22A owns provider capabilities, status, requests, streaming and cancellation; #23 proves parity; #21B/#22B integrate; #24 specifies GUI; #27 owns answer/citation/abstention validation; #25 controls cutover.
 
 ## Affected interfaces, files, and artifacts
 

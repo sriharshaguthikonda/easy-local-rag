@@ -4,19 +4,96 @@ This index is the authoritative execution map for the 24 tracked issues:
 [#2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2) and
 [#5](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5) through
 [#27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27).
-GitHub remains authoritative for live issue state and discussion; the linked
-plan governs implementation scope, gates, verification, rollback, and commit
-boundaries. The status column reflects live state checked on 2026-07-18:
+Canonical issue files are acceptance contracts, not implementation evidence.
+Authority precedence is: **GitHub issue = live state and human decisions;
+canonical plan = scope, invariants, and closure gates; roadmap ledger =
+ordering and handoffs; JIT packet = implementation detail and cannot weaken a
+canonical plan.** The status column reflects live state checked on 2026-07-18:
 #14 is closed, while #6 has a merged GUI-lineage fix and remains open only until this canonical plan lands and receives reciprocal evidence links.
 
 ## Required execution order
 
-`#2 containment -> #18 -> early #26 (26A/26B) -> #2 final closure -> #19 -> #20A -> .memory #4 -> #20B -> .memory #5 -> #23 -> #21/#22 -> #27 -> #25 -> future GUI decision/implementation -> late #26 (26C/26D)`
+`#2A -> #18 -> #26A -> separately approved #26B -> #2 closure -> #19A -> #19B -> #20A -> .memory #4 handoff -> #20B -> .memory #5 handoff -> #21A -> #22A -> #23 -> #21B -> #22B -> #24 specification -> #27 -> #25 -> GUI/no-GUI handoff -> #26C -> #26D`
 
 #24 is a specification-only issue. It records the future GUI contract and
-salvage decisions; it does not authorize GUI implementation or alter the
-required order above. #17 is the parent epic. Legacy issues #5-#16 retain their
-own closure gates but must not bypass the consolidation sequence.
+salvage decisions; it does not authorize GUI implementation. #17 is an epic,
+not a packet. #6 is evidence-link closure only, #14 is a closed duplicate, and
+neither has a packet. Legacy issues #5-#16 retain their own closure gates but
+must not bypass the consolidation sequence.
+
+## JIT packet policy
+
+The packet directory is `docs/issues/jit/`; each filename names its canonical
+issue number and slice. A packet names one canonical issue/slice, the exact acceptance gates it consumes, its
+implementation boundary, verification commands, rollback boundary, and the
+required reciprocal evidence comment. Exactly one packet may be active.
+Its state machine is `planned -> active -> review -> verified -> closed`, or
+`active -> blocked-awaiting-user -> planned`. A blocked-awaiting-user #2 parks
+#2; work may then proceed through #9, then #15, without advancing #18 or #26.
+
+Workers use this lifecycle: `planner -> ChatGPT -> GSD -> corrector ->
+implementer -> reviewer -> fixer -> verifier -> orchestrator`. A packet may
+describe implementation detail only; it cannot relax a canonical scope,
+invariant, closure gate, approval, or rollback constraint.
+
+## Gate ledger and reciprocal handoffs
+
+| Gate producer | Pinned SHA / schema | Required evidence | Consumer | State |
+|---|---|---|---|---|
+| #2A containment | Not yet produced | revocation, active-tree scan, missing-key behavior | #18 | Not passed; docs are not proof. |
+| #18 inventory/proposed disposition | Not yet produced | immutable ref manifest, redacted scan, proposed dispositions | #26A/#26B, #19A | Not passed; docs are not proof. |
+| #26B separately approved rewrite | Not yet produced | all-ref post-rewrite evidence or accepted immutable-ref residual record | #2 closure, #19A | Not passed; docs are not proof. |
+| #19A audit / #19B export | Not yet produced | frozen snapshot, manifest, checksums, read-only proof | #20A, #25 | Not passed; docs are not proof. |
+| #20A | Not yet produced | deterministic package and identity verification | `.memory` #4 | Not passed; docs are not proof. |
+| `.memory` #4 | Not yet produced | reciprocal SHA, schema, package version, compatibility command/result | #20B | Not passed; docs are not proof. |
+| #20B | Not yet produced | idempotent import and reconciliation evidence | `.memory` #5 | Not passed; docs are not proof. |
+| `.memory` #5 | Not yet produced | reciprocal SHA, schema, package version, compatibility command/result | #21A, #22A, #23 | Not passed; docs are not proof. |
+| #21A / #22A | Not yet produced | pinned interface compatibility evidence | #23 | Not passed; docs are not proof. |
+| #23 | Not yet produced | parity and citation-resolution report | #21B, #22B, #27 | Not passed; docs are not proof. |
+| #21B / #22B | Not yet produced | CLI/service and provider integration evidence | #27 | Not passed; docs are not proof. |
+| #27 | Not yet produced | answer/citation/abstention verification | #25 | Not passed; docs are not proof. |
+| #25 GUI/no-GUI handoff | Not yet produced | immutable issue reference or dated no-GUI decision hash | #26C/#26D | Not passed; docs are not proof. |
+
+Every cross-repository handoff is reciprocal: producer and consumer comments
+must each name the other issue, producer commit SHA, schema/API version,
+package version, exact compatibility command and passing result, immutable
+evidence location, and consumer acceptance. Use this template:
+
+```text
+Producer: issue number; commit: exact 40-hex SHA; schema/API: released version; package: name@version
+Evidence: immutable path or URL; command: exact command; result: PASS or FAIL
+Consumer: issue number; accepted scope/gates: canonical gate names; rollback: named boundary
+```
+
+## Interface ownership
+
+- `.memory` #5 owns retrieval, search, hydration, and evidence IDs.
+- #21 owns CLI/service ports, transport, and categorized errors.
+- #22 owns provider capabilities, status, requests, streaming, and cancellation.
+- #27 owns answer, citation, and abstention validation.
+
+No owner may redefine another owner's contract; consumers adapt to the pinned
+producer contract through the reciprocal handoff.
+
+## Secondary-gate rule
+
+One packet may satisfy another issue only when every secondary gate is named
+before work, verification runs exactly for each named secondary gate, and a
+separate evidence comment is posted for each secondary issue. Independent
+approval, rollback, or scope means a separate packet.
+
+## Legacy unlock matrix
+
+| Issue | Maintained default | Retirement default | Closure route |
+|---|---|---|---|
+| #5 | guarded retrieval-backed model paths | remove every unguarded legacy model path | its guarded-context regression; #27 does not replace it |
+| #7 | lazy Chroma initialization | remove affected launch surface | fresh-path/import regression or verified removal |
+| #8 | configurable runtime paths | remove machine-specific utility | maintained-entry-point coverage or verified removal |
+| #10 | full-corpus BM25 | remove BM25 claim/control | full-corpus regression or verified replacement |
+| #11 | ingest/query model contract | remove uncovered embedding route | mismatch regression or verified removal |
+| #12 | session-owned TTS worker | remove maintained TTS control | worker-lifecycle regression or verified replacement |
+| #13 | shared tokenizer budget | remove uncovered Groq request builder | active-path budget regression or verified replacement |
+| #16 | 16A safe setup, then 16B supported dependency lock | remove unsupported entry point from docs | its named 16A/16B gate or verified retirement |
 
 ## Tracked issues
 
@@ -37,15 +114,15 @@ own closure gates but must not bypass the consolidation sequence.
 | #16 | P1 developer experience | Open — split into 16A/16B | [Setup and dependency docs](ISSUE-016-dx-setup-docs.md) | 16A adds secret-safe contributor setup early; 16B freezes supported entry points/dependencies only after #21/#22. | [Issue #16](https://github.com/sriharshaguthikonda/easy-local-rag/issues/16) |
 | #17 | P0 enhancement | Open — canonical parent epic | [PostgreSQL consolidation](ISSUE-017-postgres-consolidation.md) | Governs the full required execution order and the #18-#27 closure gates. | [Issue #17](https://github.com/sriharshaguthikonda/easy-local-rag/issues/17) |
 | #18 | P0 security | Open — early preservation gate | [Branch and PR inventory](ISSUE-018-branch-pr-inventory.md) | After #2 containment; before early #26, #19, and any branch/PR deletion. | [Issue #18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18) |
-| #19 | P0 todo | Open — first migration implementation | [Chroma audit and export](ISSUE-019-chroma-audit-export.md) | After #18, the early 26A/26B handoff, and #2 final closure; blocks #20A and all destination work. | [Issue #19](https://github.com/sriharshaguthikonda/easy-local-rag/issues/19) |
+| #19 | P0 todo | Open — first migration implementation | [Chroma audit and export](ISSUE-019-chroma-audit-export.md) | #19A audit then #19B export follow #18's inventory/proposed disposition, #26A, separately approved #26B evidence, and #2 closure. | [Issue #19](https://github.com/sriharshaguthikonda/easy-local-rag/issues/19) |
 | #20 | P1 enhancement | Open — split into A and B | [Deterministic ingestion](ISSUE-020-deterministic-ingestion.md) | #20A follows #19; `.memory` #4 follows #20A; #20B follows `.memory` #4. | [Issue #20](https://github.com/sriharshaguthikonda/easy-local-rag/issues/20) |
-| #21 | P1 enhancement | Open — blocked | [Thin CLI client](ISSUE-021-thin-cli-service-client.md) | After #20B, `.memory` #5, and #23; runs alongside #22 before #27. | [Issue #21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21) |
-| #22 | P1 security | Open — provider-policy gate | [Provider modes](ISSUE-022-provider-modes.md) | After #20B, `.memory` #5, #23, and the thin service boundary; before #27. | [Issue #22](https://github.com/sriharshaguthikonda/easy-local-rag/issues/22) |
-| #23 | P0 todo | Open — migration parity gate | [Retrieval parity](ISSUE-023-retrieval-parity.md) | After #19/#20A/`.memory` #4/#20B/`.memory` #5; before #21/#22. | [Issue #23](https://github.com/sriharshaguthikonda/easy-local-rag/issues/23) |
-| #24 | P2 enhancement | Open — specification only | [Thin GUI specification](ISSUE-024-thin-gui-spec.md) | Closes on the spec/PR #1 disposition before #25; #25 owns opening a later implementation issue after #22 and cutover pass. | [Issue #24](https://github.com/sriharshaguthikonda/easy-local-rag/issues/24) |
+| #21 | P1 enhancement | Open — blocked | [Thin CLI client](ISSUE-021-thin-cli-service-client.md) | #21A ports/transport/errors follows `.memory` #5; #21B integration follows #23, before #27. | [Issue #21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21) |
+| #22 | P1 security | Open — provider-policy gate | [Provider modes](ISSUE-022-provider-modes.md) | #22A capabilities/status/requests/streaming/cancellation follows `.memory` #5; #22B integration follows #23, before #27. | [Issue #22](https://github.com/sriharshaguthikonda/easy-local-rag/issues/22) |
+| #23 | P0 todo | Open — migration parity gate | [Retrieval parity](ISSUE-023-retrieval-parity.md) | After #21A and #22A; before #21B/#22B. | [Issue #23](https://github.com/sriharshaguthikonda/easy-local-rag/issues/23) |
+| #24 | P2 enhancement | Open — specification only | [Thin GUI specification](ISSUE-024-thin-gui-spec.md) | After #21B/#22B and before #27; #25 owns a later GUI/no-GUI handoff after cutover. | [Issue #24](https://github.com/sriharshaguthikonda/easy-local-rag/issues/24) |
 | #25 | P0 todo | Open — cutover/retirement gate | [Chroma retirement](ISSUE-025-chroma-retirement.md) | After #27 and all migration/client gates; final state creates the blocked GUI issue or records no-GUI, then unlocks late #26. | [Issue #25](https://github.com/sriharshaguthikonda/easy-local-rag/issues/25) |
 | #26 | P1 developer experience | Open — split early/late | [Repository cleanup](ISSUE-026-repo-cleanup.md) | 26A/26B follow #2 containment/#18 and close #2 before #19; 26C/26D consume #25's immutable GUI/no-GUI handoff. | [Issue #26](https://github.com/sriharshaguthikonda/easy-local-rag/issues/26) |
-| #27 | P0 security | Open — answer-safety gate | [Grounded answers](ISSUE-027-grounded-answers.md) | Extends #5/#13 and owns structured validation associated with closed duplicate #14; after #21/#22, before #25. | [Issue #27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27) |
+| #27 | P0 security | Open — answer-safety gate | [Grounded answers](ISSUE-027-grounded-answers.md) | Extends #5/#13 and owns structured validation associated with closed duplicate #14; after #24 and #21B/#22B, before #25. | [Issue #27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27) |
 
 ## Gate discipline
 

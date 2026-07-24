@@ -1,5 +1,7 @@
 # Issue #13: Use tiktoken for request budgeting
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** OPEN — `token_budget.py` and basic unit tests exist, but the legacy request path still uses its regex counter and must be routed to the helper.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/13
 **Labels / priority:** `priority:P1`, `type:bug`

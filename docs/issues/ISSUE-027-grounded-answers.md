@@ -1,5 +1,7 @@
 # Issue #27 Plan: Structured grounded answers and abstention
 
+[Roadmap ledger](../plans/README.md)
+
 Status: **Open — answer-safety contract**
 
 GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/27

@@ -1,5 +1,7 @@
 # Issue #18: Branch and PR inventory before cleanup
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** Open; early preservation/security gate.
 **GitHub:** [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18)
 **Parent epic:** #17.

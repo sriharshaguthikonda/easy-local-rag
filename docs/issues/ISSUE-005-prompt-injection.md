@@ -1,5 +1,7 @@
 # Issue #5: Treat retrieved documents as untrusted prompt context
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** OPEN — guard helper and Streamlit integration exist in the live tree, but every Groq/Ollama retrieval path must be audited before closure.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/5
 **Labels / priority:** `priority:P1`, `type:security`

@@ -1,5 +1,7 @@
 # Issue #7: Lazy-initialize Chroma for fresh installs
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** OPEN — live code has lazy call sites, but initialization semantics and fresh-path proof remain incomplete.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/7
 **Labels / priority:** `priority:P1`, `type:bug`
