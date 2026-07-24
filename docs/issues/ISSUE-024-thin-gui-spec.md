@@ -22,9 +22,8 @@ No existing GUI branch or PR #1 is a merge path.
 
 - [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18)
   supplies the branch/PR inventory and salvage decision.
-- #21, #22, #23, and #27 supply the planned record names and safety boundaries;
-  #24 may specify against their accepted plans and does not wait for their
-  implementations.
+- Completed immutable #21B and #22B handoffs are required before #24
+  specification begins; #27 remains its successor.
 
 This specification closes after its documentation and PR #1 disposition are
 recorded, after #21B/#22B and before #27. The #25 transition checklist owns opening the later GUI
