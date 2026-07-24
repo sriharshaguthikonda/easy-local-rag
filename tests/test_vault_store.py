@@ -35,11 +35,6 @@ def _valid_payload():
     return [_entry()]
 
 
-def _assert_preserved(vault, old, exc_info):
-    assert exc_info.value is exc_info.value
-    assert vault.read_bytes() == old
-
-
 def test_load_missing_and_zero_byte_return_empty(tmp_path):
     missing = tmp_path / "missing.json"
     empty = tmp_path / "empty.json"
