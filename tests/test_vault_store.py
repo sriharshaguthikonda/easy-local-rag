@@ -344,14 +344,35 @@ def test_builder_rerun_and_same_mtime_content_change(tmp_path, monkeypatch):
 
 
 def test_builder_import_is_side_effect_free(tmp_path):
-    fake_root = tmp_path / "fake"
-    fake = fake_root / "nltk"; fake.mkdir(parents=True)
-    (fake / "__init__.py").write_text("from . import data\ndef download(*a, **k): raise AssertionError('download')\n", encoding="utf-8")
-    (fake / "data.py").write_text("def load(*a, **k): raise AssertionError('load')\n", encoding="utf-8")
-    env = os.environ | {"PYTHONPATH": str(fake_root) + os.pathsep + str(Path.cwd()), "PYTHONDONTWRITEBYTECODE": "1"}
-    result = subprocess.run([sys.executable, "-c", "import Vault_json_creation_from_HTMLs"], cwd=tmp_path, env=env, capture_output=True, text=True)
+    sentinels = """
+import multiprocessing
+import os
+import sys
+import types
+def fail(name):
+    def raised(*args, **kwargs):
+        raise AssertionError(name)
+    return raised
+nltk = types.ModuleType('nltk')
+nltk.download = fail('nltk.download')
+nltk.data = types.SimpleNamespace(load=fail('nltk.data.load'))
+sys.modules['nltk'] = nltk
+multiprocessing.Pool = fail('multiprocessing.Pool')
+os.walk = fail('os.walk')
+import vault_store
+vault_store.atomic_write_json = fail('atomic_write_json')
+tkinter = types.ModuleType('tkinter')
+tkinter.Tk = fail('tkinter.Tk')
+filedialog = types.ModuleType('tkinter.filedialog')
+filedialog.askdirectory = fail('filedialog.askdirectory')
+sys.modules['tkinter'] = tkinter
+sys.modules['tkinter.filedialog'] = filedialog
+import Vault_json_creation_from_HTMLs
+"""
+    env = os.environ | {"PYTHONPATH": str(Path.cwd()), "PYTHONDONTWRITEBYTECODE": "1"}
+    result = subprocess.run([sys.executable, "-c", sentinels], cwd=tmp_path, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert not (tmp_path / "vault.json").exists()
+    assert not list(tmp_path.iterdir())
 
 
 def test_owned_writer_has_no_append_mode():
