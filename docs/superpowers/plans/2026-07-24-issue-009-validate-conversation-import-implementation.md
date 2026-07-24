@@ -34,7 +34,7 @@ No other Python callers were found by that exact `git grep` command. The replace
 | `tags` | dict with at most 100 string keys and **at most 100 string values total across all keys**; values are lists of strings; every key and value at most 256 characters | `tags` |
 | `favorites` | list of at most 100 dicts; all keys are strings, all values are scalar `str`, `int`, finite `float`, `bool`, or `null`; every string key/value at most 256 characters | `favorite_responses` |
 
-Absent `history`, `tags`, or `favorites` causes no write for that destination. JSON integers are limited to 4,096 decimal digits, excluding a leading minus. `bool` is accepted only as a favorite scalar. `NaN`, infinities, and numeric-overflow literals such as `1e999` reject globally, including under ignored `sources`. Every accepted container is newly built. A failed validation makes zero writes; import data never assigns `sources`, `current_sources`, `collection`, `chroma_client`, `source_filters`, TTS objects, underscore keys, or any runtime key. Importing these modules must not initialize Chroma or Streamlit in tests.
+Absent `history`, `tags`, or `favorites` causes no write for that destination. JSON integers are limited to 4,096 decimal digits, excluding a leading minus. Every decoded dict key and string value must strictly UTF-8 encode: lone surrogates reject globally, including under ignored `sources`. `bool` is accepted only as a favorite scalar. `NaN`, infinities, and numeric-overflow literals such as `1e999` reject globally, including under ignored `sources`. Every accepted container is newly built. A failed validation makes zero writes; import data never assigns `sources`, `current_sources`, `collection`, `chroma_client`, `source_filters`, TTS objects, underscore keys, or any runtime key. Importing these modules must not initialize Chroma or Streamlit in tests.
 
 Errors are deterministic: raw type/size, decode/JSON failure, non-object root, unsupported key, and field violations each raise `ConversationImportError` with the exact messages in the implementation below. The UI renders only `Conversation import rejected: {error}`. This makes rejected-input assertions stable and rollback a bounded reverse-order revert of the implementation and any accepted review-fix commits.
 
@@ -284,6 +284,44 @@ def test_uploaded_handler_over_cap_integer_makes_zero_writes() -> None:
     assert successes == []
 
 
+@pytest.mark.parametrize("template", [
+    b'{"history":[{"role":"user","content":"%s"}]}',
+    b'{"tags":{"%s":["ok"]}}',
+    b'{"tags":{"ok":["%s"]}}',
+    b'{"favorites":[{"%s":"ok"}]}',
+    b'{"favorites":[{"ok":"%s"}]}',
+    b'{"sources":{"nested":["%s"]}}',
+])
+@pytest.mark.parametrize("escaped", [b"\\ud800", b"\\udc00"])
+def test_lone_surrogates_reject_every_payload_string(template: bytes, escaped: bytes) -> None:
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Import strings must be valid UTF-8.") + "$"):
+        sanitize_conversation_import(template % escaped)
+
+
+@pytest.mark.parametrize("template", [
+    b'{"history":[{"role":"user","content":"%s"}]}',
+    b'{"tags":{"%s":["ok"]}}',
+    b'{"tags":{"ok":["%s"]}}',
+    b'{"favorites":[{"%s":"ok"}]}',
+    b'{"favorites":[{"ok":"%s"}]}',
+    b'{"sources":{"nested":["%s"]}}',
+])
+@pytest.mark.parametrize("escaped", [b"\\ud800", b"\\udc00"])
+def test_uploaded_lone_surrogates_make_zero_writes(template: bytes, escaped: bytes) -> None:
+    class UploadedFile:
+        def getvalue(self) -> bytes:
+            return template % escaped
+
+    state = sentinel_state()
+    state.assignments.clear()
+    warnings: list[str] = []
+    successes: list[str] = []
+    apply_uploaded_conversation(UploadedFile(), state, warnings.append, successes.append)
+    assert state.assignments == []
+    assert warnings == ["Conversation import rejected: Import strings must be valid UTF-8."]
+    assert successes == []
+
+
 def test_json_depth_limit_and_parser_recursion_reject() -> None:
     nested: object = None
     for _ in range(MAX_JSON_DEPTH - 1):
@@ -426,6 +464,26 @@ def _validate_json_depth(payload: object) -> None:
             stack.extend((child, depth + 1) for child in value if isinstance(child, (dict, list)))
 
 
+def _validate_strings(payload: object) -> None:
+    stack = [payload]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise ConversationImportError("Import strings must be valid UTF-8.") from error
+        elif isinstance(value, dict):
+            for key, child in value.items():
+                try:
+                    key.encode("utf-8")
+                except UnicodeEncodeError as error:
+                    raise ConversationImportError("Import strings must be valid UTF-8.") from error
+                stack.append(child)
+        elif isinstance(value, list):
+            stack.extend(value)
+
+
 def sanitize_conversation_import(raw: bytes) -> tuple[dict[str, object], list[str]]:
     if not isinstance(raw, bytes):
         raise ConversationImportError("Import must be raw bytes.")
@@ -445,6 +503,7 @@ def sanitize_conversation_import(raw: bytes) -> tuple[dict[str, object], list[st
     if not isinstance(payload, dict):
         raise ConversationImportError("Import root must be a JSON object.")
     _validate_json_depth(payload)
+    _validate_strings(payload)
     if any(not isinstance(key, str) or key.startswith("_") or key not in _TOP_LEVEL_KEYS for key in payload):
         raise ConversationImportError("Unsupported import key.")
     safe: dict[str, object] = {}
@@ -547,9 +606,11 @@ The lifecycle is exactly: **planner packet -> ChatGPT review -> GSD checker -> c
 
 ## ChatGPT review ledger
 
-ChatGPT reviewed docs head `8d3f8d1e344e607235c362d46a589d313c1ee28d` and returned **5 BLOCKERS**: (1) authority links, corrected by `28e3e469c8274a0e9197fe328570b53daaabbd1e`; (2) caller/wiring proof, corrected by `7ed0edfb0f7f918d82f99e6e151a59ee4b1517fd`; (3) multibyte UTF-8 boundary, corrected by `28e3e469c8274a0e9197fe328570b53daaabbd1e`; (4) deep JSON rejection, corrected by `7ed0edfb0f7f918d82f99e6e151a59ee4b1517fd`; and (5) per-head review evidence, corrected by `7ed0edfb0f7f918d82f99e6e151a59ee4b1517fd`. This is not a final PASS. A fresh review is required for the exact new head; its ledger entry must record reviewed SHA, actual PASS/BLOCKERS, numbered dispositions and correction SHAs, and re-review result. Never copy an older outcome forward.
+Historical ChatGPT review of `8d3f8d1e344e607235c362d46a589d313c1ee28d` returned **5 BLOCKERS**: (1) authority links, corrected by `28e3e469c8274a0e9197fe328570b53daaabbd1e`; (2) caller/wiring proof, corrected by `7ed0edfb0f7f918d82f99e6e151a59ee4b1517fd`; (3) multibyte UTF-8 boundary, corrected by `28e3e469c8274a0e9197fe328570b53daaabbd1e`; (4) deep JSON rejection, corrected by `7ed0edfb0f7f918d82f99e6e151a59ee4b1517fd`; and (5) per-head review evidence, corrected by `7ed0edfb0f7f918d82f99e6e151a59ee4b1517fd`.
 
-Before docs merge/implementation and again before code-PR merge/closure, the orchestrator confirms that the standing Q&A authorization—“you can merge” plus “continue one by one, commit by commit, don’t stop”—has not been revoked and that every named review/evidence gate has passed. If either condition fails: **STOP; do not proceed**. While that standing authorization remains current, no new per-packet reply is required.
+For head `99e0bc7`, [ChatGPT posted 2 BLOCKERS](https://github.com/sriharshaguthikonda/easy-local-rag/pull/31#issuecomment-5065717085); this commit corrects global surrogate rejection and public review gates. [Historical GSD PASS evidence](https://github.com/sriharshaguthikonda/easy-local-rag/pull/31#issuecomment-5065717191) is historical only, not a verdict for a later head. This is not a final PASS. A fresh review is required for the exact new head; its ledger entry must record reviewed SHA, actual PASS/BLOCKERS, numbered dispositions and correction SHAs, and re-review result. Never copy an older outcome forward or edit this packet after final PASS.
+
+PR comments, not Q&A, are verification authority for this gate. The [standing public authorization](https://github.com/sriharshaguthikonda/easy-local-rag/pull/31#issuecomment-5065716983) is the authorization record. Before docs merge/implementation and again before code-PR merge/closure, the orchestrator verifies current exact-head ChatGPT and GSD PR comment/review URLs that name the SHA, verdict, findings, and dispositions; it also verifies that no later public GitHub comment revokes authorization. If any evidence is missing, blocking, or revoked: **STOP; do not proceed**. Closure cites the comment URLs and IDs.
 
 After docs merge, the implementer writes the test file, records its red collection result, implements the locked code, and makes `fix(#9): validate conversation imports`. Then the code-review agent reviews that commit; each accepted finding gets an atomic `fix(#9): address accepted review finding` commit. The verifier evaluates the final code SHA. Closure evidence names the docs merge SHA, initial code SHA, every review-fix SHA (or `none accepted`), final verifier SHA, code PR URL, exact commands/outcomes, and the frozen/post-change comparison.
 
@@ -569,4 +630,4 @@ python -m pytest tests/test_conversation_import.py -q
 git diff --check
 ```
 
-Closure additionally records: exact 8 MiB pass; 8 MiB+1 pre-decode rejection; exact 64 KiB pass; 64 KiB+1 rejection; exact and one-over history/tag-key/tag-total-value/favorite/text/integer limits; exact-depth/depth-33/parser-recursion rejection; malformed UTF-8/JSON/root rejection; non-finite JSON rejection; AST uploader-wiring proof; sentinel identity; valid and invalid uploader calls with fresh state and separate warning/success recorders; and zero assignments after construction assignments are explicitly cleared. Roll back by reverting the initial code commit and any accepted review-fix commits in reverse order.
+Closure additionally records: exact 8 MiB pass; 8 MiB+1 pre-decode rejection; exact 64 KiB pass; 64 KiB+1 rejection; exact and one-over history/tag-key/tag-total-value/favorite/text/integer limits; high/low-surrogate rejection in every payload string location and uploader zero-write proof; exact-depth/depth-33/parser-recursion rejection; malformed UTF-8/JSON/root rejection; non-finite JSON rejection; AST uploader-wiring proof; sentinel identity; valid and invalid uploader calls with fresh state and separate warning/success recorders; and zero assignments after construction assignments are explicitly cleared. Roll back by reverting the initial code commit and any accepted review-fix commits in reverse order.
