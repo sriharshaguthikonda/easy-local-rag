@@ -34,7 +34,7 @@ No other Python callers were found by that exact `git grep` command. The replace
 
 Absent `history`, `tags`, or `favorites` causes no write for that destination. `bool` is accepted only as a favorite scalar. `NaN`, `Infinity`, and `-Infinity` reject. Every accepted container is newly built. A failed validation makes zero writes; import data never assigns `sources`, `current_sources`, `collection`, `chroma_client`, `source_filters`, TTS objects, underscore keys, or any runtime key. Importing these modules must not initialize Chroma or Streamlit in tests.
 
-Errors are deterministic: raw type/size, decode/JSON failure, non-object root, unsupported key, and field violations each raise `ConversationImportError` with the exact messages in the implementation below. The UI renders only `Conversation import rejected: {error}`. This makes rejected-input assertions stable and rollback one revert of the code commit.
+Errors are deterministic: raw type/size, decode/JSON failure, non-object root, unsupported key, and field violations each raise `ConversationImportError` with the exact messages in the implementation below. The UI renders only `Conversation import rejected: {error}`. This makes rejected-input assertions stable and rollback a bounded reverse-order revert of the implementation and any accepted review-fix commits.
 
 ## Frozen-base baseline — before edits
 
@@ -436,4 +436,4 @@ gh issue list --repo sriharshaguthikonda/easy-local-rag --state open
 git diff --check
 ```
 
-Closure additionally records: exact 8 MiB pass; 8 MiB+1 pre-decode rejection; exact 64 KiB pass; 64 KiB+1 rejection; exact and one-over history/tag-key/tag-total-value/favorite/text limits; malformed UTF-8/JSON/root rejection; finite-float rejection; sentinel identity; valid and invalid uploader calls with fresh state and separate warning/success recorders; and zero assignments after construction assignments are explicitly cleared. Roll back by reverting the initial code commit and any accepted review-fix commits in reverse order.
+Closure additionally records: exact 8 MiB pass; 8 MiB+1 pre-decode rejection; exact 64 KiB pass; 64 KiB+1 rejection; exact and one-over history/tag-key/tag-total-value/favorite/text limits; malformed UTF-8/JSON/root rejection; non-finite JSON rejection; sentinel identity; valid and invalid uploader calls with fresh state and separate warning/success recorders; and zero assignments after construction assignments are explicitly cleared. Roll back by reverting the initial code commit and any accepted review-fix commits in reverse order.
