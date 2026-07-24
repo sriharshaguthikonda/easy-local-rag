@@ -2,10 +2,11 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** OPEN — whitelist helper and basic tests exist; this is the next small closure after missing regression coverage.
+**Status:** PLANNING — maintained-path JIT packet is ready; no implementation is active.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/9
 **Labels / priority:** `priority:P0`, `type:security`
 **Dependencies:** Do not import #4-style source paths; source state is reconstructed from retrieval.
+**JIT packet:** [2026-07-24 Issue #9 implementation packet](../superpowers/plans/2026-07-24-issue-009-validate-conversation-import-implementation.md)
 
 ## Implementation slices
 
