@@ -240,18 +240,32 @@ def test_cleanup_failure_preserves_primary_and_records_residual_temp(tmp_path, m
 def test_atomic_temp_order_deterministic_bytes_parent_and_mode(tmp_path, monkeypatch):
     events = []
     vault = tmp_path / "nested" / "vault.json"
+    temp_parents = []
     original_dump, original_fsync, original_replace, original_chmod = vault_store.json.dump, vault_store.os.fsync, vault_store.os.replace, vault_store.os.chmod
+    original_temp = vault_store.tempfile.NamedTemporaryFile
     def recording_dump(*args, **kwargs): events.append("dump"); return original_dump(*args, **kwargs)
     def recording_fsync(*args): events.append("fsync"); return original_fsync(*args)
     def recording_replace(src, dst): events.append("replace"); return original_replace(src, dst)
     def recording_chmod(path, mode): events.append("chmod"); return original_chmod(path, mode)
+    class RecordingHandle:
+        def __init__(self, handle): self._handle = handle; temp_parents.append(Path(handle.name).parent)
+        @property
+        def name(self): return self._handle.name
+        def write(self, value): return self._handle.write(value)
+        def flush(self): events.append("flush"); return self._handle.flush()
+        def fileno(self): return self._handle.fileno()
+        def close(self): events.append("close"); return self._handle.close()
     monkeypatch.setattr(vault_store.json, "dump", recording_dump); monkeypatch.setattr(vault_store.os, "fsync", recording_fsync); monkeypatch.setattr(vault_store.os, "replace", recording_replace); monkeypatch.setattr(vault_store.os, "chmod", recording_chmod)
+    monkeypatch.setattr(vault_store.tempfile, "NamedTemporaryFile", lambda *args, **kwargs: RecordingHandle(original_temp(*args, **kwargs)))
     atomic_write_json(vault, [_entry("é.html")])
-    assert vault.parent.exists() and events == ["dump", "fsync", "replace"]
-    assert vault.read_bytes().endswith(b"\n") and "é.html".encode() in vault.read_bytes()
+    expected = (json.dumps([_entry("é.html")], ensure_ascii=False, allow_nan=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    assert vault.parent.exists() and temp_parents == [vault.parent]
+    assert events == ["dump", "flush", "fsync", "close", "replace"]
+    assert vault.read_bytes() == expected and b"\r\n" not in expected
     original_mode = stat.S_IMODE(vault.stat().st_mode)
     events.clear(); atomic_write_json(vault, [_entry("é.html")])
-    assert events == ["dump", "fsync", "chmod", "replace"]
+    assert temp_parents == [vault.parent, vault.parent]
+    assert events == ["dump", "flush", "fsync", "close", "chmod", "replace"]
     assert stat.S_IMODE(vault.stat().st_mode) == original_mode
 
 
