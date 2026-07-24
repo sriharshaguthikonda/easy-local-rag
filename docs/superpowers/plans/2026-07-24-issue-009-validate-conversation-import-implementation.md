@@ -264,7 +264,7 @@ def test_json_depth_limit_and_parser_recursion_reject() -> None:
 
 def test_streamlit_uploader_wiring_ast() -> None:
     module = ast.parse(Path("streamlit_app.py").read_text(encoding="utf-8"))
-    imports = [node for node in module.body if isinstance(node, ast.ImportFrom) and node.module == "conversation_import"]
+    imports = [node for node in ast.walk(module) if isinstance(node, ast.ImportFrom) and node.module == "conversation_import"]
     assert len(imports) == 1
     assert [(alias.name, alias.asname) for alias in imports[0].names] == [("apply_uploaded_conversation", None)]
     upload_ifs = [node for node in ast.walk(module) if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "uploaded_file"]
@@ -498,7 +498,7 @@ The lifecycle is exactly: **planner packet -> ChatGPT review -> GSD checker -> c
 
 ## ChatGPT review ledger
 
-ChatGPT reviewed docs head `8d3f8d1e344e607235c362d46a589d313c1ee28d` and returned **5 BLOCKERS**: (1) authority links, corrected by `28e3e469c8274a0e9197fe328570b53daaabbd1e`; (2) caller/wiring proof, corrected by this commit; (3) multibyte UTF-8 boundary, corrected by `28e3e469c8274a0e9197fe328570b53daaabbd1e`; (4) deep JSON rejection, corrected by this commit; and (5) per-head review evidence, corrected by this ledger. This is not a final PASS. A fresh review is required for the exact new head; its ledger entry must record reviewed SHA, actual PASS/BLOCKERS, numbered dispositions and correction SHAs, and re-review result. Never copy an older outcome forward.
+ChatGPT reviewed docs head `8d3f8d1e344e607235c362d46a589d313c1ee28d` and returned **5 BLOCKERS**: (1) authority links, corrected by `28e3e469c8274a0e9197fe328570b53daaabbd1e`; (2) caller/wiring proof, corrected by `7ed0edfb0f7f918d82f99e6e151a59ee4b1517fd`; (3) multibyte UTF-8 boundary, corrected by `28e3e469c8274a0e9197fe328570b53daaabbd1e`; (4) deep JSON rejection, corrected by `7ed0edfb0f7f918d82f99e6e151a59ee4b1517fd`; and (5) per-head review evidence, corrected by `7ed0edfb0f7f918d82f99e6e151a59ee4b1517fd`. This is not a final PASS. A fresh review is required for the exact new head; its ledger entry must record reviewed SHA, actual PASS/BLOCKERS, numbered dispositions and correction SHAs, and re-review result. Never copy an older outcome forward.
 
 Before docs merge/implementation and again before code-PR merge/closure, the orchestrator confirms that the standing Q&A authorization—“you can merge” plus “continue one by one, commit by commit, don’t stop”—has not been revoked and that every named review/evidence gate has passed. If either condition fails: **STOP; do not proceed**. While that standing authorization remains current, no new per-packet reply is required.
 
