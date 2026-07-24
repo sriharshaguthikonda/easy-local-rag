@@ -6,6 +6,7 @@ import os
 import stat
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -140,15 +141,26 @@ def test_schema_backward_compatibility_and_invalid_in_memory_data(tmp_path):
     assert not (tmp_path / "missing").exists()
 
 
-def test_corrupt_input_backup_then_valid_rebuild_is_unique_and_byte_exact(tmp_path):
+def test_corrupt_input_backup_then_valid_rebuild_is_unique_and_byte_exact(tmp_path, monkeypatch):
     vault = tmp_path / "vault.json"
-    collision = tmp_path / "vault.json.invalid.20000101T000000000000Z.1.bak"
+    timestamp = "20000101T000000000000Z"
+    class FixedDatetime:
+        @staticmethod
+        def now(tz): return datetime(2000, 1, 1, tzinfo=timezone.utc)
+    collision = tmp_path / f"vault.json.invalid.{timestamp}.77.1.bak"
     collision.write_bytes(b"collision")
-    for bad in (b"\xff", b"{bad", b'{"not":"a-list"}'):
+    monkeypatch.setattr(vault_store, "datetime", FixedDatetime)
+    monkeypatch.setattr(vault_store.os, "getpid", lambda: 77)
+    expected_names = [
+        f"vault.json.invalid.{timestamp}.77.bak",
+        f"vault.json.invalid.{timestamp}.77.2.bak",
+        f"vault.json.invalid.{timestamp}.77.3.bak",
+    ]
+    for bad, expected_name in zip((b"\xff", b"{bad", b'{"not":"a-list"}'), expected_names):
         vault.write_bytes(bad)
         assert load_vault(vault) == []
-        backups = [p for p in tmp_path.glob("vault.json.invalid.*.bak") if p != collision]
-        assert any(p.read_bytes() == bad for p in backups)
+        backup = tmp_path / expected_name
+        assert backup.exists() and backup.read_bytes() == bad
     data = _valid_payload()
     atomic_write_json(vault, data)
     assert load_vault(vault) == data
