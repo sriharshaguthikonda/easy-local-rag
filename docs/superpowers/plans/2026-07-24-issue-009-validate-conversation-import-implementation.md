@@ -15,18 +15,18 @@
 Derived at `daecce8a27f50da39284f5519d77b835905209f6` with this exact command:
 
 ```powershell
-git grep -n -E "sanitize_conversation_import|validate_message" daecce8a27f50da39284f5519d77b835905209f6 -- '*.py'
+git grep -n -E "conversation_import|sanitize_conversation_import|validate_message|Import Conversation|uploaded_file" daecce8a27f50da39284f5519d77b835905209f6 -- '*.py'
 ```
 
-- `conversation_import.py:9` defines legacy `validate_message(message: Any)`; `conversation_import.py:26` defines `sanitize_conversation_import(data: Any)` and calls the former internally.
-- `streamlit_app.py:72` imports `sanitize_conversation_import`; `streamlit_app.py:626` invokes it after `json.loads`.
+- `conversation_import.py:9` defines legacy `validate_message(message: Any)`; `conversation_import.py:26` defines `sanitize_conversation_import(data: Any)`, whose internal call is at line 42.
+- `streamlit_app.py:72` imports `sanitize_conversation_import`; its export/import UI begins at line 607, creates `uploaded_file` at line 622, checks it at line 623, uses `json.loads(uploaded_file.read())` at line 625, then invokes the sanitizer at line 626.
 - `tests/test_conversation_import.py:1` imports both names, and its tests at lines 4 and 10 are the only external `validate_message` callers.
 
 No other Python callers were found by that exact `git grep` command. The replacement retires `validate_message`, replaces its only test caller by replacing the whole test file, and changes the sole UI call to the byte-only adapter.
 
 ## Locked behavior
 
-`sanitize_conversation_import` accepts **raw `bytes` only**. It rejects more than 8 MiB (`8 * 1024 * 1024`) before UTF-8 decode or JSON parse, then accepts only strict UTF-8 JSON whose root is an object. The only top-level keys are `history`, `tags`, `favorites`, and legacy `sources`. `sources` has any JSON value, is ignored, and produces exactly `Ignored legacy export-only key: sources.` once. Every other key, including an underscore-prefixed key, rejects the entire upload.
+`sanitize_conversation_import` accepts **raw `bytes` only**. It rejects more than 8 MiB (`8 * 1024 * 1024`) before UTF-8 decode or JSON parse, then accepts only strict UTF-8 JSON whose root is an object. JSON container depth is at most 32, counting the root object as depth 1 and every nested dict/list as one additional depth. The only top-level keys are `history`, `tags`, `favorites`, and legacy `sources`. `sources` has any JSON value, is ignored, and produces exactly `Ignored legacy export-only key: sources.` once. Every other key, including an underscore-prefixed key, rejects the entire upload.
 
 | Field | Accepted shape and limits | Destination |
 |---|---|---|
@@ -56,13 +56,15 @@ Do not assume PyQt5 or closed-#14 failures: record them only when observed. Afte
 Replace `tests/test_conversation_import.py` with this complete file:
 
 ```python
+import ast
 import json
 import re
+from pathlib import Path
 
 import pytest
 
 from conversation_import import (
-    MAX_FAVORITES, MAX_HISTORY_ENTRIES, MAX_IMPORT_BYTES,
+    MAX_FAVORITES, MAX_HISTORY_ENTRIES, MAX_IMPORT_BYTES, MAX_JSON_DEPTH,
     MAX_MESSAGE_BYTES, MAX_TAGS, MAX_TEXT_CHARS, ConversationImportError,
     apply_conversation_import, apply_uploaded_conversation,
     sanitize_conversation_import,
@@ -248,6 +250,35 @@ def test_finite_favorite_float_passes() -> None:
     assert safe == {"favorites": [{"score": 1.25}]}
 
 
+def test_json_depth_limit_and_parser_recursion_reject() -> None:
+    nested: object = None
+    for _ in range(MAX_JSON_DEPTH - 1):
+        nested = {"nested": nested}
+    assert sanitize_conversation_import(raw({"sources": nested})) == ({}, ["Ignored legacy export-only key: sources."])
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Import nesting exceeds 32 containers.") + "$"):
+        sanitize_conversation_import(raw({"sources": {"nested": nested}}))
+    very_deep = b'{"sources":' + b"[" * 2_000 + b"null" + b"]" * 2_000 + b"}"
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Import nesting exceeds 32 containers.") + "$"):
+        sanitize_conversation_import(very_deep)
+
+
+def test_streamlit_uploader_wiring_ast() -> None:
+    module = ast.parse(Path("streamlit_app.py").read_text(encoding="utf-8"))
+    imports = [node for node in module.body if isinstance(node, ast.ImportFrom) and node.module == "conversation_import"]
+    assert len(imports) == 1
+    assert [(alias.name, alias.asname) for alias in imports[0].names] == [("apply_uploaded_conversation", None)]
+    upload_ifs = [node for node in ast.walk(module) if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "uploaded_file"]
+    assert len(upload_ifs) == 1
+    body = upload_ifs[0].body
+    assert len(body) == 1 and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Call)
+    call = body[0].value
+    assert isinstance(call.func, ast.Name) and call.func.id == "apply_uploaded_conversation"
+    assert call.keywords == []
+    assert len(call.args) == 4
+    assert isinstance(call.args[0], ast.Name) and call.args[0].id == "uploaded_file"
+    assert [ast.unparse(arg) for arg in call.args[1:]] == ["st.session_state", "st.warning", "st.success"]
+
+
 def test_uploaded_handler_reads_bytes_applies_valid_data_and_warns_rejection() -> None:
     class UploadedFile:
         def __init__(self, raw_bytes: bytes) -> None:
@@ -293,7 +324,7 @@ python -m pytest tests/test_conversation_import.py -q
 
 Record literal outcome: exit code `2`, collection `ImportError: cannot import name 'MAX_FAVORITES' from 'conversation_import'`; frozen code lacks the new constants, `ConversationImportError`, and both apply helpers. Record the actual command output alongside this expected red result.
 
-## Locked implementation (copy/adapt only if frozen file formatting requires it)
+## Locked implementation
 
 Replace `conversation_import.py` with:
 
@@ -304,6 +335,7 @@ from collections.abc import Callable, MutableMapping
 from typing import Any
 
 MAX_IMPORT_BYTES = 8 * 1024 * 1024
+MAX_JSON_DEPTH = 32
 MAX_HISTORY_ENTRIES = 1_000
 MAX_MESSAGE_BYTES = 64 * 1024
 MAX_TAGS = 100
@@ -334,6 +366,18 @@ def _parse_finite_float(value: str) -> float:
     return parsed
 
 
+def _validate_json_depth(payload: object) -> None:
+    stack: list[tuple[object, int]] = [(payload, 1)]
+    while stack:
+        value, depth = stack.pop()
+        if depth > MAX_JSON_DEPTH:
+            raise ConversationImportError("Import nesting exceeds 32 containers.")
+        if isinstance(value, dict):
+            stack.extend((child, depth + 1) for child in value.values() if isinstance(child, (dict, list)))
+        elif isinstance(value, list):
+            stack.extend((child, depth + 1) for child in value if isinstance(child, (dict, list)))
+
+
 def sanitize_conversation_import(raw: bytes) -> tuple[dict[str, object], list[str]]:
     if not isinstance(raw, bytes):
         raise ConversationImportError("Import must be raw bytes.")
@@ -345,10 +389,13 @@ def sanitize_conversation_import(raw: bytes) -> tuple[dict[str, object], list[st
             parse_constant=_reject_non_finite,
             parse_float=_parse_finite_float,
         )
+    except RecursionError as error:
+        raise ConversationImportError("Import nesting exceeds 32 containers.") from error
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ConversationImportError("Import must be UTF-8 JSON bytes.") from error
     if not isinstance(payload, dict):
         raise ConversationImportError("Import root must be a JSON object.")
+    _validate_json_depth(payload)
     if any(not isinstance(key, str) or key.startswith("_") or key not in _TOP_LEVEL_KEYS for key in payload):
         raise ConversationImportError("Unsupported import key.")
     safe: dict[str, object] = {}
@@ -436,7 +483,7 @@ def apply_uploaded_conversation(uploaded_file: Any, session_state: MutableMappin
     show_success("Conversation import complete.")
 ```
 
-In `streamlit_app.py`, replace the existing `sanitize_conversation_import` import with `from conversation_import import apply_uploaded_conversation`. Replace only the uploader `if uploaded_file:` body with:
+In `streamlit_app.py`, replace the existing `sanitize_conversation_import` import with `from conversation_import import apply_uploaded_conversation`. Replace the uploader `if uploaded_file:` body exactly with:
 
 ```python
 if uploaded_file:
@@ -447,7 +494,11 @@ There must be no `json.loads(uploaded_file.read())`, broad exception handler, or
 
 ## TDD, review, and closure lifecycle
 
-The lifecycle is exactly: **planner packet -> ChatGPT review -> GSD checker -> corrector -> docs merge -> implementer initial TDD commit -> code-review agent -> accepted-finding fixer commit(s) -> verifier -> orchestrator PR merge/evidence/close**. ChatGPT returned no review content after repeated waits; record that fact and do not invent a finding. No review is required before code exists; code review occurs after the initial implementation commit.
+The lifecycle is exactly: **planner packet -> ChatGPT review -> GSD checker -> corrector -> docs merge -> implementer initial TDD commit -> code-review agent -> accepted-finding fixer commit(s) -> verifier -> orchestrator PR merge/evidence/close**. No review is required before code exists; code review occurs after the initial implementation commit.
+
+## ChatGPT review ledger
+
+ChatGPT reviewed docs head `8d3f8d1e344e607235c362d46a589d313c1ee28d` and returned **5 BLOCKERS**: (1) authority links, corrected by `28e3e469c8274a0e9197fe328570b53daaabbd1e`; (2) caller/wiring proof, corrected by this commit; (3) multibyte UTF-8 boundary, corrected by `28e3e469c8274a0e9197fe328570b53daaabbd1e`; (4) deep JSON rejection, corrected by this commit; and (5) per-head review evidence, corrected by this ledger. This is not a final PASS. A fresh review is required for the exact new head; its ledger entry must record reviewed SHA, actual PASS/BLOCKERS, numbered dispositions and correction SHAs, and re-review result. Never copy an older outcome forward.
 
 Before docs merge/implementation and again before code-PR merge/closure, the orchestrator confirms that the standing Q&A authorization—“you can merge” plus “continue one by one, commit by commit, don’t stop”—has not been revoked and that every named review/evidence gate has passed. If either condition fails: **STOP; do not proceed**. While that standing authorization remains current, no new per-packet reply is required.
 
@@ -469,4 +520,4 @@ python -m pytest tests/test_conversation_import.py -q
 git diff --check
 ```
 
-Closure additionally records: exact 8 MiB pass; 8 MiB+1 pre-decode rejection; exact 64 KiB pass; 64 KiB+1 rejection; exact and one-over history/tag-key/tag-total-value/favorite/text limits; malformed UTF-8/JSON/root rejection; non-finite JSON rejection; sentinel identity; valid and invalid uploader calls with fresh state and separate warning/success recorders; and zero assignments after construction assignments are explicitly cleared. Roll back by reverting the initial code commit and any accepted review-fix commits in reverse order.
+Closure additionally records: exact 8 MiB pass; 8 MiB+1 pre-decode rejection; exact 64 KiB pass; 64 KiB+1 rejection; exact and one-over history/tag-key/tag-total-value/favorite/text limits; exact-depth/depth-33/parser-recursion rejection; malformed UTF-8/JSON/root rejection; non-finite JSON rejection; AST uploader-wiring proof; sentinel identity; valid and invalid uploader calls with fresh state and separate warning/success recorders; and zero assignments after construction assignments are explicitly cleared. Roll back by reverting the initial code commit and any accepted review-fix commits in reverse order.
