@@ -1,97 +1,58 @@
-# Issue #9 Conversation Import Validation Implementation Plan
+# Issue #9 Conversation Import Validation Implementation Packet
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Goal:** validate legacy conversation uploads before any Streamlit session write.
 
-**Goal:** Accept only bounded, validated legacy conversation data without allowing an imported file to replace trusted Streamlit runtime state.
+**Docs packet lineage:** `codex/issue-009-plan`, based on `8497efca7aa021bef3757c6b87ba8f4a7824fbc5` (packet commit `178d188e34adb49c728207c712e6e259bcd51d9c`).
 
-**Architecture:** `conversation_import.py` is the pure byte-to-whitelisted-state boundary and performs all validation before it mutates a supplied `MutableMapping`. `streamlit_app.py` reads upload bytes, delegates once to that boundary, and renders controlled warnings; it never parses import JSON or writes imported state itself.
+**Code lineage:** create `codex/fix-issue-9` directly at frozen GUI base `daecce8a27f50da39284f5519d77b835905209f6`. It targets `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`; never merge or rebase main/docs into this lineage.
 
-**Tech Stack:** Python standard library (`json`, `typing`), Streamlit, pytest.
+**Owned code files:** `conversation_import.py`, `streamlit_app.py`, `tests/test_conversation_import.py`. Preserve the exporter at `streamlit_app.py:609-620` unchanged.
 
-## Global Constraints
+## Locked behavior
 
-- Mode is maintained path; retain the Streamlit conversation export/import feature.
-- Add no dependency and change no exported JSON schema.
-- Create `codex/fix-issue-9` directly from frozen GUI SHA `daecce8a27f50da39284f5519d77b835905209f6`; do not merge or rebase main or docs lineage into that GUI lineage.
-- This packet is on docs branch `codex/issue-009-plan` at docs base `8497efca7aa021bef3757c6b87ba8f4a7824fbc5`.
-- The sole code-owned files are `conversation_import.py`, `streamlit_app.py`, and `tests/test_conversation_import.py`.
-- Reject an invalid import atomically: no assignment to the supplied mapping before full validation succeeds.
-- Never assign `sources`, `current_sources`, `collection`, `chroma_client`, `source_filters`, TTS objects, underscore-prefixed keys, or any other runtime key from import data.
-- Raw bytes are limited to 8 MiB before UTF-8 decoding or JSON parsing; history is limited to 1,000 entries; every message content is limited to 64 KiB measured as UTF-8 bytes; tags and favorites are each limited to 100 entries; every tag/favorite string is limited to 256 characters.
-- Roles are exactly `system`, `user`, and `assistant`.
+`sanitize_conversation_import` accepts **raw `bytes` only**. It rejects more than 8 MiB (`8 * 1024 * 1024`) before UTF-8 decode or JSON parse, then accepts only strict UTF-8 JSON whose root is an object. The only top-level keys are `history`, `tags`, `favorites`, and legacy `sources`. `sources` has any JSON value, is ignored, and produces exactly `Ignored legacy export-only key: sources.` once. Every other key, including an underscore-prefixed key, rejects the entire upload.
 
----
-
-## Authority, lineage, and caller map
-
-- [GitHub Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9)
-- [Stable main canonical plan](../../issues/ISSUE-009-validate-conversation-import.md)
-- [Stable main roadmap ledger](../../issues/README.md)
-- Docs packet branch/base: `codex/issue-009-plan` / `8497efca7aa021bef3757c6b87ba8f4a7824fbc5`.
-- Code branch/base: `codex/fix-issue-9` / `daecce8a27f50da39284f5519d77b835905209f6`, branched directly from `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`.
-- Packet/docs commit: `docs(#9): add conversation import JIT packet`.
-
-| Current GUI location at frozen lineage | Current behavior | Code-worker action |
+| Field | Accepted shape and limits | Destination |
 |---|---|---|
-| `conversation_import.py:4-87`, `validate_message`, `sanitize_conversation_import` | Drops individual invalid values and accepts parsed objects. | Replace with byte validation plus an atomic application helper. |
-| `streamlit_app.py:72`, import of `sanitize_conversation_import` | Imports only the permissive sanitizer. | Import the atomic upload adapter. |
-| `streamlit_app.py:614-641`, `main` conversation uploader | Calls `json.loads(uploaded_file.read())`, then directly assigns three session values. | Read bytes once, delegate, and show controlled warnings. |
-| `streamlit_app.py:484-492`, `main` tag/favorite controls | Tags are `dict[str, list[str]]`; favorites append the current source snapshot dict. | Preserve these legacy shapes; import never restores the separate `sources` export key. |
-| `streamlit_app.py:119-145` module session initialization | Owns collection, Chroma client, current sources, filters, and TTS runtime state. | Preserve their identity across every import result. |
-| `tests/test_conversation_import.py:1-38` | Covers permissive sanitization only. | Replace with direct boundary and executable uploader-handler tests. |
+| `history` | list of at most 1,000 dicts, exactly `role`/`content`; roles only `system`, `user`, `assistant`; string content at most 64 KiB measured in UTF-8 bytes | `conversation_history` |
+| `tags` | dict with at most 100 string keys and **at most 100 string values total across all keys**; values are lists of strings; every key and value at most 256 characters | `tags` |
+| `favorites` | list of at most 100 dicts; all keys are strings, all values are scalar `str`, `int`, finite `float`, `bool`, or `null`; every string key/value at most 256 characters | `favorite_responses` |
 
-## Locked import contract
+Absent `history`, `tags`, or `favorites` causes no write for that destination. `bool` is accepted only as a favorite scalar. `NaN`, `Infinity`, and `-Infinity` reject. Every accepted container is newly built. A failed validation makes zero writes; import data never assigns `sources`, `current_sources`, `collection`, `chroma_client`, `source_filters`, TTS objects, underscore keys, or any runtime key. Importing these modules must not initialize Chroma or Streamlit in tests.
 
-The pre-existing exporter in `streamlit_app.py:609-620` writes the top-level keys `history`, `sources`, `tags`, and `favorites`. `sources` serializes `st.session_state.current_sources`; it is an export-only legacy key. A valid legacy file containing it is accepted with exactly one warning, `Ignored legacy export-only key: sources.`, and it is never returned or assigned. The maintained data mapping is `history` to `conversation_history`, `tags` to `tags`, and `favorites` to `favorite_responses`.
+Errors are deterministic: raw type/size, decode/JSON failure, non-object root, unsupported key, and field violations each raise `ConversationImportError` with the exact messages in the implementation below. The UI renders only `Conversation import rejected: {error}`. This makes rejected-input assertions stable and rollback one revert of the code commit.
 
-| Input key | Exact accepted legacy shape | Output mapping key | Rejection rule |
-|---|---|---|---|
-| `history` | `list[dict]`; each dict has exactly `role` and `content`; role is `system`, `user`, or `assistant`; content is `str`. | `conversation_history` | More than 1,000 entries, non-object entry, extra/missing key, unsupported role, non-string content, or content over 65,536 UTF-8 bytes rejects the whole file. |
-| `tags` | `dict[str, list[str]]`, matching `tags.split(",")` at `streamlit_app.py:487`. | `tags` | More than 100 keys, more than 100 total strings, non-string key/value, or text over 256 characters rejects the whole file. |
-| `favorites` | `list[dict[str, str | int | float | bool | None]]`, matching source snapshot dictionaries appended at `streamlit_app.py:492`; only shallow scalar values are carried. | `favorite_responses` | More than 100 dictionaries, non-string key, nested container, or string key/value over 256 characters rejects the whole file. |
-| `sources` | Any JSON value in a legacy export. | none | Omit it and emit the single fixed warning above. |
-| absent `history`, `tags`, or `favorites` | absent | none | Do not overwrite that session key. |
-| any other key | none | none | Reject the whole file, including underscore-prefixed and runtime-object keys. |
+## Frozen-base baseline — before edits
 
-The top-level object must use string keys. Every accepted list and dictionary is rebuilt into fresh containers; `bool` is accepted only as a favorite scalar, not as a role, count, string, or message content. JSON decoding errors, invalid UTF-8, oversized raw bytes, bad root type, and every contract violation raise `ConversationImportError`. No warning is a partial-import path.
+In the clean code worktree at `daecce8a27f50da39284f5519d77b835905209f6`, run and record literal command, exit code, test IDs for every failure, and full summary line:
 
-## Task 1: Prove the pure atomic import boundary
-
-**Files:**
-
-- Modify: `conversation_import.py:1-87`
-- Modify: `tests/test_conversation_import.py:1-38`
-
-**Interfaces:**
-
-```python
-from collections.abc import Callable, MutableMapping
-from typing import Any
-
-MAX_IMPORT_BYTES = 8 * 1024 * 1024
-MAX_HISTORY_ENTRIES = 1_000
-MAX_MESSAGE_BYTES = 64 * 1024
-MAX_TAGS = 100
-MAX_FAVORITES = 100
-MAX_TEXT_CHARS = 256
-
-class ConversationImportError(ValueError):
-    pass
-
-def sanitize_conversation_import(raw: bytes) -> tuple[dict[str, object], list[str]]:
-    pass
-
-def apply_conversation_import(
-    session_state: MutableMapping[str, object], raw: bytes
-) -> list[str]:
-    pass
+```powershell
+$env:PYTHONDONTWRITEBYTECODE = '1'
+python -m pytest tests -q
+python -m py_compile streamlit_app.py rag_gui.py GUI_direct_search.py
+python -m py_compile conversation_import.py
+gh issue list --repo sriharshaguthikonda/easy-local-rag --state open
 ```
 
-- [ ] **Step 1: Write the failing atomic-boundary tests**
+Do not assume PyQt5 or closed-#14 failures: record them only when observed. After the implementation, run the same commands and capture the same fields. The new focused test IDs must pass; every pre-existing failure must have the same test ID and classification, and no new failure is allowed. The `gh` output is saved as live-state evidence, not guessed from this packet.
 
-Replace `tests/test_conversation_import.py` with tests importing `json`, `pytest`, and every interface above. Define this exact recording mapping and sentinel factory:
+## Exact test file (write first)
+
+Replace `tests/test_conversation_import.py` with this complete file:
 
 ```python
+import json
+
+import pytest
+
+from conversation_import import (
+    MAX_FAVORITES, MAX_HISTORY_ENTRIES, MAX_IMPORT_BYTES,
+    MAX_MESSAGE_BYTES, MAX_TAGS, MAX_TEXT_CHARS, ConversationImportError,
+    apply_conversation_import, apply_uploaded_conversation,
+    sanitize_conversation_import,
+)
+
+
 class RecordingState(dict[str, object]):
     def __init__(self, initial: dict[str, object]) -> None:
         super().__init__(initial)
@@ -101,106 +62,293 @@ class RecordingState(dict[str, object]):
         self.assignments.append(key)
         super().__setitem__(key, value)
 
+
 def sentinel_state() -> RecordingState:
-    return RecordingState(
-        {
-            "collection": object(),
-            "chroma_client": object(),
-            "current_sources": object(),
-            "source_filters": object(),
-            "tts_queue": object(),
-            "tts_worker": object(),
-            "conversation_history": ["old-history"],
-            "tags": {"old": ["tag"]},
-            "favorite_responses": [{"old": "favorite"}],
-        }
-    )
-```
+    return RecordingState({
+        "collection": object(), "chroma_client": object(),
+        "current_sources": object(), "source_filters": object(),
+        "tts_queue": object(), "tts_worker": object(),
+        "conversation_history": ["old-history"], "tags": {"old": ["tag"]},
+        "favorite_responses": [{"old": "favorite"}],
+    })
 
-Add `test_valid_import_assigns_only_conversation_fields_and_preserves_runtime_sentinels`. It captures each runtime sentinel by identity, calls `apply_conversation_import` with `json.dumps` encoded UTF-8 data containing one valid history message, `{"notes.md": ["keep"]}` tags, and `[{"file_name": "notes.md", "score": 0.9}]` favorites, then asserts:
 
-```python
-assert warnings == []
-assert state.assignments == [
-    "conversation_history",
-    "tags",
-    "favorite_responses",
-]
-assert state["collection"] is collection
-assert state["chroma_client"] is chroma_client
-assert state["current_sources"] is current_sources
-assert state["source_filters"] is source_filters
-assert state["tts_queue"] is tts_queue
-assert state["tts_worker"] is tts_worker
-```
+def raw(payload: object) -> bytes:
+    return json.dumps(payload, allow_nan=False).encode("utf-8")
 
-Add `test_legacy_sources_are_warned_and_never_applied` with this payload and assertions:
 
-```python
-payload = {
-    "history": [{"role": "user", "content": "hello"}],
-    "tags": {"notes.md": ["keep"]},
-    "favorites": [{"file_name": "notes.md", "score": 0.9}],
-    "sources": [{"file_path": "ignored"}],
-}
-safe, warnings = sanitize_conversation_import(json.dumps(payload).encode("utf-8"))
-assert "sources" not in safe
-assert warnings == ["Ignored legacy export-only key: sources."]
-```
+def valid_payload() -> dict[str, object]:
+    return {
+        "history": [{"role": "user", "content": "hello"}],
+        "tags": {"notes.md": ["keep"]},
+        "favorites": [{"file_name": "notes.md", "score": 0.9}],
+    }
 
-Add `test_rejected_payload_performs_zero_assignments` parametrized with each exact payload below. It snapshots `dict(state)`, clears `state.assignments`, expects `ConversationImportError` from `apply_conversation_import`, then asserts `state.assignments == []` and `dict(state) == before`.
 
-```python
-[
-    {"current_sources": [{"file_path": "crafted"}]},
-    {"collection": "crafted"},
-    {"chroma_client": "crafted"},
-    {"source_filters": "crafted"},
-    {"tts_queue": "crafted"},
-    {"tts_worker": "crafted"},
-    {"_runtime": "crafted"},
-    {"unexpected": "crafted"},
-    {"history": [{"role": "tool", "content": "crafted"}]},
+def test_valid_import_assigns_only_conversation_fields_and_preserves_runtime_sentinels() -> None:
+    state = sentinel_state()
+    collection, chroma_client = state["collection"], state["chroma_client"]
+    current_sources, source_filters = state["current_sources"], state["source_filters"]
+    tts_queue, tts_worker = state["tts_queue"], state["tts_worker"]
+    state.assignments.clear()
+    warnings = apply_conversation_import(state, raw(valid_payload()))
+    assert warnings == []
+    assert state.assignments == ["conversation_history", "tags", "favorite_responses"]
+    assert state["collection"] is collection
+    assert state["chroma_client"] is chroma_client
+    assert state["current_sources"] is current_sources
+    assert state["source_filters"] is source_filters
+    assert state["tts_queue"] is tts_queue
+    assert state["tts_worker"] is tts_worker
+
+
+def test_legacy_sources_are_warned_and_never_applied() -> None:
+    payload = valid_payload() | {"sources": [{"file_path": "ignored"}]}
+    safe, warnings = sanitize_conversation_import(raw(payload))
+    assert "sources" not in safe
+    assert warnings == ["Ignored legacy export-only key: sources."]
+
+
+@pytest.mark.parametrize("payload", [
+    {"current_sources": [{"file_path": "crafted"}]}, {"collection": "crafted"},
+    {"chroma_client": "crafted"}, {"source_filters": "crafted"},
+    {"tts_queue": "crafted"}, {"tts_worker": "crafted"}, {"_runtime": "crafted"},
+    {"unexpected": "crafted"}, {"history": [{"role": "tool", "content": "crafted"}]},
     {"history": [{"role": "user", "content": 1}]},
     {"history": [{"role": "user", "content": "x", "extra": "x"}]},
     {"tags": {"notes.md": ["ok", 1]}},
     {"favorites": [{"file_name": {"nested": "object"}}]},
-]
-```
-
-Add `test_exact_limits_pass` and these six one-over tests: `test_raw_bytes_over_limit_rejects_before_decode`, `test_history_entry_over_limit_rejects`, `test_message_utf8_byte_over_limit_rejects`, `test_tag_count_and_value_count_over_limits_reject`, `test_favorite_count_over_limit_rejects`, and `test_tag_and_favorite_text_over_limit_reject`. The passing payload uses exactly `MAX_HISTORY_ENTRIES` empty-content user messages, exactly `MAX_TAGS` keys with one tag each, exactly `MAX_FAVORITES` `{"file_name": "x"}` dictionaries, and strings exactly `MAX_TEXT_CHARS` characters. The one-over message uses `"x" * (MAX_MESSAGE_BYTES + 1)`, the raw-byte test passes `b"x" * (MAX_IMPORT_BYTES + 1)`, and each other one-over input uses the named constant plus one.
-
-Add `test_invalid_utf8_malformed_json_and_array_root_reject`:
-
-```python
-@pytest.mark.parametrize("raw", [b"\xff", b"{", b"[]"])
-def test_invalid_utf8_malformed_json_and_array_root_reject(raw: bytes) -> None:
+])
+def test_rejected_payload_performs_zero_assignments(payload: dict[str, object]) -> None:
+    state = sentinel_state()
+    before = dict(state)
+    state.assignments.clear()
     with pytest.raises(ConversationImportError):
-        sanitize_conversation_import(raw)
+        apply_conversation_import(state, raw(payload))
+    assert state.assignments == []
+    assert dict(state) == before
+
+
+def test_exact_raw_8_mib_passes() -> None:
+    raw_exact = b'{"sources":null}' + b" " * (MAX_IMPORT_BYTES - len(b'{"sources":null}'))
+    assert len(raw_exact) == MAX_IMPORT_BYTES
+    assert sanitize_conversation_import(raw_exact) == ({}, ["Ignored legacy export-only key: sources."])
+
+
+def test_exact_message_64_kib_passes() -> None:
+    safe, warnings = sanitize_conversation_import(raw({"history": [{"role": "user", "content": "x" * MAX_MESSAGE_BYTES}]}))
+    assert warnings == []
+    assert safe["history"][0]["content"] == "x" * MAX_MESSAGE_BYTES
+
+
+def test_exact_other_limits_pass() -> None:
+    tags = {f"k{i}": ["v"] for i in range(MAX_TAGS)}
+    favorites = [{"file_name": "x"} for _ in range(MAX_FAVORITES)]
+    history = [{"role": "user", "content": ""} for _ in range(MAX_HISTORY_ENTRIES)]
+    safe, warnings = sanitize_conversation_import(raw({"history": history, "tags": tags, "favorites": favorites}))
+    assert warnings == []
+    assert len(safe["history"]) == MAX_HISTORY_ENTRIES
+    assert len(safe["tags"]) == MAX_TAGS
+    assert sum(map(len, safe["tags"].values())) == MAX_TAGS
+    assert len(safe["favorites"]) == MAX_FAVORITES
+    assert sanitize_conversation_import(raw({"tags": {"k" * MAX_TEXT_CHARS: ["v" * MAX_TEXT_CHARS]}, "favorites": [{"k" * MAX_TEXT_CHARS: "v" * MAX_TEXT_CHARS}]}))[1] == []
+
+
+def test_raw_bytes_over_limit_rejects_before_decode() -> None:
+    with pytest.raises(ConversationImportError, match="Import exceeds 8 MiB limit\\."):
+        sanitize_conversation_import(b"x" * (MAX_IMPORT_BYTES + 1))
+
+
+def test_history_entry_over_limit_rejects() -> None:
+    with pytest.raises(ConversationImportError, match="History exceeds 1000 entries\\."):
+        sanitize_conversation_import(raw({"history": [{"role": "user", "content": ""}] * (MAX_HISTORY_ENTRIES + 1)}))
+
+
+def test_message_utf8_byte_over_limit_rejects() -> None:
+    with pytest.raises(ConversationImportError, match="Message content exceeds 64 KiB\\."):
+        sanitize_conversation_import(raw({"history": [{"role": "user", "content": "x" * (MAX_MESSAGE_BYTES + 1)}]}))
+
+
+def test_tag_count_and_value_count_over_limits_reject() -> None:
+    with pytest.raises(ConversationImportError, match="Tags exceed 100 keys\\."):
+        sanitize_conversation_import(raw({"tags": {str(i): [] for i in range(MAX_TAGS + 1)}}))
+    with pytest.raises(ConversationImportError, match="Tags exceed 100 total values\\."):
+        sanitize_conversation_import(raw({"tags": {"k": ["x"] * (MAX_TAGS + 1)}}))
+
+
+def test_favorite_count_over_limit_rejects() -> None:
+    with pytest.raises(ConversationImportError, match="Favorites exceed 100 entries\\."):
+        sanitize_conversation_import(raw({"favorites": [{}] * (MAX_FAVORITES + 1)}))
+
+
+def test_tag_and_favorite_text_over_limit_reject() -> None:
+    with pytest.raises(ConversationImportError, match="Tag text exceeds 256 characters\\."):
+        sanitize_conversation_import(raw({"tags": {"x" * (MAX_TEXT_CHARS + 1): []}}))
+    with pytest.raises(ConversationImportError, match="Favorite text exceeds 256 characters\\."):
+        sanitize_conversation_import(raw({"favorites": [{"x" * (MAX_TEXT_CHARS + 1): "ok"}]}))
+    with pytest.raises(ConversationImportError, match="Tag text exceeds 256 characters\\."):
+        sanitize_conversation_import(raw({"tags": {"ok": ["x" * (MAX_TEXT_CHARS + 1)]}}))
+    with pytest.raises(ConversationImportError, match="Favorite text exceeds 256 characters\\."):
+        sanitize_conversation_import(raw({"favorites": [{"ok": "x" * (MAX_TEXT_CHARS + 1)}]}))
+
+
+@pytest.mark.parametrize("raw_bytes", [b"\xff", b"{", b"[]"])
+def test_invalid_utf8_malformed_json_and_array_root_reject(raw_bytes: bytes) -> None:
+    with pytest.raises(ConversationImportError):
+        sanitize_conversation_import(raw_bytes)
+
+
+@pytest.mark.parametrize("value", [b"NaN", b"Infinity", b"-Infinity"])
+def test_non_finite_favorite_float_rejects(value: bytes) -> None:
+    with pytest.raises(ConversationImportError, match="Favorite value must be a finite scalar\\."):
+        sanitize_conversation_import(b'{"favorites":[{"score":' + value + b'}]}')
+
+
+def test_uploaded_handler_reads_bytes_applies_valid_data_and_warns_rejection() -> None:
+    class UploadedFile:
+        def __init__(self, raw_bytes: bytes) -> None:
+            self.raw, self.calls = raw_bytes, 0
+        def getvalue(self) -> bytes:
+            self.calls += 1
+            return self.raw
+
+    valid_state, invalid_state = sentinel_state(), sentinel_state()
+    collection, chroma_client = valid_state["collection"], valid_state["chroma_client"]
+    current_sources, source_filters = valid_state["current_sources"], valid_state["source_filters"]
+    tts_queue, tts_worker = valid_state["tts_queue"], valid_state["tts_worker"]
+    valid_state.assignments.clear()
+    warnings: list[str] = []
+    successes: list[str] = []
+    upload = UploadedFile(raw(valid_payload()))
+    apply_uploaded_conversation(upload, valid_state, warnings.append, successes.append)
+    assert upload.calls == 1
+    assert valid_state["collection"] is collection
+    assert valid_state["chroma_client"] is chroma_client
+    assert valid_state["current_sources"] is current_sources
+    assert valid_state["source_filters"] is source_filters
+    assert valid_state["tts_queue"] is tts_queue
+    assert valid_state["tts_worker"] is tts_worker
+    assert valid_state.assignments == ["conversation_history", "tags", "favorite_responses"]
+    assert warnings == []
+    assert successes == ["Conversation import complete."]
+    invalid_state.assignments.clear()
+    invalid_warnings: list[str] = []
+    invalid_successes: list[str] = []
+    apply_uploaded_conversation(UploadedFile(b"{"), invalid_state, invalid_warnings.append, invalid_successes.append)
+    assert invalid_state.assignments == []
+    assert invalid_warnings[0].startswith("Conversation import rejected:")
+    assert invalid_successes == []
 ```
 
-- [ ] **Step 2: Run the focused test to establish red evidence**
+Run the focused test before implementation; it must fail during collection because the frozen module lacks the imported boundary names. Record that exact pytest collection error and test command.
 
-Run:
+## Locked implementation (copy/adapt only if frozen file formatting requires it)
 
-```powershell
-python -m pytest tests/test_conversation_import.py -q
-```
-
-Expected: FAIL during collection because frozen code does not export `ConversationImportError`, the byte/count constants, or `apply_conversation_import`.
-
-- [ ] **Step 3: Implement the smallest pure boundary**
-
-In `conversation_import.py`, replace the old permissive functions. Import `json`, `MutableMapping` from `collections.abc`, and `Any` from `typing`. Define the constants and exception from the interface block. Make `sanitize_conversation_import(raw)` first reject `not isinstance(raw, bytes)` and `len(raw) > MAX_IMPORT_BYTES`; then call `raw.decode("utf-8")` and `json.loads` inside a `try` that raises `ConversationImportError("Import must be UTF-8 JSON bytes.")` for `UnicodeDecodeError` and `json.JSONDecodeError`.
-
-Validate a root `dict` before reading fields. Permit only `history`, `tags`, `favorites`, and `sources`; reject any non-string key, every key beginning `_`, and every key outside that set with `ConversationImportError("Unsupported import key.")`. Build fresh `list` and `dict` values for every accepted field. Require message keys exactly `{"role", "content"}`, use `len(content.encode("utf-8"))` for the message byte limit, and use `isinstance(value, str)` for all tags. Require favorite dictionaries to have string keys and values in `(str, int, float, bool)` or `None`, reject nested mappings/lists, and check 256-character limits for every favorite string key/value. Return the fixed `sources` warning only when `sources` was present.
-
-Add this complete application function after the sanitizer:
+Replace `conversation_import.py` with:
 
 ```python
-def apply_conversation_import(
-    session_state: MutableMapping[str, object], raw: bytes
-) -> list[str]:
+import json
+import math
+from collections.abc import Callable, MutableMapping
+from typing import Any
+
+MAX_IMPORT_BYTES = 8 * 1024 * 1024
+MAX_HISTORY_ENTRIES = 1_000
+MAX_MESSAGE_BYTES = 64 * 1024
+MAX_TAGS = 100
+MAX_FAVORITES = 100
+MAX_TEXT_CHARS = 256
+_TOP_LEVEL_KEYS = {"history", "tags", "favorites", "sources"}
+_ROLES = {"system", "user", "assistant"}
+
+
+class ConversationImportError(ValueError):
+    """Raised when an uploaded conversation violates the fixed import contract."""
+
+
+def _text(value: Any, message: str) -> str:
+    if not isinstance(value, str) or len(value) > MAX_TEXT_CHARS:
+        raise ConversationImportError(message)
+    return value
+
+
+def sanitize_conversation_import(raw: bytes) -> tuple[dict[str, object], list[str]]:
+    if not isinstance(raw, bytes):
+        raise ConversationImportError("Import must be raw bytes.")
+    if len(raw) > MAX_IMPORT_BYTES:
+        raise ConversationImportError("Import exceeds 8 MiB limit.")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ConversationImportError("Import must be UTF-8 JSON bytes.") from error
+    if not isinstance(payload, dict):
+        raise ConversationImportError("Import root must be a JSON object.")
+    if any(not isinstance(key, str) or key.startswith("_") or key not in _TOP_LEVEL_KEYS for key in payload):
+        raise ConversationImportError("Unsupported import key.")
+    safe: dict[str, object] = {}
+    if "history" in payload:
+        history = payload["history"]
+        if not isinstance(history, list):
+            raise ConversationImportError("History must be a list.")
+        if len(history) > MAX_HISTORY_ENTRIES:
+            raise ConversationImportError("History exceeds 1000 entries.")
+        result: list[dict[str, str]] = []
+        for message in history:
+            if not isinstance(message, dict) or set(message) != {"role", "content"}:
+                raise ConversationImportError("Message must contain exactly role and content.")
+            role, content = message["role"], message["content"]
+            if not isinstance(role, str) or role not in _ROLES:
+                raise ConversationImportError("Message role is invalid.")
+            if not isinstance(content, str):
+                raise ConversationImportError("Message content must be a string.")
+            if len(content.encode("utf-8")) > MAX_MESSAGE_BYTES:
+                raise ConversationImportError("Message content exceeds 64 KiB.")
+            result.append({"role": role, "content": content})
+        safe["history"] = result
+    if "tags" in payload:
+        tags = payload["tags"]
+        if not isinstance(tags, dict):
+            raise ConversationImportError("Tags must be an object.")
+        if len(tags) > MAX_TAGS:
+            raise ConversationImportError("Tags exceed 100 keys.")
+        total_values = 0
+        result_tags: dict[str, list[str]] = {}
+        for key, values in tags.items():
+            key = _text(key, "Tag text exceeds 256 characters.")
+            if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+                raise ConversationImportError("Tag values must be string lists.")
+            total_values += len(values)
+            if total_values > MAX_TAGS:
+                raise ConversationImportError("Tags exceed 100 total values.")
+            result_tags[key] = [_text(value, "Tag text exceeds 256 characters.") for value in values]
+        safe["tags"] = result_tags
+    if "favorites" in payload:
+        favorites = payload["favorites"]
+        if not isinstance(favorites, list):
+            raise ConversationImportError("Favorites must be a list.")
+        if len(favorites) > MAX_FAVORITES:
+            raise ConversationImportError("Favorites exceed 100 entries.")
+        result_favorites: list[dict[str, str | int | float | bool | None]] = []
+        for favorite in favorites:
+            if not isinstance(favorite, dict):
+                raise ConversationImportError("Favorite must be an object.")
+            clean: dict[str, str | int | float | bool | None] = {}
+            for key, value in favorite.items():
+                key = _text(key, "Favorite text exceeds 256 characters.")
+                if isinstance(value, str):
+                    clean[key] = _text(value, "Favorite text exceeds 256 characters.")
+                elif value is None or isinstance(value, bool) or isinstance(value, int):
+                    clean[key] = value
+                elif isinstance(value, float) and math.isfinite(value):
+                    clean[key] = value
+                else:
+                    raise ConversationImportError("Favorite value must be a finite scalar.")
+            result_favorites.append(clean)
+        safe["favorites"] = result_favorites
+    return safe, ["Ignored legacy export-only key: sources."] if "sources" in payload else []
+
+
+def apply_conversation_import(session_state: MutableMapping[str, object], raw: bytes) -> list[str]:
     safe_data, warnings = sanitize_conversation_import(raw)
     if "history" in safe_data:
         session_state["conversation_history"] = safe_data["history"]
@@ -209,137 +357,43 @@ def apply_conversation_import(
     if "favorites" in safe_data:
         session_state["favorite_responses"] = safe_data["favorites"]
     return warnings
-```
 
-- [ ] **Step 4: Prove the pure boundary is green**
 
-Run:
-
-```powershell
-python -m pytest tests/test_conversation_import.py -q
-python -m py_compile conversation_import.py
-```
-
-Expected: focused tests PASS and compilation exits 0.
-
-## Task 2: Execute the real uploader handler without live Chroma
-
-**Files:**
-
-- Modify: `conversation_import.py`
-- Modify: `streamlit_app.py:72,614-641`
-- Modify: `tests/test_conversation_import.py`
-
-**Interfaces:**
-
-```python
-def apply_uploaded_conversation(
-    uploaded_file: Any,
-    session_state: MutableMapping[str, object],
-    show_warning: Callable[[str], None],
-    show_success: Callable[[str], None],
-) -> None:
-    raw_import = uploaded_file.getvalue()
+def apply_uploaded_conversation(uploaded_file: Any, session_state: MutableMapping[str, object], show_warning: Callable[[str], None], show_success: Callable[[str], None]) -> None:
     try:
-        import_warnings = apply_conversation_import(session_state, raw_import)
+        warnings = apply_conversation_import(session_state, uploaded_file.getvalue())
     except ConversationImportError as error:
         show_warning(f"Conversation import rejected: {error}")
         return
-    for warning in import_warnings:
+    for warning in warnings:
         show_warning(warning)
     show_success("Conversation import complete.")
 ```
 
-- [ ] **Step 1: Add an executable Streamlit handler-boundary test**
-
-Add `test_uploaded_handler_reads_bytes_applies_valid_data_and_warns_rejection` to `tests/test_conversation_import.py`. Import `apply_uploaded_conversation` from `conversation_import`; this maintained test seam does not import Streamlit, Chroma, or a live collection.
-
-Define this local upload fake and callback recorders:
-
-```python
-class UploadedFile:
-    def __init__(self, raw: bytes) -> None:
-        self.raw = raw
-        self.calls = 0
-
-    def getvalue(self) -> bytes:
-        self.calls += 1
-        return self.raw
-
-warnings: list[str] = []
-successes: list[str] = []
-```
-
-Call `apply_uploaded_conversation` with a valid upload, `sentinel_state()`, `warnings.append`, and `successes.append`; assert `upload.calls == 1`, all runtime sentinels remain identical, `warnings == []`, and `successes == ["Conversation import complete."]`. Call it again with `UploadedFile(b"{")`; assert the recorded mapping has no assignments, the warning begins `Conversation import rejected:`, and `successes == []`. This executes the same bytes-to-helper-to-controlled-warning path used by Streamlit and proves it has no Chroma/import side effect.
-
-- [ ] **Step 2: Run the new handler test for red evidence**
-
-Run:
-
-```powershell
-python -m pytest tests/test_conversation_import.py::test_uploaded_handler_reads_bytes_applies_valid_data_and_warns_rejection -q
-```
-
-Expected: FAIL during import because the frozen code has no upload adapter.
-
-- [ ] **Step 3: Add the upload adapter and replace the Streamlit branch**
-
-Add the `apply_uploaded_conversation` function from the interface block to `conversation_import.py`; import `Callable` and `MutableMapping` from `collections.abc`. At `streamlit_app.py:72`, replace the old import with:
-
-```python
-from conversation_import import apply_uploaded_conversation
-```
-
-At `streamlit_app.py:624-641`, replace the entire `if uploaded_file:` body with:
+In `streamlit_app.py`, replace the existing `sanitize_conversation_import` import with `from conversation_import import apply_uploaded_conversation`. Replace only the uploader `if uploaded_file:` body with:
 
 ```python
 if uploaded_file:
-    apply_uploaded_conversation(
-        uploaded_file,
-        st.session_state,
-        st.warning,
-        st.success,
-    )
+    apply_uploaded_conversation(uploaded_file, st.session_state, st.warning, st.success)
 ```
 
-Do not retain `json.loads(uploaded_file.read())`, `sanitize_conversation_import(imported_data)`, a broad `except Exception`, or direct assignments to `st.session_state` in the upload branch. Leave the exporter unchanged.
+There must be no `json.loads(uploaded_file.read())`, broad exception handler, or direct importer session assignments. The exporter remains byte-for-byte schema-compatible.
 
-- [ ] **Step 4: Run focused and compilation evidence**
+## TDD, review, and closure lifecycle
 
-Run:
+The lifecycle is exactly: **planner packet -> ChatGPT review -> GSD checker -> corrector -> docs merge -> implementer initial TDD commit -> code-review agent -> accepted-finding fixer commit(s) -> verifier -> orchestrator PR merge/evidence/close**. ChatGPT returned no review content after repeated waits; record that fact and do not invent a finding. No review is required before code exists; code review occurs after the initial implementation commit.
+
+After docs merge, the implementer writes the test file, records its red collection result, implements the locked code, and makes `fix(#9): validate conversation imports`. Then the code-review agent reviews that commit; only accepted findings get atomic `fix(#9): ...` commits. The verifier evaluates the final code SHA. Closure evidence names the docs merge SHA, initial code SHA, every review-fix SHA (or `none accepted`), final verifier SHA, code PR URL, exact commands/outcomes, and the frozen/post-change comparison.
+
+Run after change with bytecode disabled and record command, exit code, full summary, and failing test IDs:
 
 ```powershell
+$env:PYTHONDONTWRITEBYTECODE = '1'
 python -m pytest tests/test_conversation_import.py -q
-python -m py_compile conversation_import.py streamlit_app.py
+python -m pytest tests -q
+python -m py_compile conversation_import.py streamlit_app.py rag_gui.py GUI_direct_search.py
+gh issue list --repo sriharshaguthikonda/easy-local-rag --state open
 git diff --check
 ```
 
-Expected: all focused tests PASS, both files compile with exit 0, and `git diff --check` has no output.
-
-- [ ] **Step 5: Record the repository baseline without changing it**
-
-Run in the code worktree, not this docs worktree:
-
-```powershell
-python -m pytest tests -q
-```
-
-Expected: record the known baseline PyQt5 collection failure and the closed-#14 citation assertion failure if they occur. No new failure is permitted. This docs worktree has no code/test lineage, so it is not a test target.
-
-- [ ] **Step 6: Stop for code-review, fixer, and verifier evidence, then make the single code commit**
-
-Approval stop: packet review and merge must happen before implementation; then code review, fixer, and verifier evidence must approve the focused, compilation, and baseline record before code PR merge. After those approvals, run:
-
-```powershell
-git add conversation_import.py streamlit_app.py tests/test_conversation_import.py
-git commit -m "fix(#9): validate conversation imports"
-```
-
-Expected: exactly one code commit containing only the three code-owned files. The code PR targets `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`.
-
-## Rollback, close gate, and evidence
-
-- Roll back with one revert of `fix(#9): validate conversation imports`; never restore bulk update or a partial-import loop.
-- Before closing #9, post evidence linking this canonical plan, the roadmap, the code PR, and the exact code SHA.
-- Closure evidence contains the focused test PASS output, `py_compile` PASS output, the full-suite baseline result, the executable sentinel test proof, the rejected malformed/oversize/malicious zero-assignment proof, and confirmation that the legacy `sources` key produced its fixed warning without replacing `current_sources`.
-- No issue closure, merge, or GitHub mutation occurs until the packet-review and code-review/fixer/verifier approval stops have passed.
+Closure additionally records: exact 8 MiB pass; 8 MiB+1 pre-decode rejection; exact 64 KiB pass; 64 KiB+1 rejection; exact and one-over history/tag-key/tag-total-value/favorite/text limits; malformed UTF-8/JSON/root rejection; finite-float rejection; sentinel identity; valid and invalid uploader calls with fresh state and separate warning/success recorders; and zero assignments after construction assignments are explicitly cleared. Roll back by reverting the initial code commit and any accepted review-fix commits in reverse order.
