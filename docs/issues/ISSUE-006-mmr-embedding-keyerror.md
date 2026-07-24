@@ -2,7 +2,7 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** OPEN — implementation merged to the GUI lineage in [PR #29](https://github.com/sriharshaguthikonda/easy-local-rag/pull/29) at fix commit [`de74659`](https://github.com/sriharshaguthikonda/easy-local-rag/commit/de7465902e00e363993f9ea9eb2190ce940e1bed); close after this canonical plan lands on `main` and the issue receives reciprocal evidence links.
+**Status:** CLOSED — completed after [PR #29](https://github.com/sriharshaguthikonda/easy-local-rag/pull/29) merged to the GUI lineage as `daecce8a27f50da39284f5519d77b835905209f6` from fix commit [`de74659`](https://github.com/sriharshaguthikonda/easy-local-rag/commit/de7465902e00e363993f9ea9eb2190ce940e1bed), the canonical plan landed on `main`, and reciprocal implementation/test evidence was posted to the issue.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/6
 **Labels / priority:** `priority:P0`, `type:bug`
 **Dependencies:** Preserve the #11 embedding-model contract; use a fake collection rather than a live Chroma database in the regression test.
