@@ -34,7 +34,7 @@ No other Python callers were found by that exact `git grep` command. The replace
 | `tags` | dict with at most 100 string keys and **at most 100 string values total across all keys**; values are lists of strings; every key and value at most 256 characters | `tags` |
 | `favorites` | list of at most 100 dicts; all keys are strings, all values are scalar `str`, `int`, finite `float`, `bool`, or `null`; every string key/value at most 256 characters | `favorite_responses` |
 
-Absent `history`, `tags`, or `favorites` causes no write for that destination. `bool` is accepted only as a favorite scalar. `NaN`, infinities, and numeric-overflow literals such as `1e999` reject globally, including under ignored `sources`. Every accepted container is newly built. A failed validation makes zero writes; import data never assigns `sources`, `current_sources`, `collection`, `chroma_client`, `source_filters`, TTS objects, underscore keys, or any runtime key. Importing these modules must not initialize Chroma or Streamlit in tests.
+Absent `history`, `tags`, or `favorites` causes no write for that destination. JSON integers are limited to 4,096 decimal digits, excluding a leading minus. `bool` is accepted only as a favorite scalar. `NaN`, infinities, and numeric-overflow literals such as `1e999` reject globally, including under ignored `sources`. Every accepted container is newly built. A failed validation makes zero writes; import data never assigns `sources`, `current_sources`, `collection`, `chroma_client`, `source_filters`, TTS objects, underscore keys, or any runtime key. Importing these modules must not initialize Chroma or Streamlit in tests.
 
 Errors are deterministic: raw type/size, decode/JSON failure, non-object root, unsupported key, and field violations each raise `ConversationImportError` with the exact messages in the implementation below. The UI renders only `Conversation import rejected: {error}`. This makes rejected-input assertions stable and rollback a bounded reverse-order revert of the implementation and any accepted review-fix commits.
 
@@ -64,7 +64,7 @@ from pathlib import Path
 import pytest
 
 from conversation_import import (
-    MAX_FAVORITES, MAX_HISTORY_ENTRIES, MAX_IMPORT_BYTES, MAX_JSON_DEPTH,
+    MAX_FAVORITES, MAX_HISTORY_ENTRIES, MAX_IMPORT_BYTES, MAX_INTEGER_DIGITS, MAX_JSON_DEPTH,
     MAX_MESSAGE_BYTES, MAX_TAGS, MAX_TEXT_CHARS, ConversationImportError,
     apply_conversation_import, apply_uploaded_conversation,
     sanitize_conversation_import,
@@ -250,6 +250,38 @@ def test_finite_favorite_float_passes() -> None:
     assert safe == {"favorites": [{"score": 1.25}]}
 
 
+def test_exact_integer_digit_limit_passes() -> None:
+    raw_bytes = b'{"favorites":[{"score":' + b"9" * MAX_INTEGER_DIGITS + b'}]}'
+    safe, warnings = sanitize_conversation_import(raw_bytes)
+    assert warnings == []
+    score = safe["favorites"][0]["score"]
+    assert isinstance(score, int) and score > 0 and score.bit_length() > 0
+
+
+@pytest.mark.parametrize("raw_bytes", [
+    b'{"sources":' + b"9" * (MAX_INTEGER_DIGITS + 1) + b'}',
+    b'{"favorites":[{"score":' + b"9" * (MAX_INTEGER_DIGITS + 1) + b'}]}',
+])
+def test_over_cap_integer_rejects_everywhere(raw_bytes: bytes) -> None:
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Import integer exceeds 4096 digits.") + "$"):
+        sanitize_conversation_import(raw_bytes)
+
+
+def test_uploaded_handler_over_cap_integer_makes_zero_writes() -> None:
+    class UploadedFile:
+        def getvalue(self) -> bytes:
+            return b'{"favorites":[{"score":' + b"9" * (MAX_INTEGER_DIGITS + 1) + b'}]}'
+
+    state = sentinel_state()
+    state.assignments.clear()
+    warnings: list[str] = []
+    successes: list[str] = []
+    apply_uploaded_conversation(UploadedFile(), state, warnings.append, successes.append)
+    assert state.assignments == []
+    assert warnings == ["Conversation import rejected: Import integer exceeds 4096 digits."]
+    assert successes == []
+
+
 def test_json_depth_limit_and_parser_recursion_reject() -> None:
     nested: object = None
     for _ in range(MAX_JSON_DEPTH - 1):
@@ -335,6 +367,7 @@ from collections.abc import Callable, MutableMapping
 from typing import Any
 
 MAX_IMPORT_BYTES = 8 * 1024 * 1024
+MAX_INTEGER_DIGITS = 4_096
 MAX_JSON_DEPTH = 32
 MAX_HISTORY_ENTRIES = 1_000
 MAX_MESSAGE_BYTES = 64 * 1024
@@ -366,6 +399,19 @@ def _parse_finite_float(value: str) -> float:
     return parsed
 
 
+def _parse_integer(value: str) -> int:
+    negative = value.startswith("-")
+    digits = value[1:] if negative else value
+    if not digits or len(digits) > MAX_INTEGER_DIGITS:
+        raise ConversationImportError("Import integer exceeds 4096 digits.")
+    result = 0
+    for digit in digits:
+        if digit < "0" or digit > "9":
+            raise ConversationImportError("Import integer exceeds 4096 digits.")
+        result = result * 10 + ord(digit) - ord("0")
+    return -result if negative else result
+
+
 def _validate_json_depth(payload: object) -> None:
     stack: list[tuple[object, int]] = [(payload, 1)]
     while stack:
@@ -388,6 +434,7 @@ def sanitize_conversation_import(raw: bytes) -> tuple[dict[str, object], list[st
             raw.decode("utf-8"),
             parse_constant=_reject_non_finite,
             parse_float=_parse_finite_float,
+            parse_int=_parse_integer,
         )
     except RecursionError as error:
         raise ConversationImportError("Import nesting exceeds 32 containers.") from error
@@ -520,4 +567,4 @@ python -m pytest tests/test_conversation_import.py -q
 git diff --check
 ```
 
-Closure additionally records: exact 8 MiB pass; 8 MiB+1 pre-decode rejection; exact 64 KiB pass; 64 KiB+1 rejection; exact and one-over history/tag-key/tag-total-value/favorite/text limits; exact-depth/depth-33/parser-recursion rejection; malformed UTF-8/JSON/root rejection; non-finite JSON rejection; AST uploader-wiring proof; sentinel identity; valid and invalid uploader calls with fresh state and separate warning/success recorders; and zero assignments after construction assignments are explicitly cleared. Roll back by reverting the initial code commit and any accepted review-fix commits in reverse order.
+Closure additionally records: exact 8 MiB pass; 8 MiB+1 pre-decode rejection; exact 64 KiB pass; 64 KiB+1 rejection; exact and one-over history/tag-key/tag-total-value/favorite/text/integer limits; exact-depth/depth-33/parser-recursion rejection; malformed UTF-8/JSON/root rejection; non-finite JSON rejection; AST uploader-wiring proof; sentinel identity; valid and invalid uploader calls with fresh state and separate warning/success recorders; and zero assignments after construction assignments are explicitly cleared. Roll back by reverting the initial code commit and any accepted review-fix commits in reverse order.
