@@ -264,6 +264,26 @@ def test_uploaded_lone_surrogates_make_zero_writes(template: bytes, escaped: byt
     assert successes == []
 
 
+@pytest.mark.parametrize("overwritten", [
+    b'"\\ud800"',
+    b'"\\udc00"',
+    b"[" * MAX_JSON_DEPTH + b"null" + b"]" * MAX_JSON_DEPTH,
+])
+def test_uploaded_duplicate_sources_make_zero_writes(overwritten: bytes) -> None:
+    class UploadedFile:
+        def getvalue(self) -> bytes:
+            return b'{"sources":' + overwritten + b',"sources":null}'
+
+    state = sentinel_state()
+    state.assignments.clear()
+    warnings: list[str] = []
+    successes: list[str] = []
+    apply_uploaded_conversation(UploadedFile(), state, warnings.append, successes.append)
+    assert state.assignments == []
+    assert warnings == ["Conversation import rejected: Import contains duplicate object keys."]
+    assert successes == []
+
+
 def test_json_depth_limit_and_parser_recursion_reject() -> None:
     nested: object = None
     for _ in range(MAX_JSON_DEPTH - 1):
