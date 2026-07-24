@@ -250,17 +250,19 @@ def test_finite_favorite_float_passes() -> None:
     assert safe == {"favorites": [{"score": 1.25}]}
 
 
-def test_exact_integer_digit_limit_passes() -> None:
-    raw_bytes = b'{"favorites":[{"score":' + b"9" * MAX_INTEGER_DIGITS + b'}]}'
+@pytest.mark.parametrize(("sign", "negative"), [(b"", False), (b"-", True)])
+def test_exact_integer_digit_limit_passes(sign: bytes, negative: bool) -> None:
+    raw_bytes = b'{"favorites":[{"score":' + sign + b"9" * MAX_INTEGER_DIGITS + b'}]}'
     safe, warnings = sanitize_conversation_import(raw_bytes)
     assert warnings == []
     score = safe["favorites"][0]["score"]
-    assert isinstance(score, int) and score > 0 and score.bit_length() > 0
+    assert isinstance(score, int) and (score < 0) is negative and abs(score).bit_length() > 0
 
 
 @pytest.mark.parametrize("raw_bytes", [
     b'{"sources":' + b"9" * (MAX_INTEGER_DIGITS + 1) + b'}',
     b'{"favorites":[{"score":' + b"9" * (MAX_INTEGER_DIGITS + 1) + b'}]}',
+    b'{"favorites":[{"score":-' + b"9" * (MAX_INTEGER_DIGITS + 1) + b'}]}',
 ])
 def test_over_cap_integer_rejects_everywhere(raw_bytes: bytes) -> None:
     with pytest.raises(ConversationImportError, match="^" + re.escape("Import integer exceeds 4096 digits.") + "$"):
