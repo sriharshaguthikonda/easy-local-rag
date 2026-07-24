@@ -2,11 +2,25 @@
 
 **Goal:** validate legacy conversation uploads before any Streamlit session write.
 
-**Docs packet lineage:** `codex/issue-009-plan`, based on `8497efca7aa021bef3757c6b87ba8f4a7824fbc5` (packet commit `178d188e34adb49c728207c712e6e259bcd51d9c`).
+**Docs packet lineage:** `codex/issue-009-plan`, based on `8497efca7aa021bef3757c6b87ba8f4a7824fbc5`; packet commits are `178d188e34adb49c728207c712e6e259bcd51d9c`, `01487a38f5dd3cbf3e689c3e82871699b1cad4e9`, and this correction's commit. The final docs-merge SHA is required closure evidence.
 
 **Code lineage:** create `codex/fix-issue-9` directly at frozen GUI base `daecce8a27f50da39284f5519d77b835905209f6`. It targets `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`; never merge or rebase main/docs into this lineage.
 
 **Owned code files:** `conversation_import.py`, `streamlit_app.py`, `tests/test_conversation_import.py`. Preserve the exporter at `streamlit_app.py:609-620` unchanged.
+
+## Frozen-base caller map
+
+Derived at `daecce8a27f50da39284f5519d77b835905209f6` with this exact command:
+
+```powershell
+git grep -n -E "sanitize_conversation_import|validate_message" daecce8a27f50da39284f5519d77b835905209f6 -- '*.py'
+```
+
+- `conversation_import.py:9` defines legacy `validate_message(message: Any)`; `conversation_import.py:26` defines `sanitize_conversation_import(data: Any)` and calls the former internally.
+- `streamlit_app.py:72` imports `sanitize_conversation_import`; `streamlit_app.py:626` invokes it after `json.loads`.
+- `tests/test_conversation_import.py:1` imports both names, and its tests at lines 4 and 10 are the only external `validate_message` callers.
+
+No other Python callers were found by that exact `git grep` command. The replacement retires `validate_message`, replaces its only test caller by replacing the whole test file, and changes the sole UI call to the byte-only adapter.
 
 ## Locked behavior
 
@@ -22,6 +36,14 @@ Absent `history`, `tags`, or `favorites` causes no write for that destination. `
 
 Errors are deterministic: raw type/size, decode/JSON failure, non-object root, unsupported key, and field violations each raise `ConversationImportError` with the exact messages in the implementation below. The UI renders only `Conversation import rejected: {error}`. This makes rejected-input assertions stable and rollback one revert of the code commit.
 
+| Test | Exact error assertion |
+|---|---|
+| `test_non_bytes_rejects` | `Import must be raw bytes.` |
+| `test_raw_bytes_over_limit_rejects_before_decode` | `Import exceeds 8 MiB limit.` |
+| `test_invalid_utf8_malformed_json_and_array_root_reject` | UTF-8/JSON: `Import must be UTF-8 JSON bytes.`; root: `Import root must be a JSON object.` |
+| `test_rejected_payload_performs_zero_assignments` | `Unsupported import key.`, `Message role is invalid.`, `Message content must be a string.`, `Message must contain exactly role and content.`, `Tag values must be string lists.`, or `Favorite value must be a finite scalar.` according to its payload |
+| limit and float tests below | Their `match=` strings name the exact deterministic message. |
+
 ## Frozen-base baseline — before edits
 
 In the clean code worktree at `daecce8a27f50da39284f5519d77b835905209f6`, run and record literal command, exit code, test IDs for every failure, and full summary line:
@@ -35,6 +57,15 @@ gh issue list --repo sriharshaguthikonda/easy-local-rag --state open
 ```
 
 Do not assume PyQt5 or closed-#14 failures: record them only when observed. After the implementation, run the same commands and capture the same fields. The new focused test IDs must pass; every pre-existing failure must have the same test ID and classification, and no new failure is allowed. The `gh` output is saved as live-state evidence, not guessed from this packet.
+
+Before implementation, run this separate red-evidence command at the frozen base:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE = '1'
+python -m pytest tests/test_conversation_import.py -q
+```
+
+Record literal outcome: exit code `2`, collection `ImportError: cannot import name 'MAX_FAVORITES' from 'conversation_import'`; frozen code lacks the new constants, `ConversationImportError`, and both apply helpers. Do not proceed without recording the actual command output alongside this expected red result.
 
 ## Exact test file (write first)
 
@@ -154,9 +185,14 @@ def test_exact_other_limits_pass() -> None:
     assert sanitize_conversation_import(raw({"tags": {"k" * MAX_TEXT_CHARS: ["v" * MAX_TEXT_CHARS]}, "favorites": [{"k" * MAX_TEXT_CHARS: "v" * MAX_TEXT_CHARS}]}))[1] == []
 
 
+def test_non_bytes_rejects() -> None:
+    with pytest.raises(ConversationImportError, match="^Import must be raw bytes\\.$"):
+        sanitize_conversation_import("{}")  # type: ignore[arg-type]
+
+
 def test_raw_bytes_over_limit_rejects_before_decode() -> None:
     with pytest.raises(ConversationImportError, match="Import exceeds 8 MiB limit\\."):
-        sanitize_conversation_import(b"x" * (MAX_IMPORT_BYTES + 1))
+        sanitize_conversation_import(b"\\xff" * (MAX_IMPORT_BYTES + 1))
 
 
 def test_history_entry_over_limit_rejects() -> None:
@@ -192,9 +228,13 @@ def test_tag_and_favorite_text_over_limit_reject() -> None:
         sanitize_conversation_import(raw({"favorites": [{"ok": "x" * (MAX_TEXT_CHARS + 1)}]}))
 
 
-@pytest.mark.parametrize("raw_bytes", [b"\xff", b"{", b"[]"])
-def test_invalid_utf8_malformed_json_and_array_root_reject(raw_bytes: bytes) -> None:
-    with pytest.raises(ConversationImportError):
+@pytest.mark.parametrize("raw_bytes, message", [
+    (b"\xff", "Import must be UTF-8 JSON bytes."),
+    (b"{", "Import must be UTF-8 JSON bytes."),
+    (b"[]", "Import root must be a JSON object."),
+])
+def test_invalid_utf8_malformed_json_and_array_root_reject(raw_bytes: bytes, message: str) -> None:
+    with pytest.raises(ConversationImportError, match="^" + message.replace(".", "\\.") + "$"):
         sanitize_conversation_import(raw_bytes)
 
 
