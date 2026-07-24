@@ -2,7 +2,7 @@
 
 **Goal:** validate legacy conversation uploads before any Streamlit session write.
 
-**Docs packet lineage:** `codex/issue-009-plan`, based on `8497efca7aa021bef3757c6b87ba8f4a7824fbc5`; packet commits are `178d188e34adb49c728207c712e6e259bcd51d9c`, `01487a38f5dd3cbf3e689c3e82871699b1cad4e9`, and this correction's commit. The final docs-merge SHA is required closure evidence.
+**Docs packet lineage:** `codex/issue-009-plan`, based on `8497efca7aa021bef3757c6b87ba8f4a7824fbc5`. Git history carries the packet commits; the immutable final docs-merge SHA is required closure evidence.
 
 **Code lineage:** create `codex/fix-issue-9` directly at frozen GUI base `daecce8a27f50da39284f5519d77b835905209f6`. It targets `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`; never merge or rebase main/docs into this lineage.
 
@@ -36,14 +36,6 @@ Absent `history`, `tags`, or `favorites` causes no write for that destination. `
 
 Errors are deterministic: raw type/size, decode/JSON failure, non-object root, unsupported key, and field violations each raise `ConversationImportError` with the exact messages in the implementation below. The UI renders only `Conversation import rejected: {error}`. This makes rejected-input assertions stable and rollback one revert of the code commit.
 
-| Test | Exact error assertion |
-|---|---|
-| `test_non_bytes_rejects` | `Import must be raw bytes.` |
-| `test_raw_bytes_over_limit_rejects_before_decode` | `Import exceeds 8 MiB limit.` |
-| `test_invalid_utf8_malformed_json_and_array_root_reject` | UTF-8/JSON: `Import must be UTF-8 JSON bytes.`; root: `Import root must be a JSON object.` |
-| `test_rejected_payload_performs_zero_assignments` | `Unsupported import key.`, `Message role is invalid.`, `Message content must be a string.`, `Message must contain exactly role and content.`, `Tag values must be string lists.`, or `Favorite value must be a finite scalar.` according to its payload |
-| limit and float tests below | Their `match=` strings name the exact deterministic message. |
-
 ## Frozen-base baseline — before edits
 
 In the clean code worktree at `daecce8a27f50da39284f5519d77b835905209f6`, run and record literal command, exit code, test IDs for every failure, and full summary line:
@@ -58,21 +50,13 @@ gh issue list --repo sriharshaguthikonda/easy-local-rag --state open
 
 Do not assume PyQt5 or closed-#14 failures: record them only when observed. After the implementation, run the same commands and capture the same fields. The new focused test IDs must pass; every pre-existing failure must have the same test ID and classification, and no new failure is allowed. The `gh` output is saved as live-state evidence, not guessed from this packet.
 
-Before implementation, run this separate red-evidence command at the frozen base:
-
-```powershell
-$env:PYTHONDONTWRITEBYTECODE = '1'
-python -m pytest tests/test_conversation_import.py -q
-```
-
-Record literal outcome: exit code `2`, collection `ImportError: cannot import name 'MAX_FAVORITES' from 'conversation_import'`; frozen code lacks the new constants, `ConversationImportError`, and both apply helpers. Do not proceed without recording the actual command output alongside this expected red result.
-
 ## Exact test file (write first)
 
 Replace `tests/test_conversation_import.py` with this complete file:
 
 ```python
 import json
+import re
 
 import pytest
 
@@ -140,21 +124,26 @@ def test_legacy_sources_are_warned_and_never_applied() -> None:
     assert warnings == ["Ignored legacy export-only key: sources."]
 
 
-@pytest.mark.parametrize("payload", [
-    {"current_sources": [{"file_path": "crafted"}]}, {"collection": "crafted"},
-    {"chroma_client": "crafted"}, {"source_filters": "crafted"},
-    {"tts_queue": "crafted"}, {"tts_worker": "crafted"}, {"_runtime": "crafted"},
-    {"unexpected": "crafted"}, {"history": [{"role": "tool", "content": "crafted"}]},
-    {"history": [{"role": "user", "content": 1}]},
-    {"history": [{"role": "user", "content": "x", "extra": "x"}]},
-    {"tags": {"notes.md": ["ok", 1]}},
-    {"favorites": [{"file_name": {"nested": "object"}}]},
+@pytest.mark.parametrize(("payload", "message"), [
+    ({"current_sources": [{"file_path": "crafted"}]}, "Unsupported import key."),
+    ({"collection": "crafted"}, "Unsupported import key."),
+    ({"chroma_client": "crafted"}, "Unsupported import key."),
+    ({"source_filters": "crafted"}, "Unsupported import key."),
+    ({"tts_queue": "crafted"}, "Unsupported import key."),
+    ({"tts_worker": "crafted"}, "Unsupported import key."),
+    ({"_runtime": "crafted"}, "Unsupported import key."),
+    ({"unexpected": "crafted"}, "Unsupported import key."),
+    ({"history": [{"role": "tool", "content": "crafted"}]}, "Message role is invalid."),
+    ({"history": [{"role": "user", "content": 1}]}, "Message content must be a string."),
+    ({"history": [{"role": "user", "content": "x", "extra": "x"}]}, "Message must contain exactly role and content."),
+    ({"tags": {"notes.md": ["ok", 1]}}, "Tag values must be string lists."),
+    ({"favorites": [{"file_name": {"nested": "object"}}]}, "Favorite value must be a finite scalar."),
 ])
-def test_rejected_payload_performs_zero_assignments(payload: dict[str, object]) -> None:
+def test_rejected_payload_performs_zero_assignments(payload: dict[str, object], message: str) -> None:
     state = sentinel_state()
     before = dict(state)
     state.assignments.clear()
-    with pytest.raises(ConversationImportError):
+    with pytest.raises(ConversationImportError, match="^" + re.escape(message) + "$"):
         apply_conversation_import(state, raw(payload))
     assert state.assignments == []
     assert dict(state) == before
@@ -186,45 +175,45 @@ def test_exact_other_limits_pass() -> None:
 
 
 def test_non_bytes_rejects() -> None:
-    with pytest.raises(ConversationImportError, match="^Import must be raw bytes\\.$"):
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Import must be raw bytes.") + "$"):
         sanitize_conversation_import("{}")  # type: ignore[arg-type]
 
 
 def test_raw_bytes_over_limit_rejects_before_decode() -> None:
-    with pytest.raises(ConversationImportError, match="Import exceeds 8 MiB limit\\."):
-        sanitize_conversation_import(b"\\xff" * (MAX_IMPORT_BYTES + 1))
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Import exceeds 8 MiB limit.") + "$"):
+        sanitize_conversation_import(b"\xff" * (MAX_IMPORT_BYTES + 1))
 
 
 def test_history_entry_over_limit_rejects() -> None:
-    with pytest.raises(ConversationImportError, match="History exceeds 1000 entries\\."):
+    with pytest.raises(ConversationImportError, match="^" + re.escape("History exceeds 1000 entries.") + "$"):
         sanitize_conversation_import(raw({"history": [{"role": "user", "content": ""}] * (MAX_HISTORY_ENTRIES + 1)}))
 
 
 def test_message_utf8_byte_over_limit_rejects() -> None:
-    with pytest.raises(ConversationImportError, match="Message content exceeds 64 KiB\\."):
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Message content exceeds 64 KiB.") + "$"):
         sanitize_conversation_import(raw({"history": [{"role": "user", "content": "x" * (MAX_MESSAGE_BYTES + 1)}]}))
 
 
 def test_tag_count_and_value_count_over_limits_reject() -> None:
-    with pytest.raises(ConversationImportError, match="Tags exceed 100 keys\\."):
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Tags exceed 100 keys.") + "$"):
         sanitize_conversation_import(raw({"tags": {str(i): [] for i in range(MAX_TAGS + 1)}}))
-    with pytest.raises(ConversationImportError, match="Tags exceed 100 total values\\."):
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Tags exceed 100 total values.") + "$"):
         sanitize_conversation_import(raw({"tags": {"k": ["x"] * (MAX_TAGS + 1)}}))
 
 
 def test_favorite_count_over_limit_rejects() -> None:
-    with pytest.raises(ConversationImportError, match="Favorites exceed 100 entries\\."):
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Favorites exceed 100 entries.") + "$"):
         sanitize_conversation_import(raw({"favorites": [{}] * (MAX_FAVORITES + 1)}))
 
 
 def test_tag_and_favorite_text_over_limit_reject() -> None:
-    with pytest.raises(ConversationImportError, match="Tag text exceeds 256 characters\\."):
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Tag text exceeds 256 characters.") + "$"):
         sanitize_conversation_import(raw({"tags": {"x" * (MAX_TEXT_CHARS + 1): []}}))
-    with pytest.raises(ConversationImportError, match="Favorite text exceeds 256 characters\\."):
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Favorite text exceeds 256 characters.") + "$"):
         sanitize_conversation_import(raw({"favorites": [{"x" * (MAX_TEXT_CHARS + 1): "ok"}]}))
-    with pytest.raises(ConversationImportError, match="Tag text exceeds 256 characters\\."):
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Tag text exceeds 256 characters.") + "$"):
         sanitize_conversation_import(raw({"tags": {"ok": ["x" * (MAX_TEXT_CHARS + 1)]}}))
-    with pytest.raises(ConversationImportError, match="Favorite text exceeds 256 characters\\."):
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Favorite text exceeds 256 characters.") + "$"):
         sanitize_conversation_import(raw({"favorites": [{"ok": "x" * (MAX_TEXT_CHARS + 1)}]}))
 
 
@@ -234,14 +223,14 @@ def test_tag_and_favorite_text_over_limit_reject() -> None:
     (b"[]", "Import root must be a JSON object."),
 ])
 def test_invalid_utf8_malformed_json_and_array_root_reject(raw_bytes: bytes, message: str) -> None:
-    with pytest.raises(ConversationImportError, match="^" + message.replace(".", "\\.") + "$"):
+    with pytest.raises(ConversationImportError, match="^" + re.escape(message) + "$"):
         sanitize_conversation_import(raw_bytes)
 
 
 @pytest.mark.parametrize("value", [b"NaN", b"Infinity", b"-Infinity"])
-def test_non_finite_favorite_float_rejects(value: bytes) -> None:
-    with pytest.raises(ConversationImportError, match="Favorite value must be a finite scalar\\."):
-        sanitize_conversation_import(b'{"favorites":[{"score":' + value + b'}]}')
+def test_non_finite_json_constants_reject_even_in_ignored_sources(value: bytes) -> None:
+    with pytest.raises(ConversationImportError, match="^" + re.escape("Import contains a non-finite number.") + "$"):
+        sanitize_conversation_import(b'{"sources":' + value + b'}')
 
 
 def test_uploaded_handler_reads_bytes_applies_valid_data_and_warns_rejection() -> None:
@@ -280,7 +269,14 @@ def test_uploaded_handler_reads_bytes_applies_valid_data_and_warns_rejection() -
     assert invalid_successes == []
 ```
 
-Run the focused test before implementation; it must fail during collection because the frozen module lacks the imported boundary names. Record that exact pytest collection error and test command.
+First record the pristine frozen baseline above. Then, while code remains at frozen `daecce8a27f50da39284f5519d77b835905209f6`, replace **only** `tests/test_conversation_import.py` with this test file and run the red evidence:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE = '1'
+python -m pytest tests/test_conversation_import.py -q
+```
+
+Record literal outcome: exit code `2`, collection `ImportError: cannot import name 'MAX_FAVORITES' from 'conversation_import'`; frozen code lacks the new constants, `ConversationImportError`, and both apply helpers. Record the actual command output alongside this expected red result.
 
 ## Locked implementation (copy/adapt only if frozen file formatting requires it)
 
@@ -312,13 +308,17 @@ def _text(value: Any, message: str) -> str:
     return value
 
 
+def _reject_non_finite(value: str) -> None:
+    raise ConversationImportError("Import contains a non-finite number.")
+
+
 def sanitize_conversation_import(raw: bytes) -> tuple[dict[str, object], list[str]]:
     if not isinstance(raw, bytes):
         raise ConversationImportError("Import must be raw bytes.")
     if len(raw) > MAX_IMPORT_BYTES:
         raise ConversationImportError("Import exceeds 8 MiB limit.")
     try:
-        payload = json.loads(raw.decode("utf-8"))
+        payload = json.loads(raw.decode("utf-8"), parse_constant=_reject_non_finite)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ConversationImportError("Import must be UTF-8 JSON bytes.") from error
     if not isinstance(payload, dict):
