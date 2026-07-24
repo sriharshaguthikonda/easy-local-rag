@@ -49,6 +49,15 @@ def _parse_integer(value: str) -> int:
     return -result if negative else result
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ConversationImportError("Import contains duplicate object keys.")
+        result[key] = value
+    return result
+
+
 def _validate_json_depth(payload: object) -> None:
     stack: list[tuple[object, int]] = [(payload, 1)]
     while stack:
@@ -92,6 +101,7 @@ def sanitize_conversation_import(raw: bytes) -> tuple[dict[str, object], list[st
             parse_constant=_reject_non_finite,
             parse_float=_parse_finite_float,
             parse_int=_parse_integer,
+            object_pairs_hook=_reject_duplicate_keys,
         )
     except RecursionError as error:
         raise ConversationImportError("Import nesting exceeds 32 containers.") from error
