@@ -1,5 +1,7 @@
 # Issue #25 Plan: Chroma dual-run, rollback and retirement
 
+[Roadmap ledger](../plans/README.md)
+
 Status: **Open — cutover and retirement gate**
 
 GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/25
@@ -23,9 +25,9 @@ Cutover cannot start until:
 - #20B completes destination import and reconciliation through `.memory` #4;
 - `.memory` #5 exposes stable search/hydration;
 - #23 passes its retrieval and citation-resolution gate;
-- #21/#22 provide a supported PostgreSQL client with explicit provider modes;
+- #21B/#22B provide a supported PostgreSQL client with explicit provider modes;
 - #27 validates generated answers and preserves search-only operation;
-- #24 proves no supported GUI directly owns Chroma.
+- #24 supplies the specification proving no supported GUI directly owns Chroma.
 
 #25 executes after #27. A future GUI follows successful cutover. Late #26
 removes legacy dependencies and reorganizes the repository only after #25.

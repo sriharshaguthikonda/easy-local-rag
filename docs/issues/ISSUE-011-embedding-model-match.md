@@ -1,5 +1,7 @@
 # Issue #11: Enforce the embedding-model contract
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** OPEN — `embedding_contract.py` and GUI checks exist; complete ingest/query coverage and legacy-collection tests are required.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/11
 **Labels / priority:** `priority:P1`, `type:bug`

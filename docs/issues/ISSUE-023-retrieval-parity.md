@@ -1,5 +1,7 @@
 # Issue #23 Plan: Chroma-to-PostgreSQL retrieval parity
 
+[Roadmap ledger](../plans/README.md)
+
 Status: **Open — migration gate**
 
 GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/23
@@ -28,9 +30,11 @@ This issue executes after:
 4. #20B reconciles the destination import.
 5. [`.memory` #5](https://github.com/sriharshaguthikonda/.memory/issues/5)
    exposes independent lexical, vector and metadata retrieval plus hydration.
+6. #21A defines CLI/service ports, transport and categorized errors; #22A
+   defines provider capabilities, status, requests, streaming and cancellation.
 
-It is the blocking gate before #21/#22 become the maintained client path and
-before #25 can start cutover. Legacy defects #6, #10 and #11 must appear as
+It is the blocking gate before #21B/#22B integrate the maintained client path
+and before #25 can start cutover. Legacy defects #6, #10 and #11 must appear as
 regression cases rather than define the expected PostgreSQL behaviour.
 
 Steps 3–5 are satisfied only by reciprocal comments on

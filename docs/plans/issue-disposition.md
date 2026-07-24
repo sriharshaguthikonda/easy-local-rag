@@ -8,7 +8,7 @@ closure gate unless GitHub has explicitly closed it as a duplicate.
 
 | Issue | Disposition | Canonical destination |
 |---|---|---|
-| #2 exposed credentials | **Keep — blocking** | #2 owns containment/rotation and closes only after consuming #26B's clean all-ref evidence; #26B alone executes any approved rewrite. Never publish values. |
+| #2 exposed credentials | **Keep — blocking** | #2 owns containment/rotation and closes only after #26B supplies either clean all-ref evidence or the documented explicitly accepted immutable-ref residual outcome; #26B alone executes any approved rewrite. Never publish values. |
 | #3 subprocess injection | Closed on experimental history; **retain as regression requirement** | #21 client boundary and #24 GUI rules. Old commit is not on `main`. |
 | #4 arbitrary file open | Closed on experimental history; **retain as regression requirement** | #21/#24. Any future opener needs allowlisted roots/types and no shell fallback. |
 | #5 prompt injection | **Keep open** | Complete its own guarded-context closure gate; #27 extends it with citation validation and abstention. |
@@ -39,19 +39,20 @@ closure gate unless GitHub has explicitly closed it as a duplicate.
 
 1. #2 credential containment and rotation (issue remains open).
 2. #18 public/local inventory and PR disposition.
-3. Early #26A/#26B generated/private-artifact hygiene and the sole approved history rewrite.
+3. #26A generated/private-artifact hygiene, then separately approved #26B's sole history rewrite.
 4. #2 final closure from post-rewrite all-ref evidence.
 5. #19 read-only audit/export.
 6. #20A database-neutral ingestion package.
 7. `.memory` #4 evidence schema/import boundary.
 8. #20B destination integration and reconciliation.
 9. `.memory` #5 retrieval APIs.
-10. #23 parity/regression suite.
-11. #21/#22 thin-client and provider work after the shared contract.
-12. #27 grounded answers.
-13. #25 dual-run/cutover gate.
-14. Future GUI implementation issue, if still wanted.
-15. Late #26C/#26D dependency, layout and Chroma cleanup.
+10. #21A CLI/service ports and #22A provider capabilities.
+11. #23 parity/regression suite.
+12. #21B CLI/service integration and #22B provider integration.
+13. #24 specification only.
+14. #27 grounded answers.
+15. #25 dual-run/cutover gate and GUI/no-GUI handoff.
+16. Late #26C then #26D cleanup.
 
 ## Closure policy for legacy issues
 

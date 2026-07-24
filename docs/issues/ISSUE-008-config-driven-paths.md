@@ -1,5 +1,7 @@
 # Issue #8: Make runtime paths configurable
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** OPEN — partial helpers may exist; audit every runtime path before closure.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/8
 **Labels / priority:** `priority:P1`, `type:bug`

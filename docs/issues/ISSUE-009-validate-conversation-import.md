@@ -1,5 +1,7 @@
 # Issue #9: Validate imported Streamlit conversations
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** OPEN — whitelist helper and basic tests exist; this is the next small closure after missing regression coverage.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/9
 **Labels / priority:** `priority:P0`, `type:security`

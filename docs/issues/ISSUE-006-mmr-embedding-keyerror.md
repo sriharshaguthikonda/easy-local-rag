@@ -1,5 +1,7 @@
 # Issue #6: Fix hybrid-retrieval MMR embedding access
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** OPEN — implementation merged to the GUI lineage in [PR #29](https://github.com/sriharshaguthikonda/easy-local-rag/pull/29) at fix commit [`de74659`](https://github.com/sriharshaguthikonda/easy-local-rag/commit/de7465902e00e363993f9ea9eb2190ce940e1bed); close after this canonical plan lands on `main` and the issue receives reciprocal evidence links.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/6
 **Labels / priority:** `priority:P0`, `type:bug`

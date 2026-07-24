@@ -1,13 +1,18 @@
 # Issue #20: Deterministic ingestion, chunking, and change detection
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** Open; split into #20A and #20B.
 **GitHub:** [#20](https://github.com/sriharshaguthikonda/easy-local-rag/issues/20)
 **Parent epic:** #17.
 **Labels / priority:** `priority:P1`, `type:enhancement`.
 
+**Historical proposal:** [Qwen3 embedding migration](../proposals/qwen3-embedding-migration.md)
+is superseded historical context, not implementation authority.
+
 ## Dependencies
 
-Requires #19's export contract. **#20A is database-neutral and must complete before `.memory` #4.** `.memory` #4 then establishes the evidence/source store and import contract. **#20B begins only after the immutable `.memory` #4 handoff gate below passes.** `.memory` #5 follows #20B; then #23, #21/#22, #27, #25, future GUI, and late #26 follow in order.
+Requires #19B's export contract. **#20A is database-neutral and must complete before `.memory` #4.** `.memory` #4 then establishes the evidence/source store and import contract. **#20B begins only after the immutable `.memory` #4 handoff gate below passes.** `.memory` #5 follows #20B; then #21A, #22A, #23, #21B, #22B, #24 specification, #27, #25, GUI/no-GUI handoff, #26C, and #26D follow in order.
 
 The `.memory` #4 handoff is accepted only when reciprocal comments on
 [easy-local-rag #20](https://github.com/sriharshaguthikonda/easy-local-rag/issues/20)

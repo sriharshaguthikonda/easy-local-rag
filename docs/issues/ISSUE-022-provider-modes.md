@@ -1,5 +1,7 @@
 # Issue #22: Explicit provider modes and local/cloud truthfulness
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** Open; follows the thin service boundary.
 **GitHub:** [#22](https://github.com/sriharshaguthikonda/easy-local-rag/issues/22)
 **Parent epic:** #17.
@@ -23,10 +25,14 @@ validation and #25 cutover.
 
 ## Implementation slices
 
-1. **Provider contracts:** separate embedding, generation, reranker, STT, and TTS adapters; expose name, endpoint, local/remote classification, model/version, capabilities, health, timeout/retry, logging, limits, and tokenizer support.
+1. **#22A provider boundary:** own provider capabilities, status, requests, streaming, and cancellation for separate embedding, generation, reranker, STT, and TTS adapters; expose name, endpoint, local/remote classification, model/version, health, timeout/retry, logging, limits, and tokenizer support.
 2. **Explicit modes:** `offline-search` has no network/model/speech/telemetry; `local-chat` uses configured local endpoints and fails closed; `cloud-chat` requires selected provider plus disclosure/preview/redaction; `mixed-speech` lists remote speech/TTS and is never described as fully local.
 3. **Egress and secrets:** use environment/OS secret store, non-secret sample values only in `.env.example`, startup missing-name checks, redacted diagnostics, all-ref scan/rotation under #2, and per-request egress summary.
 4. **Failure behavior:** no implicit fallback between provider classes; distinct retrieval/provider errors; provider loss leaves search-only usable; real provider/tokenizer limits drive budgets/rate controls.
+
+`#22B` is the post-#23 integration slice. It may connect pinned provider
+behavior to #21 ports, but cannot redefine `.memory` #5 retrieval/hydration or
+#27 answer/citation/abstention validation.
 
 ## Affected interfaces, files, and artifacts
 

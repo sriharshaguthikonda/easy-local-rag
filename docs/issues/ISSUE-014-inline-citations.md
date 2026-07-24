@@ -1,5 +1,7 @@
 # Issue #14: Render inline source citations
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** CLOSED as a GitHub duplicate; no independent implementation work remains.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/14
 **Labels / priority:** `priority:P1`, `type:enhancement`

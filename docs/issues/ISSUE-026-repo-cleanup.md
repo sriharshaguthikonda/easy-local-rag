@@ -1,5 +1,7 @@
 # Issue #26 Plan: Repository hygiene, history and layout cleanup
 
+[Roadmap ledger](../plans/README.md)
+
 Status: **Open — split into early hygiene and late retirement cleanup**
 
 GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/26

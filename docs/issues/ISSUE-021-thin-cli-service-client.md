@@ -1,5 +1,7 @@
 # Issue #21: Thin CLI over the stable RAG service contract
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** Open; blocked pending stable retrieval/service contract.
 **GitHub:** [#21](https://github.com/sriharshaguthikonda/easy-local-rag/issues/21)
 **Parent epic:** #17.
@@ -20,10 +22,14 @@ interface; #21 must not embed provider policy in retrieval.
 
 ## Implementation slices
 
-1. **Contract adoption:** consume `SearchRequest`, `SearchHit`, `HydratedChunk`, `Citation`, `ChatRequest`, `ChatResponse`, and `ProviderStatus` from the stable shared boundary.
+1. **#21A port boundary:** own CLI/service ports, transport, request framing, and categorized errors; consume `SearchRequest`, `SearchHit`, `HydratedChunk`, `Citation`, `ChatRequest`, `ChatResponse`, and `ProviderStatus` from stable producers.
 2. **CLI presentation:** implement explicit `status`, `search`, `show-chunk`, `neighbours`, `chat`, `ingest`, `migrate audit|export|verify`, and `doctor` commands; keep interactive shortcuts documented and turn-local.
 3. **State/error discipline:** stable `--json`, categorized errors/non-zero exits, explicit/versioned session persistence, one stored user/assistant turn each, isolated evidence per turn, tokenizer-backed budget, and safe cancellation.
 4. **Optional capabilities:** adapters for provider/TTS/STT stay optional; search-only and `--no-model` work without importing GUI, speech, or provider-specific modules.
+
+`#21B` is the post-#23 integration slice. It may wire the verified CLI/service
+port to retrieval and provider consumers, but cannot redefine `.memory` #5
+retrieval/hydration, #22 provider behavior, or #27 answer validation.
 
 ## Affected interfaces, files, and artifacts
 

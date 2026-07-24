@@ -1,5 +1,7 @@
 # Issue #19: Read-only Chroma audit and deterministic export
 
+[Roadmap ledger](../plans/README.md)
+
 **Status:** Open; first migration implementation.
 **GitHub:** [#19](https://github.com/sriharshaguthikonda/easy-local-rag/issues/19)
 **Parent epic:** #17.
@@ -7,7 +9,7 @@
 
 ## Dependencies
 
-Requires #18 inventory/archive evidence, the complete early #26A/#26B handoff,
+Requires #18's immutable inventory and proposed disposition plus #26B evidence,
 and #2 final closure from #26B's clean or explicitly accepted
 immutable-residual terminal evidence. Blocks #20A, `.memory` #4, #20B, #23,
 #25, and late #26. Chroma remains untouched and available as rollback data.

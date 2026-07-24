@@ -1,5 +1,7 @@
 # Issue #24 Plan: Future thin GUI specification
 
+[Roadmap ledger](../plans/README.md)
+
 Status: **Open — specification only**
 
 GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/24
@@ -25,7 +27,7 @@ No existing GUI branch or PR #1 is a merge path.
   implementations.
 
 This specification closes after its documentation and PR #1 disposition are
-recorded, before #25. The #25 transition checklist owns opening the later GUI
+recorded, after #21B/#22B and before #27. The #25 transition checklist owns opening the later GUI
 implementation issue after successful cutover. That later issue is blocked at
 minimum by completed #22 provider modes and completed #25 cutover; it also
 consumes the completed #21/#23/#27 contracts.
