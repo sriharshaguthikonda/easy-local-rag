@@ -50,8 +50,8 @@ unresolved placeholder, implementer choice, or speculative dependency.
 |---|---|---|
 | #2 | blocked-awaiting-user | Await user rotation evidence; no containment closure is inferred from docs. |
 | #9 | closed | Completed through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`; [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) is closed. |
-| #15 | planning | [2026-07-24 atomic-vault implementation packet](../superpowers/plans/2026-07-24-issue-015-atomic-vault-write-implementation.md) is under ChatGPT/GSD review; after the reviewed docs merge, code work requires a separate merged activation PR. Closure records that PR's URL and immutable merge SHA. |
-| Active issue | none | Zero active issues is allowed while the #15 packet is under review; #15 must not become active until the separate activation PR merges. |
+| #15 | planning | [2026-07-24 atomic-vault implementation packet](../superpowers/plans/2026-07-24-issue-015-atomic-vault-write-implementation.md) is under ChatGPT/GSD review. After the reviewed docs merge, only the merge commit of activation branch `codex/issue-015-activate` into `main` activates work. |
+| Active issue | none | Zero active issues is allowed while the #15 packet and activation PR are under review. The activation PR changes this row to `#15` and the #15 state to `active`; no earlier event is activation. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
@@ -60,6 +60,24 @@ ChatGPT review is advisory and does not require code to exist; code review start
 initial code commit. A packet may
 describe implementation detail only; it cannot relax a canonical scope,
 invariant, closure gate, approval, or rollback constraint.
+
+The #15 activation PR owns only
+`docs/issues/ISSUE-015-atomic-vault-write.md` and this ledger. In one commit it
+changes canonical `PLANNING` to `ACTIVE`, roadmap #15 `planning` to `active`,
+and `Active issue` `none` to `#15`; it also records the actual final reviewed
+packet SHA, immutable docs merge SHA, frozen GUI SHA
+`619365224f6db3770d3369fd84a295589699e513`, implementation branch
+`codex/fix-issue-15`, and worker ownership of `vault_store.py`,
+`Vault_json_creation_from_HTMLs.py`, and `tests/test_vault_store.py`. Only the
+GitHub merge commit SHA of that activation PR authorizes code work.
+
+The #15 implementation branch is created exactly at the frozen GUI SHA and its
+code PR targets
+`GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`. The
+orchestrator fetches that remote target before work and again before merge and
+stops if its head differs from the frozen SHA. The code PR is merged with
+GitHub **Create a merge commit** only, never squash or rebase, preserving the
+exact test, production, and review-fix child SHAs for evidence and rollback.
 
 ## Gate ledger and reciprocal handoffs
 
