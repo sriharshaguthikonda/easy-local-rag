@@ -82,12 +82,20 @@ def test_changed_mtime_with_unchanged_or_absent_hash_replaces_once(tmp_path):
 
 
 def test_same_mtime_changed_hash_replaces_once():
-    existing = [_entry("a.html", 1, HASH_A, chunks=[{"id": HASH_A, "text": "old"}])]
-    incoming = [_entry("a.html", 1, HASH_B, chunks=[{"id": HASH_B, "text": "new"}])]
+    alias = str(Path("same-mtime") / "." / "nested" / ".." / "a.html")
+    native = str(Path("same-mtime") / "a.html")
+    existing = [
+        _entry("before.html"),
+        _entry(alias, 1, HASH_A, chunks=[{"id": HASH_A, "text": "old"}]),
+        _entry("after.html"),
+    ]
+    incoming = [_entry(native, 1, HASH_B, chunks=[{"id": HASH_B, "text": "new"}])]
+    old_existing, old_incoming = copy.deepcopy(existing), copy.deepcopy(incoming)
     merged = merge_vault_entries(existing, incoming)
-    assert len(merged) == 1
-    assert merged[0]["content_hash"] == HASH_B
-    assert merged[0]["chunks"] == incoming[0]["chunks"]
+    assert len(merged) == 3 and merged[0] is existing[0] and merged[2] is existing[2]
+    assert merged[1]["file_name"] == native and merged[1]["content_hash"] == HASH_B
+    assert merged[1]["chunks"] == incoming[0]["chunks"]
+    assert existing == old_existing and incoming == old_incoming
 
 
 def test_legacy_hash_upgrade_merge_winners_and_no_mutation():
