@@ -42,9 +42,20 @@ rollback behavior; TDD exact commands with expected failure/pass evidence;
 commit boundaries, approval stops, and closure evidence. It may contain no
 unresolved placeholder, implementer choice, or speculative dependency.
 
-Workers use this lifecycle: `planner agent -> ChatGPT -> GSD checker ->
-corrector agent -> implementation agent -> code-review agent -> fixer agent ->
-verifier -> orchestrator`. A packet may
+## Current JIT state
+
+| Issue | State | Packet / next gate |
+|---|---|---|
+| #2 | blocked-awaiting-user | Await user rotation evidence; no containment closure is inferred from docs. |
+| #9 | planning | [2026-07-24 validation implementation packet](../superpowers/plans/2026-07-24-issue-009-validate-conversation-import-implementation.md) is in packet review. After docs merge, transition #9 to `active` before implementation starts; keep it the sole active issue. |
+| #15 | queued | Starts only after #9 closes and an execution slot is available. |
+| Active issue | none | Zero active issues is permitted only while the packet-review/docs-merge approval gate blocks execution. |
+
+Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
+corrector -> docs merge -> implementer initial TDD commit -> code-review agent ->
+accepted-finding fixer commit(s) -> verifier -> orchestrator PR merge/evidence/close`.
+ChatGPT review is advisory and does not require code to exist; code review starts after the
+initial code commit. A packet may
 describe implementation detail only; it cannot relax a canonical scope,
 invariant, closure gate, approval, or rollback constraint.
 
