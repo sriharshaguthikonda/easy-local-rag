@@ -11,9 +11,9 @@ the already-known #8/#15 drift, or weaken #2's blocking sequence.
 Add only `scripts/validate_issue_ledger.py`, focused deterministic tests, and
 the mandatory command wording in `AGENTS.md` during the later implementation
 PR. Use only Python stdlib and existing `gh`; no dependency, CI network gate,
-or GitHub mutation is allowed. The CLI accepts required `--repo OWNER/REPO`
-and optional document-path overrides, defaults to `docs/issues/README.md` and
-`docs/plans/branch-inventory.md`, and returns: `0` consistent, `1` mismatch,
+or GitHub mutation is allowed. The CLI accepts only required `--repo OWNER/REPO`,
+uses `docs/issues/README.md` and `docs/plans/branch-inventory.md` defaults, and
+returns: `0` consistent, `1` mismatch,
 `2` usage/API/CLI/auth failure. Output names identifiers and expected/actual
 state only; never secrets.
 
