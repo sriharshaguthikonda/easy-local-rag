@@ -55,7 +55,7 @@ credentials are accepted, stored, or printed.
 
 ## Frozen activation and ownership
 
-The separate activation PR is the first code gate. It owns only the canonical
+The separate activation PR is the first implementation precondition. It owns only the canonical
 ledger/plan rows necessary to record #8 and #15 closed, PR #36 merge
 `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205`, refreshed main/GUI/PR #1 state,
 removal of obsolete future-activation wording, #37 as sole active, #38 queued,
