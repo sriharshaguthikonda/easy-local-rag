@@ -1,10 +1,12 @@
 # Canonical issue-plan index
 
 This index is the authoritative issue/plan/status index and roadmap ledger for
-the 24 tracked issues:
+the 26 tracked issues:
 [#2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2) and
 [#5](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5) through
-[#27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27).
+[#27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27), plus
+[#37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) and
+[#38](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38).
 Canonical issue files are acceptance contracts, not implementation evidence.
 Authority precedence is: **GitHub issue = live state and human decisions;
 canonical plan = scope, invariants, and closure gates; roadmap ledger =
@@ -16,7 +18,7 @@ and #14 is closed as a duplicate.
 
 ## Required execution order
 
-`#2A -> #18 -> #26A -> separately approved #26B -> #2 closure -> #19A -> #19B -> #20A -> .memory #4 handoff -> #20B -> .memory #5 handoff -> #21A -> #22A -> #23 -> #21B -> #22B -> #24 specification -> #27 -> #25 -> GUI/no-GUI handoff -> #26C -> #26D`
+`#37 -> #38 (independent P0 exception) -> verification-only #5/#7/#12 audits -> #2A -> #18 -> #26A -> separately approved #26B -> #2 closure -> #19A -> #19B -> #20A -> .memory #4 handoff -> #20B -> .memory #5 handoff -> #21A -> #22A -> #23 -> #21B -> #22B -> #24 specification -> #27 -> #25 -> GUI/no-GUI handoff -> #26C -> #26D`
 
 #24 is a specification-only issue. It records the future GUI contract and
 salvage decisions; it does not authorize GUI implementation. #17 is an epic,
@@ -30,9 +32,10 @@ Only the next unblocked packet may be created, at
 `docs/superpowers/plans/YYYY-MM-DD-issue-NNN-<slug>-implementation.md`.
 Each packet names one canonical issue/slice and its canonical plan links to it
 once created; this ledger tracks its state. The only states are `queued`,
-`planning`, `active`, `review`, `blocked-awaiting-user`, and `closed`. Exactly
-one issue may be `active` at a time (zero only between packets or while
-approvals block execution). A blocked-awaiting-user #2 parks #2; execute #9,
+`planning`, `active`, `review`, `blocked-awaiting-user`, and `closed`. At most
+one issue may be `active`: an activated issue is the declared sole active
+issue, while stable between-issues/after-closure states may have zero. A
+blocked-awaiting-user #2 parks #2; execute #9,
 then #15, one at a time, without advancing #18 or #26. If both close and #2
 remains blocked, only read-only JIT packet preparation may continue; do not
 bypass the #2/#18/#26 security sequence.
@@ -51,6 +54,8 @@ unresolved placeholder, implementer choice, or speculative dependency.
 | #2 | blocked-awaiting-user | Await user rotation evidence; no containment closure is inferred from docs. |
 | #9 | closed | Completed through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`; [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) is closed. |
 | #15 | active | [2026-07-24 atomic-vault implementation packet](../superpowers/plans/2026-07-24-issue-015-atomic-vault-write-implementation.md) completed final review at `14df1b7fcea0775c56b6a774c4047c3f14e29c9d` and merged as immutable docs evidence `61fdb3b30d19451fd47b38c618c8d34630b8f547`. Code work remains gated on this activation PR's future GitHub merge commit SHA. |
+| #37 | planning | [Ledger synchronization](ISSUE-037-ledger-sync.md) · [implementation packet](../superpowers/plans/2026-07-27-issue-037-ledger-validator-implementation.md). This packet does not reconcile existing lifecycle drift; a separate activation PR owns that state transition. |
+| #38 | queued | [Streamlit evidence contract](ISSUE-038-streamlit-evidence-contract.md). Explicit independent P0 exception after #37 only; #2 remains blocked. |
 | Active issue | #15 | #15 is the sole active issue. Code work remains gated on this activation PR's future GitHub merge commit SHA. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
@@ -167,6 +172,8 @@ approval, rollback, or scope means a separate packet.
 | #25 | P0 todo | Open — cutover/retirement gate | [Chroma retirement](ISSUE-025-chroma-retirement.md) | After #27 and all migration/client gates; final state creates the blocked GUI issue or records no-GUI, then unlocks late #26. | [Issue #25](https://github.com/sriharshaguthikonda/easy-local-rag/issues/25) |
 | #26 | P1 developer experience | Open — split early/late | [Repository cleanup](ISSUE-026-repo-cleanup.md) | 26A/26B follow #2 containment/#18 and close #2 before #19; 26C/26D consume #25's immutable GUI/no-GUI handoff. | [Issue #26](https://github.com/sriharshaguthikonda/easy-local-rag/issues/26) |
 | #27 | P0 security | Open — answer-safety gate | [Grounded answers](ISSUE-027-grounded-answers.md) | Extends #5/#13 and owns structured validation associated with closed duplicate #14; after #24 and #21B/#22B, before #25. | [Issue #27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27) |
+| #37 | P1 developer experience | Open — planning | [Ledger synchronization](ISSUE-037-ledger-sync.md) | First: repairs the authoritative execution ledger. [Implementation packet](../superpowers/plans/2026-07-27-issue-037-ledger-validator-implementation.md) is documentation only until separate activation. | [Issue #37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) |
+| #38 | P0 bug | Open — queued independent exception | [Streamlit evidence contract](ISSUE-038-streamlit-evidence-contract.md) | After #37 only; it does not unlock or bypass #2 -> #18 -> #26. | [Issue #38](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38) |
 
 ## Gate discipline
 
