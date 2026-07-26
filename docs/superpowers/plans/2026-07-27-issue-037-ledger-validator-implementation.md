@@ -89,6 +89,21 @@ activation wording, and stale status/lifecycle wording in a named canonical
 test(#37): specify issue ledger validation
 ```
 
+The test path is exactly `tests/test_validate_issue_ledger.py`. RED runs
+`python -m pytest tests/test_validate_issue_ledger.py -q` and must exit nonzero
+with the new requirements failing before production exists. After production,
+GREEN reruns that exact command and must exit 0. Then run:
+
+```powershell
+python -m py_compile scripts/validate_issue_ledger.py tests/test_validate_issue_ledger.py
+git diff --check
+python -m pytest tests -q
+```
+
+Compilation and diff checks must exit 0. Compare the full-suite exit code and
+failure IDs to the freshly recorded activated-target pristine baseline; any new
+failure is a stop, not historical acceptance.
+
 Implement the minimal parser/CLI and record GREEN for each failing case plus a
 reconciled fixture; commit only production as:
 
