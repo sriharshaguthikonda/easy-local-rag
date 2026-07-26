@@ -1,18 +1,24 @@
 # Public branch and PR inventory
 
-Snapshot date: 2026-07-18. This is the public GitHub inventory required by issue #18. It intentionally omits credential values and private corpus content. Local-only refs still require a local `git show-ref`, secret scan, and comparison before #18 can close.
+Snapshot date: 2026-07-27. This is a dated, non-authoritative public GitHub
+inventory required by issue #18. It intentionally omits credential values and
+private corpus content. It is orientation only: immediately before any
+execution gate, activation, closure, branch archive, or PR disposition, fetch
+the relevant ref and run `python scripts/validate_issue_ledger.py --repo
+OWNER/REPO`; do not use this snapshot as a branch-tip execution gate.
 
 ## `main`
 
-- Tip: `3e9e864a73137190dd202bdf4827e7a86f31aa84`
+- Tip at packet-merge snapshot: `f538d33a29bbc233cceee30444f42a3bf43b9466`
 - Role: old upstream-derived CLI and email RAG code; this is the current default branch, not the advanced GUI implementation.
 - Current problem: README and layout still describe the old Ollama/Chroma workflow and do not represent the PostgreSQL/pgvector target.
 - Disposition: retain as the migration base. Add new PostgreSQL work in focused branches; do not replace it with an experimental branch merge.
 
-## `BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`
+## `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`
 
-- Tip: `ed662570fcd50beb32fc6535bcbd421465f7f881`
-- Relation to `main`: 21 commits ahead, 0 behind.
+- Tip at snapshot: `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205`
+- Relation to `main`: verify live before execution; this dated snapshot is not
+  a frozen implementation target.
 - Main additions: several PyQt modules, `rag_gui.py`, `streamlit_app.py`, a large Chroma/Groq/Ollama application module, direct-search and context helpers, file monitoring, semantic chunking, Chroma utilities, TTS code, and GUI tests.
 - Executable/client candidates: `rag_gui.py`, `streamlit_app.py`, `groq_lama_chromadb_RAG_ETTS.py`, the monitor batch file, and ingestion/query utility scripts.
 - Database assumptions: direct ChromaDB access from clients and workers; multiple hard-coded or historical collection names, including `html_chunks_temp` and `html_chunks_text_in_documents`; no shared PostgreSQL service boundary.
@@ -46,10 +52,19 @@ Snapshot date: 2026-07-18. This is the public GitHub inventory required by issue
 
 ## PR #1 — `Add QtPy GUI for Groq chat`
 
-- State at inspection: open and not mergeable.
+- State at inspection: **CLOSED, unmerged**.
 - Base: the experimental BM25 branch, not `main`.
-- Head: the stale/diverged QtPy branch above.
+- Head: `8cb08091347ee41e7c8dac1c04d02a8e5d2eed2b` on the stale/diverged QtPy
+  branch above.
 - Decision: superseded by #17 and #24. Its useful idea is recorded as a future thin-client option; its architecture is not a merge path.
+
+## PR #36 — Atomic vault write
+
+- State at inspection: **MERGED** on 2026-07-24.
+- Base: `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`.
+- Reviewed code head: `3ced61bcb9957907cc568e2e2560edd6f3c53b83`.
+- GitHub Create-a-merge-commit SHA:
+  `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205`.
 
 ## Closed fixes not present on `main`
 

@@ -2,10 +2,10 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** ACTIVE — the [decision-complete JIT packet](../superpowers/plans/2026-07-24-issue-015-atomic-vault-write-implementation.md) completed final review at `14df1b7fcea0775c56b6a774c4047c3f14e29c9d` and merged as immutable docs evidence `61fdb3b30d19451fd47b38c618c8d34630b8f547`. Code work remains gated on the future GitHub merge commit SHA of this separate activation PR.
+**Status:** CLOSED — COMPLETED on GitHub through [PR #36](https://github.com/sriharshaguthikonda/easy-local-rag/pull/36), merged into `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs` as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205`. Its reviewed code head was `3ced61bcb9957907cc568e2e2560edd6f3c53b83`.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/15
 **Labels / priority:** `priority:P0`, `type:bug`
-**Dependencies:** #8 remains open. This issue may use its already-landed `EASY_RAG_VAULT_SOURCE_DIR`/folder-picker fallback but does not satisfy or close #8. Generated vault data remains untracked.
+**Dependencies:** #8 is closed independently. This issue used the already-landed `EASY_RAG_VAULT_SOURCE_DIR`/folder-picker fallback without being evidence for #8. Generated vault data remains untracked.
 
 ## Implementation slices
 
@@ -43,6 +43,6 @@ Python 3.11 or newer is mandatory; a failing version preflight stops before edit
 - **Maintained-path closure:** repeat unchanged run has no duplicate; the same stable file identity with changed time and content replaces once; corruption backs up; injected failure preserves the old target; no append mode remains.
 - **Retirement closure (mutually exclusive):** remove the vault builder from maintained entry points and docs, prove it cannot write generated vault data, and document the maintained persistence/export replacement with atomic-write evidence.
 - **Rollback constraint:** preserve the old vault until a successful `os.replace`; never revert to append writes.
-- **Activation:** branch `codex/issue-015-activate` owns only this canonical file and `docs/issues/README.md`. It changes this file's `PLANNING` status to `ACTIVE`, roadmap #15 from `planning` to `active`, and roadmap `Active issue` from `none` to `#15`. The final reviewed packet SHA is `14df1b7fcea0775c56b6a774c4047c3f14e29c9d`; the immutable docs merge SHA is `61fdb3b30d19451fd47b38c618c8d34630b8f547`; the frozen GUI SHA is `619365224f6db3770d3369fd84a295589699e513`; the implementation branch is `codex/fix-issue-15`; and the worker-owned files are `vault_store.py`, `Vault_json_creation_from_HTMLs.py`, and `tests/test_vault_store.py`. Only this activation PR's future GitHub merge commit SHA authorizes code work.
+- **Closure evidence:** the final reviewed packet SHA was `14df1b7fcea0775c56b6a774c4047c3f14e29c9d`; immutable documentation evidence was `61fdb3b30d19451fd47b38c618c8d34630b8f547`; reviewed code head was `3ced61bcb9957907cc568e2e2560edd6f3c53b83`; and PR #36 merged with GitHub Create-a-merge-commit as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205`.
 - **Commits and merge:** exactly `test(#15): specify atomic vault behavior`, then `fix(#15): atomic-write vault json`; each accepted code-review finding uses its own `fix(#15): address accepted review finding` commit. These boundaries are fixed by the [owner decision](https://github.com/sriharshaguthikonda/easy-local-rag/issues/15#issuecomment-5070864427). The code PR uses GitHub **Create a merge commit** only—never squash or rebase—so the exact test, production, and accepted review-fix child SHAs remain reachable for evidence and rollback.
 - **Frozen-base stop guard:** immediately before implementation work and again before code merge, fetch the GUI target branch and stop if its remote head is not exactly `619365224f6db3770d3369fd84a295589699e513`.
