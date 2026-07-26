@@ -16,6 +16,11 @@ class LedgerCliError(Exception):
     pass
 
 
+class SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, _message):
+        raise ValueError
+
+
 def _state(value):
     return "CLOSED" if value.lower() == "closed" else "OPEN"
 
@@ -199,14 +204,15 @@ def collect_snapshot(repo, branches, runner=subprocess.run):
 
 
 def main(argv=None, *, root=None, runner=subprocess.run):
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = SafeArgumentParser(add_help=False)
     parser.add_argument("--repo", required=True)
     try:
         args = parser.parse_args(argv)
-    except SystemExit:
+    except (SystemExit, ValueError):
+        print("usage: python scripts/validate_issue_ledger.py --repo OWNER/REPO")
         return 2
     if not re.fullmatch(r"[^/\s]+/[^/\s]+", args.repo):
-        print("usage: --repo OWNER/REPO required")
+        print("usage: python scripts/validate_issue_ledger.py --repo OWNER/REPO")
         return 2
     root = Path(root or Path(__file__).parents[1])
     try:
