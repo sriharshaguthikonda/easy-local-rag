@@ -216,7 +216,13 @@ def test_zero_exit_malformed_gh_payloads_return_2_without_a_traceback(tmp_path, 
     (root / "docs" / "plans" / "branch-inventory.md").write_text(inventory(), encoding="utf-8")
     payloads = (
         ([{}], []),
+        ([{"number": True, "state": "OPEN"}], [], {"object": {"sha": SHA_MAIN}}),
         ([{"number": 15, "state": "CLOSED"}], [{}]),
+        (
+            [{"number": 15, "state": "CLOSED"}],
+            [{"number": True, "state": "OPEN", "mergeCommit": None}],
+            {"object": {"sha": SHA_MAIN}},
+        ),
         (
             [{"number": 15, "state": "CLOSED"}],
             [{"number": 1, "state": "CLOSED", "mergeCommit": None}],

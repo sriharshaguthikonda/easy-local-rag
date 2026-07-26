@@ -167,7 +167,7 @@ def collect_snapshot(repo, branches, runner=subprocess.run):
         normalized_issues = {
             str(item["number"]): {"state": item["state"]}
             for item in issues
-            if isinstance(item["number"], int) and item["number"] > 0 and item["state"] in {"OPEN", "CLOSED"}
+            if type(item["number"]) is int and item["number"] > 0 and item["state"] in {"OPEN", "CLOSED"}
         }
         normalized_prs = {
             str(item["number"]): {
@@ -175,7 +175,7 @@ def collect_snapshot(repo, branches, runner=subprocess.run):
                 "merge_sha": (item.get("mergeCommit") or {}).get("oid"),
             }
             for item in prs
-            if isinstance(item["number"], int)
+            if type(item["number"]) is int
             and item["number"] > 0
             and item["state"] in {"OPEN", "CLOSED", "MERGED"}
             and (item.get("mergeCommit") is None or isinstance(item.get("mergeCommit"), dict))
