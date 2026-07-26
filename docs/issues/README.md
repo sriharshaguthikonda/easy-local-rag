@@ -32,9 +32,10 @@ Only the next unblocked packet may be created, at
 `docs/superpowers/plans/YYYY-MM-DD-issue-NNN-<slug>-implementation.md`.
 Each packet names one canonical issue/slice and its canonical plan links to it
 once created; this ledger tracks its state. The only states are `queued`,
-`planning`, `active`, `review`, `blocked-awaiting-user`, and `closed`. Exactly
-one issue may be `active` at a time (zero only between packets or while
-approvals block execution). A blocked-awaiting-user #2 parks #2; execute #9,
+`planning`, `active`, `review`, `blocked-awaiting-user`, and `closed`. At most
+one issue may be `active`: an activated issue is the declared sole active
+issue, while stable between-issues/after-closure states may have zero. A
+blocked-awaiting-user #2 parks #2; execute #9,
 then #15, one at a time, without advancing #18 or #26. If both close and #2
 remains blocked, only read-only JIT packet preparation may continue; do not
 bypass the #2/#18/#26 security sequence.

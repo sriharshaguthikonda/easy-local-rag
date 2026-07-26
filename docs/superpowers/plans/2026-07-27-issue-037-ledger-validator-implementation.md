@@ -20,7 +20,8 @@ state only; never secrets.
 Parse the canonical tracked-issue rows and lifecycle text from both
 `docs/issues/README.md` and every `docs/issues/ISSUE-*.md`, obtain one live
 snapshot through `gh` JSON output, and compare: issue open/closed state; the
-single-active invariant; every referenced PR state/disposition and merge SHA
+at-most-one-active invariant (exactly the declared active issue when activated,
+zero allowed between issues/after closure); every referenced PR state/disposition and merge SHA
 only when that PR is merged; every branch tip used as an execution gate;
 presence of #37/#38; and stale phrases such as `future
 activation merge`. Keep parsing intentionally narrow to the documented ledger
@@ -83,7 +84,8 @@ First add deterministic mocked-snapshot tests and record RED for stale issue,
 stale PR SHA, a closed-unmerged PR #1-style disposition, stale branch tip,
 duplicate active, absent #37/#38, obsolete
 activation wording, and stale status/lifecycle wording in a named canonical
-`ISSUE-015-*.md` fixture; commit only those tests as:
+`ISSUE-015-*.md` fixture. Reconciled fixtures include zero-active and exactly
+one declared-active cases; commit only those tests as:
 
 ```text
 test(#37): specify issue ledger validation
