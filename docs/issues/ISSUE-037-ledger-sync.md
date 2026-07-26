@@ -28,8 +28,10 @@ credentials or GitHub tokens.
 The validator compares the live issue state for every tracked row, enforces
 exactly one active issue, verifies referenced merged PR merge SHAs, verifies
 branch-tip SHAs whenever a document uses them as an execution gate, and rejects
-known stale lifecycle phrases including `future activation merge`. It rejects a
-ledger missing #37 or #38. Deterministic tests mock the GitHub snapshot; no
+known stale lifecycle phrases including `future activation merge`. It reads
+both the roadmap and every `docs/issues/ISSUE-*.md` canonical file, so stale
+status/lifecycle text cannot hide outside the index. It rejects a ledger
+missing #37 or #38. Deterministic tests mock the GitHub snapshot; no
 network-dependent CI gate is added.
 
 ## Required implementation sequence
@@ -56,8 +58,9 @@ network-dependent CI gate is added.
 ## Required test cases and closure gate
 
 Mocked snapshots must fail for: stale issue state, stale merged PR SHA, stale
-branch tip, duplicate active issue, missing #37/#38, and obsolete activation
-wording. A reconciled snapshot and the final live state must pass. Run focused
+branch tip, duplicate active issue, missing #37/#38, obsolete activation
+wording, and stale lifecycle/status wording in a named canonical
+`ISSUE-015-*.md` fixture. A reconciled snapshot and the final live state must pass. Run focused
 tests, affected-file compilation, `git diff --check`, and the full suite,
 comparing full-suite failures with a freshly recorded pristine baseline.
 
