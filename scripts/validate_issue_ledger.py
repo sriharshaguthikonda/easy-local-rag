@@ -21,11 +21,12 @@ def _state(value):
 
 
 def _obsolete(text):
-    match = re.search(re.escape(OBSOLETE), text, re.IGNORECASE)
-    if not match:
-        return False
-    prefix = text[max(0, match.start() - 80):match.start()].lower()
-    return "stale lifecycle phrases" not in prefix
+    for match in re.finditer(re.escape(OBSOLETE), text, re.IGNORECASE):
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line = text[line_start:text.find("\n", match.start()) if "\n" in text[match.start():] else len(text)]
+        if not re.search(r"stale lifecycle phrases\s+(?:including|include)\s+`?future activation merge`?", line, re.IGNORECASE):
+            return True
+    return False
 
 
 def _roadmap_rows(text):
