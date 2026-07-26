@@ -25,8 +25,9 @@ consistent, `1` means one or more ledger mismatches, and `2` means bad usage,
 missing `gh`, authentication, or GitHub API failure. It must never print
 credentials or GitHub tokens.
 
-The validator compares the live issue state for every tracked row, enforces
-exactly one active issue, verifies each referenced PR's open/closed/merged
+The validator compares the live issue state for every tracked row, enforces at
+most one active issue (the declared activated issue is sole active; stable
+between-issues/after-closure state may have zero), verifies each referenced PR's open/closed/merged
 disposition and requires its merge SHA exactly when it is merged, verifies
 branch-tip SHAs whenever a document uses them as an execution gate, and rejects
 known stale lifecycle phrases including `future activation merge`. It reads
@@ -61,7 +62,8 @@ network-dependent CI gate is added.
 Mocked snapshots must fail for: stale issue state, stale merged PR SHA, stale
 branch tip, a closed-unmerged PR #1-style disposition, duplicate active issue, missing #37/#38, obsolete activation
 wording, and stale lifecycle/status wording in a named canonical
-`ISSUE-015-*.md` fixture. A reconciled snapshot and the final live state must pass. Run focused
+`ISSUE-015-*.md` fixture. Reconciled fixtures must pass for both zero-active
+between-issues state and one declared active issue. Run focused
 tests, affected-file compilation, `git diff --check`, and the full suite,
 comparing full-suite failures with a freshly recorded pristine baseline.
 
