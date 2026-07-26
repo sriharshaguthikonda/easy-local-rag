@@ -130,6 +130,12 @@ def test_obsolete_activation_wording_in_roadmap_is_a_mismatch():
     assert "roadmap: expected no obsolete activation wording, actual future activation merge" in errors
 
 
+def test_stale_phrase_after_an_allowed_explanation_is_still_a_mismatch():
+    text = roadmap() + "\nknown stale lifecycle phrases include future activation merge\nfuture activation merge\n"
+    errors = validate(roadmap_text=text)
+    assert "roadmap: expected no obsolete activation wording, actual future activation merge" in errors
+
+
 def test_malformed_required_canonical_data_is_a_mismatch():
     errors = validate(issue_texts={"ISSUE-015-atomic-vault-write.md": "# Issue #15\n"})
     assert "ISSUE-015: expected documented Status, actual malformed" in errors
