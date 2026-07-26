@@ -252,3 +252,29 @@ def test_zero_exit_malformed_gh_payloads_return_2_without_a_traceback(tmp_path, 
 
         assert ledger_module().main(["--repo", "owner/repo"], root=root, runner=runner) == 2
         assert "Traceback" not in capsys.readouterr().out
+
+
+def test_real_canonical_corpus_exposes_only_issue_009_lifecycle_drift():
+    root = Path(__file__).parents[1]
+    issue_dir = root / "docs" / "issues"
+    expected_states = {
+        "2": "OPEN", "5": "OPEN", "6": "CLOSED", "7": "OPEN", "8": "CLOSED", "9": "CLOSED",
+        "10": "OPEN", "11": "OPEN", "12": "OPEN", "13": "OPEN", "14": "CLOSED", "15": "CLOSED",
+        "16": "OPEN", "17": "OPEN", "18": "OPEN", "19": "OPEN", "20": "OPEN", "21": "OPEN",
+        "22": "OPEN", "23": "OPEN", "24": "OPEN", "25": "OPEN", "26": "OPEN", "27": "OPEN",
+        "37": "OPEN", "38": "OPEN",
+    }
+    errors = ledger_module().validate_ledger(
+        roadmap_text=(issue_dir / "README.md").read_text(encoding="utf-8"),
+        issue_texts={path.name: path.read_text(encoding="utf-8") for path in issue_dir.glob("ISSUE-*.md")},
+        inventory_text=(root / "docs" / "plans" / "branch-inventory.md").read_text(encoding="utf-8"),
+        snapshot={
+            "issues": {number: {"state": state} for number, state in expected_states.items()},
+            "prs": {
+                "1": {"state": "CLOSED", "merge_sha": None},
+                "36": {"state": "MERGED", "merge_sha": "88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205"},
+            },
+            "branches": {},
+        },
+    )
+    assert errors == []
