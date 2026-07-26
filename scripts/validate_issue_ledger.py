@@ -151,22 +151,41 @@ def collect_snapshot(repo, branches, runner=subprocess.run):
     prs = _run(["gh", "pr", "list", "--repo", repo, "--state", "all", "--limit", "100", "--json", "number,state,mergeCommit"], runner)
     if not isinstance(issues, list) or not isinstance(prs, list):
         raise LedgerCliError("gh returned invalid JSON")
-    snapshot = {
-        "issues": {str(item["number"]): {"state": item["state"]} for item in issues},
-        "prs": {
+    try:
+        normalized_issues = {
+            str(item["number"]): {"state": item["state"]}
+            for item in issues
+            if isinstance(item["number"], int) and item["number"] > 0 and item["state"] in {"OPEN", "CLOSED"}
+        }
+        normalized_prs = {
             str(item["number"]): {
                 "state": item["state"],
                 "merge_sha": (item.get("mergeCommit") or {}).get("oid"),
             }
             for item in prs
-        },
+            if isinstance(item["number"], int)
+            and item["number"] > 0
+            and item["state"] in {"OPEN", "CLOSED", "MERGED"}
+            and (item.get("mergeCommit") is None or isinstance(item.get("mergeCommit"), dict))
+            and (item.get("mergeCommit") is None or isinstance(item["mergeCommit"].get("oid"), str))
+        }
+    except (KeyError, TypeError):
+        raise LedgerCliError("gh returned invalid JSON") from None
+    if len(normalized_issues) != len(issues) or len(normalized_prs) != len(prs):
+        raise LedgerCliError("gh returned invalid JSON")
+    snapshot = {
+        "issues": normalized_issues,
+        "prs": normalized_prs,
         "branches": {},
     }
     for branch in branches:
         ref = _run(["gh", "api", f"repos/{repo}/git/ref/heads/{branch}"], runner)
         try:
-            snapshot["branches"][branch] = ref["object"]["sha"]
-        except (KeyError, TypeError):
+            sha = ref["object"]["sha"]
+            if not isinstance(sha, str) or not re.fullmatch(SHA, sha):
+                raise ValueError
+            snapshot["branches"][branch] = sha
+        except (KeyError, TypeError, ValueError):
             raise LedgerCliError("gh returned invalid ref JSON") from None
     return snapshot
 

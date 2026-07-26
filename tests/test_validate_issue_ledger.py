@@ -177,3 +177,30 @@ def test_live_collector_uses_only_the_locked_gh_queries():
         ["gh", "pr", "list", "--repo", "owner/repo", "--state", "all", "--limit", "100", "--json", "number,state,mergeCommit"],
         ["gh", "api", "repos/owner/repo/git/ref/heads/main"],
     ]
+
+
+def test_zero_exit_malformed_gh_payloads_return_2_without_a_traceback(tmp_path, capsys):
+    root = tmp_path
+    (root / "docs" / "issues").mkdir(parents=True)
+    (root / "docs" / "plans").mkdir()
+    (root / "docs" / "issues" / "README.md").write_text(roadmap(), encoding="utf-8")
+    (root / "docs" / "issues" / "ISSUE-015-atomic-vault-write.md").write_text(issue_15(), encoding="utf-8")
+    (root / "docs" / "plans" / "branch-inventory.md").write_text(inventory(), encoding="utf-8")
+    payloads = (
+        ([{}], []),
+        ([{"number": 15, "state": "CLOSED"}], [{}]),
+        (
+            [{"number": 15, "state": "CLOSED"}],
+            [{"number": 1, "state": "CLOSED", "mergeCommit": None}],
+            {"object": {}},
+        ),
+    )
+
+    for responses in payloads:
+        response_iter = iter(responses)
+
+        def runner(command, **_kwargs):
+            return subprocess.CompletedProcess(command, 0, json.dumps(next(response_iter)), "")
+
+        assert ledger_module().main(["--repo", "owner/repo"], root=root, runner=runner) == 2
+        assert "Traceback" not in capsys.readouterr().out
