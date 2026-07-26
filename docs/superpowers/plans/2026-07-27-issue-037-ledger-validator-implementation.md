@@ -26,6 +26,33 @@ presence of #37/#38; and stale phrases such as `future
 activation merge`. Keep parsing intentionally narrow to the documented ledger
 forms; an unparseable required row is a mismatch, not a false pass.
 
+## Normalized snapshot seam
+
+The internal validation seam accepts parsed ledger text, a mapping of canonical
+`ISSUE-*.md` texts, inventory text, and this normalized JSON-shaped snapshot:
+
+```json
+{
+  "issues": {"37": {"state": "OPEN"}},
+  "pull_requests": {"36": {"state": "MERGED", "merge_sha": "40-hex"}, "1": {"state": "CLOSED", "merge_sha": null}},
+  "branches": {"main": "40-hex"}
+}
+```
+
+Tests inject that seam directly with parsed text or temporary fixtures; no
+additional public CLI flag exists. The live collector obtains only this data:
+
+```powershell
+gh issue list --repo OWNER/REPO --state all --limit 100 --json number,state
+gh pr list --repo OWNER/REPO --state all --limit 100 --json number,state,mergeCommit
+gh api repos/OWNER/REPO/git/ref/heads/BRANCH
+```
+
+The final command is run once for each branch named as an execution gate. Parse
+`mergeCommit.oid` and the ref object's SHA into the normalized fields. Command
+arguments, JSON, and diagnostics contain identifiers/states/SHAs only; no
+credentials are accepted, stored, or printed.
+
 ## Frozen activation and ownership
 
 The separate activation PR is the first code gate. It owns only the canonical
