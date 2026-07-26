@@ -91,6 +91,19 @@ def test_stale_tracked_issue_row_reports_expected_and_actual_state():
     assert "issue #37: expected OPEN, actual CLOSED" in errors
 
 
+def test_tracked_issues_table_validates_priority_type_rows():
+    tracked = "\n".join(
+        (
+            "## Tracked issues",
+            "| Issue | Priority and type | Status | Canonical plan |",
+            "|---|---|---|---|",
+            "| #15 | P0 bug | **Closed — completed** | Atomic vault write |",
+        )
+    )
+    errors = validate(roadmap_text=roadmap() + "\n" + tracked, issue_texts={}, snapshot=snapshot(issue_15="OPEN"))
+    assert "issue #15: expected CLOSED, actual OPEN" in errors
+
+
 def test_stale_canonical_issue_status_and_lifecycle_phrase_are_mismatches():
     errors = validate(
         issue_texts={"ISSUE-015-atomic-vault-write.md": issue_15("ACTIVE", "future activation merge")}

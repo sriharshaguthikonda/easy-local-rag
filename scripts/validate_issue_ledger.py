@@ -32,9 +32,16 @@ def _obsolete(text):
 def _roadmap_rows(text):
     rows = {}
     for line in text.splitlines():
-        match = re.fullmatch(r"\|\s*#(\d+)\s*\|\s*([a-z-]+)\s*\|.*\|", line.strip())
-        if match:
-            rows[match.group(1)] = match.group(2)
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if not cells or not re.fullmatch(r"#\d+", cells[0]):
+            continue
+        number = cells[0][1:]
+        if len(cells) > 1 and cells[1] in {"queued", "planning", "active", "review", "blocked-awaiting-user", "closed"}:
+            rows[number] = cells[1]
+        elif len(cells) > 2:
+            status = re.match(r"\*{0,2}(Open|Closed)\b", cells[2], re.IGNORECASE)
+            if status:
+                rows.setdefault(number, status.group(1).lower())
     return rows
 
 
