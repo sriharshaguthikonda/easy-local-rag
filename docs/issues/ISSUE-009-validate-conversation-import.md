@@ -2,7 +2,7 @@
 
 [Roadmap ledger](README.md) · [implementation packet](../superpowers/plans/2026-07-24-issue-009-validate-conversation-import-implementation.md)
 
-**Status:** ACTIVE — [PR #31](https://github.com/sriharshaguthikonda/easy-local-rag/pull/31) merged the approved packet as `fd11bb7d706665b4094a088aaa0a97546b205135`; implementation and closure evidence remain pending.
+**Status:** CLOSED — COMPLETED on GitHub through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`.
 
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/9
 **Priority/type:** `priority:P0`, `type:security`
