@@ -109,7 +109,7 @@ def validate_ledger(*, roadmap_text, issue_texts, inventory_text, snapshot):
         elif number not in issues:
             errors.append(f"issue #{number}: expected {_state(status)}, actual missing")
         elif issues[number].get("state") != _state(status):
-            errors.append(f"{label}: expected {_state(issues[number].get('state', 'missing'))}, actual {status}")
+            errors.append(f"{label}: expected {status}, actual {issues[number].get('state', 'missing')}")
         if _obsolete(text):
             errors.append(f"{label}: expected no obsolete activation wording, actual {OBSOLETE}")
 

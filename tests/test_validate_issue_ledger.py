@@ -95,7 +95,7 @@ def test_stale_canonical_issue_status_and_lifecycle_phrase_are_mismatches():
     errors = validate(
         issue_texts={"ISSUE-015-atomic-vault-write.md": issue_15("ACTIVE", "future activation merge")}
     )
-    assert "ISSUE-015: expected CLOSED, actual ACTIVE" in errors
+    assert "ISSUE-015: expected ACTIVE, actual CLOSED" in errors
     assert "ISSUE-015: expected no obsolete activation wording, actual future activation merge" in errors
 
 
