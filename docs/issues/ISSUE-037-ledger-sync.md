@@ -2,8 +2,9 @@
 
 [Roadmap ledger](README.md) · [implementation packet](../superpowers/plans/2026-07-27-issue-037-ledger-validator-implementation.md)
 
-**Status:** PLANNING — documentation packet only; a separate activation merge
-must first reconcile the known #8/#15, branch-inventory, and lifecycle drift.
+**Status:** ACTIVE — this activation PR reconciles the known #8/#15,
+branch-inventory, and lifecycle drift. Implementation is gated by this
+activation PR's GitHub merge commit recorded in immutable PR evidence.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/37
 **Labels / priority:** `priority:P1`, `type:dx`
 **Dependencies:** #2 remains `blocked-awaiting-user`. #38 is the only approved
@@ -38,11 +39,12 @@ network-dependent CI gate is added.
 
 ## Required implementation sequence
 
-1. Merge this reviewed packet, then a distinct activation merge that records
-   #8/#15 closure, PR #36 merge `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205`,
-   current branch/PR state, #37 as the sole active issue, #38 queued, and #2
-   blocked. That activation merge alone owns obsolete lifecycle wording.
-2. Create a clean implementation worktree from its fetched, frozen target SHA.
+1. This activation PR records #8/#15 closure, PR #36 merge
+   `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205`, current branch/PR state, #37
+   as the sole active issue, #38 queued, and #2 blocked. Its immutable GitHub
+   merge evidence is the activation gate; this document intentionally does not
+   predict that merge SHA.
+2. Create a clean implementation worktree from that fetched, frozen target SHA.
    Record pristine baseline first. The current `main` packet base
    `ca1af851cbb9da99137dc7ff677e06ef60303d84` has no `tests/` directory and no
    `streamlit_app.py`, `rag_gui.py`, or `GUI_direct_search.py`; the recorded
