@@ -154,8 +154,17 @@ def test_malformed_required_canonical_data_is_a_mismatch():
     assert "ISSUE-015: expected documented Status, actual malformed" in errors
 
 
-def test_bad_usage_returns_2():
+def test_bad_usage_returns_2(capsys):
     assert ledger_module().main(["--repo", "not-a-repository"]) == 2
+    assert "not-a-repository" not in capsys.readouterr().out
+
+
+def test_unknown_usage_argument_does_not_echo_credential_like_input(capsys):
+    assert ledger_module().main(["--secret", "ghp_not_for_output"]) == 2
+    output = capsys.readouterr()
+    assert "ghp_not_for_output" not in output.out + output.err
+    assert output.out == "usage: python scripts/validate_issue_ledger.py --repo OWNER/REPO\n"
+    assert output.err == ""
 
 
 def test_gh_and_api_failures_return_2(tmp_path):
