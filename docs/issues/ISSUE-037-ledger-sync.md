@@ -65,10 +65,14 @@ wording, and stale lifecycle/status wording in a named canonical
 tests, affected-file compilation, `git diff --check`, and the full suite,
 comparing full-suite failures with a freshly recorded pristine baseline.
 
-`AGENTS.md` must document the command as mandatory immediately before every
-activation and closure. After implementation merge, post SHA-bound review and
-verifier evidence, close #37 with `COMPLETED`, make a small closure-ledger PR,
-and run the live validator again. Roll back the implementation with
+The later implementation-owned `AGENTS.md` edit must name the root orchestrator
+as owner: immediately after every activation, implementation merge, issue
+closure, branch archive, or PR disposition change, the root orchestrator
+updates the ledger and runs the validator before any next activation or
+closure. The command is mandatory immediately before every activation and
+closure. After implementation merge, post SHA-bound review and verifier
+evidence, close #37 with `COMPLETED`, make a small closure-ledger PR, and run
+the live validator again. Roll back the implementation with
 `git revert -m 1 <merge-sha>`; before merge, revert child commits in reverse
 order. No issue is closed without packet, implementation PR/commits, review,
 verifier, merge, rollback, and final-ledger evidence.

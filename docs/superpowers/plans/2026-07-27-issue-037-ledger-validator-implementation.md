@@ -37,8 +37,12 @@ it changes before work or merge. Do not merge `main` into the later #38 GUI
 lineage.
 
 The implementation branch owns `scripts/validate_issue_ledger.py`, its focused
-tests, and the required `AGENTS.md` command. It must not alter #38 code,
-credential history, generated data, or unrelated ledger state.
+tests, and the required `AGENTS.md` wording. That wording names the root
+orchestrator as the lifecycle owner: after activation, implementation merge,
+issue closure, branch archive, or PR disposition change, update the ledger and
+run the validator immediately, before the next activation or closure. It must
+not alter #38 code, credential history, generated data, or unrelated ledger
+state.
 
 ## TDD and evidence
 
