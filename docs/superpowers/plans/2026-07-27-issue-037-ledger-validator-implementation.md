@@ -20,8 +20,9 @@ state only; never secrets.
 Parse the canonical tracked-issue rows and lifecycle text from both
 `docs/issues/README.md` and every `docs/issues/ISSUE-*.md`, obtain one live
 snapshot through `gh` JSON output, and compare: issue open/closed state; the
-single-active invariant; every referenced merged PR SHA; every branch tip used
-as an execution gate; presence of #37/#38; and stale phrases such as `future
+single-active invariant; every referenced PR state/disposition and merge SHA
+only when that PR is merged; every branch tip used as an execution gate;
+presence of #37/#38; and stale phrases such as `future
 activation merge`. Keep parsing intentionally narrow to the documented ledger
 forms; an unparseable required row is a mismatch, not a false pass.
 
@@ -48,7 +49,8 @@ while `git diff --check` exited 0. Re-run and record this exact comparison on
 the activated target.
 
 First add deterministic mocked-snapshot tests and record RED for stale issue,
-stale PR SHA, stale branch tip, duplicate active, absent #37/#38, obsolete
+stale PR SHA, a closed-unmerged PR #1-style disposition, stale branch tip,
+duplicate active, absent #37/#38, obsolete
 activation wording, and stale status/lifecycle wording in a named canonical
 `ISSUE-015-*.md` fixture; commit only those tests as:
 

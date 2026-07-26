@@ -26,7 +26,8 @@ missing `gh`, authentication, or GitHub API failure. It must never print
 credentials or GitHub tokens.
 
 The validator compares the live issue state for every tracked row, enforces
-exactly one active issue, verifies referenced merged PR merge SHAs, verifies
+exactly one active issue, verifies each referenced PR's open/closed/merged
+disposition and requires its merge SHA exactly when it is merged, verifies
 branch-tip SHAs whenever a document uses them as an execution gate, and rejects
 known stale lifecycle phrases including `future activation merge`. It reads
 both the roadmap and every `docs/issues/ISSUE-*.md` canonical file, so stale
@@ -58,7 +59,7 @@ network-dependent CI gate is added.
 ## Required test cases and closure gate
 
 Mocked snapshots must fail for: stale issue state, stale merged PR SHA, stale
-branch tip, duplicate active issue, missing #37/#38, obsolete activation
+branch tip, a closed-unmerged PR #1-style disposition, duplicate active issue, missing #37/#38, obsolete activation
 wording, and stale lifecycle/status wording in a named canonical
 `ISSUE-015-*.md` fixture. A reconciled snapshot and the final live state must pass. Run focused
 tests, affected-file compilation, `git diff --check`, and the full suite,
