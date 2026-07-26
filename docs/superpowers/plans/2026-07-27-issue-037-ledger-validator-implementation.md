@@ -17,7 +17,8 @@ and optional document-path overrides, defaults to `docs/issues/README.md` and
 `2` usage/API/CLI/auth failure. Output names identifiers and expected/actual
 state only; never secrets.
 
-Parse the canonical tracked-issue rows and lifecycle text, obtain one live
+Parse the canonical tracked-issue rows and lifecycle text from both
+`docs/issues/README.md` and every `docs/issues/ISSUE-*.md`, obtain one live
 snapshot through `gh` JSON output, and compare: issue open/closed state; the
 single-active invariant; every referenced merged PR SHA; every branch tip used
 as an execution gate; presence of #37/#38; and stale phrases such as `future
@@ -47,8 +48,9 @@ while `git diff --check` exited 0. Re-run and record this exact comparison on
 the activated target.
 
 First add deterministic mocked-snapshot tests and record RED for stale issue,
-stale PR SHA, stale branch tip, duplicate active, absent #37/#38, and obsolete
-activation wording; commit only those tests as:
+stale PR SHA, stale branch tip, duplicate active, absent #37/#38, obsolete
+activation wording, and stale status/lifecycle wording in a named canonical
+`ISSUE-015-*.md` fixture; commit only those tests as:
 
 ```text
 test(#37): specify issue ledger validation
