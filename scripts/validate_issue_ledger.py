@@ -53,8 +53,15 @@ def _canonical_status(name, text):
     number = re.fullmatch(r"ISSUE-(\d{3})-[^.]+\.md", name)
     if not number:
         return None, None
-    status = re.search(r"^\*\*Status:\*\*\s*([A-Za-z-]+)", text, re.MULTILINE)
-    return number.group(1).lstrip("0") or "0", status.group(1).upper() if status else None
+    status = re.search(r"^(?:\*\*Status:\*\*|Status:)\s*(.+)$", text, re.MULTILINE)
+    if not status:
+        return number.group(1).lstrip("0") or "0", None
+    value = status.group(1).strip().strip("*").strip()
+    lifecycle = re.match(r"(ACTIVE|PLANNING|QUEUED|REVIEW|BLOCKED-AWAITING-USER|OPEN|CLOSED)\b", value, re.IGNORECASE)
+    if lifecycle:
+        return number.group(1).lstrip("0") or "0", lifecycle.group(1).upper()
+    lifecycle = re.search(r"\b(open|closed)\b", value, re.IGNORECASE)
+    return number.group(1).lstrip("0") or "0", lifecycle.group(1).upper() if lifecycle else value.upper()
 
 
 def _inventory(inventory_text):
@@ -116,7 +123,7 @@ def validate_ledger(*, roadmap_text, issue_texts, inventory_text, snapshot):
         if status is None:
             errors.append(f"{label}: expected documented Status, actual malformed")
             continue
-        if status not in {"ACTIVE", "PLANNING", "QUEUED", "REVIEW", "BLOCKED-AWAITING-USER", "CLOSED"}:
+        if status not in {"ACTIVE", "PLANNING", "QUEUED", "REVIEW", "BLOCKED-AWAITING-USER", "OPEN", "CLOSED"}:
             errors.append(f"{label}: expected documented Status, actual {status}")
         elif number not in issues:
             errors.append(f"issue #{number}: expected {_state(status)}, actual missing")

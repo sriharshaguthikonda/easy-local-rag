@@ -154,6 +154,20 @@ def test_malformed_required_canonical_data_is_a_mismatch():
     assert "ISSUE-015: expected documented Status, actual malformed" in errors
 
 
+def test_established_canonical_open_status_forms_validate_against_live_state():
+    live = snapshot()
+    live["issues"].update({"5": {"state": "OPEN"}, "17": {"state": "OPEN"}, "23": {"state": "OPEN"}})
+    errors = validate(
+        issue_texts={
+            "ISSUE-005-prompt-injection.md": "**Status:** OPEN\n",
+            "ISSUE-017-postgres-consolidation.md": "**Status:** Canonical epic; open.\n",
+            "ISSUE-023-retrieval-parity.md": "Status: **Open — migration gate**\n",
+        },
+        snapshot=live,
+    )
+    assert errors == []
+
+
 def test_bad_usage_returns_2(capsys):
     assert ledger_module().main(["--repo", "not-a-repository"]) == 2
     assert "not-a-repository" not in capsys.readouterr().out
