@@ -1,116 +1,41 @@
-# Issue #6 Plan: Fix hybrid retrieval MMR embedding KeyError
+# Issue #6: Fix hybrid-retrieval MMR embedding access
 
-GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/6
+[Roadmap ledger](README.md)
 
-Priority: P0 bug
+**Status:** CLOSED — completed after [PR #29](https://github.com/sriharshaguthikonda/easy-local-rag/pull/29) merged to the GUI lineage as `daecce8a27f50da39284f5519d77b835905209f6` from fix commit [`de74659`](https://github.com/sriharshaguthikonda/easy-local-rag/commit/de7465902e00e363993f9ea9eb2190ce940e1bed), the canonical plan landed on `main`, and reciprocal implementation/test evidence was posted to the issue.
+**GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/6
+**Labels / priority:** `priority:P0`, `type:bug`
+**Dependencies:** Preserve the #11 embedding-model contract; use a fake collection rather than a live Chroma database in the regression test.
 
-## Goal
+## Implementation slices
 
-Stop the Streamlit hybrid retrieval path from reading embeddings from metadata.
-Chroma metadata only stores file information, while embeddings must come from
-the query result's `embeddings` array.
+1. Build vector results by zipping `metadatas`, `distances`, `embeddings`, **and** `documents` from Chroma's parallel result arrays. Keep `embedding` and `document` top-level; metadata contains only metadata.
+2. Seed MMR with the top-K results, rescore remaining candidates against every selected embedding, append one best candidate per iteration, and preserve the `(context, metadata)` return shape.
+3. Replace the static source-string assertion with the approved functional fake-collection test: its metadata excludes text and embeddings, its documents array supplies chunk text, and `additional_unique_files > 0` distinguishes greedy incremental MMR from a one-shot relevance sort.
 
-## Files to inspect
+## Affected interfaces, files, and artifacts
 
-- `streamlit_groq_lama_chromadb_RAG_ETTS.py`
-- `Text_embeddings_to_chromadb_python.py`
-- `monitor_file_changes_update_chromaDB.py`
-- tests under `tests/`
+- `streamlit_groq_lama_chromadb_RAG_ETTS.py::get_relevant_context_hybrid`.
+- `tests/test_streamlit_hybrid_embeddings.py` and its fake collection/query payload.
+- Chroma query contract: `include=["documents", "metadatas", "distances", "embeddings"]` and parallel first-result arrays.
 
-## Current bug shape
+## Concrete actions
 
-The retrieval query must include embeddings:
+- Do not read `meta["embedding"]`; do not rely on `meta["text"]` when Chroma's `documents` array is the canonical chunk source.
+- Stub rewrite/embedding dependencies in the test, then assert selected context includes a document-array value, no `KeyError` occurs, and the result is not the fallback string.
+- Keep broad failure handling from hiding regressions: test the normal path and retain a stable empty/error return on expected failure.
 
-```python
-include=["documents", "metadatas", "distances", "embeddings"]
-```
-
-But the MMR loop must then read:
-
-```python
-res["embedding"]
-selected["embedding"]
-```
-
-It must not read:
-
-```python
-res["meta"]["embedding"]
-selected["meta"]["embedding"]
-```
-
-## Implementation steps
-
-1. In `get_relevant_context_hybrid()`, keep or add `embeddings` in the Chroma
-   `collection.query(...)` include list.
-2. Build `vector_results` with these keys:
-
-   - `meta`
-   - `document`
-   - `embedding`
-   - `vector_score`
-
-3. Build keyword results with `embedding=None` unless you can join them back to
-   the vector result by stable chunk ID.
-4. When combining results, keep the embedding at the top level:
-
-   ```python
-   combined_results[file_name] = {
-       "meta": res["meta"],
-       "embedding": res["embedding"],
-       "final_score": ...,
-   }
-   ```
-
-5. In the MMR loop, compute similarity only when both candidate and selected
-   items have embeddings:
-
-   ```python
-   if res.get("embedding") is None:
-       continue
-   np.dot(res["embedding"], selected["embedding"])
-   ```
-
-6. Do not swallow this bug with the existing broad `except`. Either re-raise in
-   debug mode or return a structured empty result that the UI can show.
-7. Keep return shape stable. If callers expect `(context, metadata)`, every
-   success and failure path must return a 2-tuple.
-
-## Tests and verification
-
-Add a unit test with a fake collection query result:
-
-- metadatas contain only `file_name`, `modification_time`, and `text`
-- embeddings are present in `search_result["embeddings"][0]`
-- `additional_unique_files > 0`
-- expected: no `KeyError`, no `"Answer this yourself!"`, returns selected docs
-
-Suggested commands:
+## Verification
 
 ```powershell
-python -m pytest tests -q
+python -m pytest tests/test_streamlit_hybrid_embeddings.py -q -p no:cacheprovider
+python -m pytest tests -q -p no:cacheprovider
 python -m py_compile streamlit_groq_lama_chromadb_RAG_ETTS.py
 ```
 
-Manual smoke:
+## Closure gate, rollback, and commit boundary
 
-1. Run Streamlit against a small Chroma collection.
-2. Ask a query with `additional_unique_files` enabled.
-3. Confirm the terminal does not print `An error occurred: 'embedding'`.
-4. Confirm the UI receives source metadata.
-
-## Acceptance checklist
-
-- [ ] Chroma query includes embeddings.
-- [ ] MMR reads top-level result embeddings, not metadata embeddings.
-- [ ] Keyword-only results cannot crash MMR.
-- [ ] Failure path returns a stable type.
-- [ ] Regression test covers metadata without `embedding`.
-
-## Commit boundary
-
-Use one commit for this issue only:
-
-```text
-fix(#6): use Chroma embeddings in MMR
-```
+- **Maintained-path closure:** the focused fake-collection regression passes with metadata containing only filename/time, document-array content, separate embeddings, `top_k > 0`, and `additional_unique_files > 0`; the backend compiles; PR #29 is merged; and the closing comment links this main-line plan, exact fix commit, and verification evidence.
+- **Retirement closure (mutually exclusive):** if the legacy GUI retrieval path is withdrawn instead, remove it from supported entry points and setup docs, prove it cannot be invoked, and identify a maintained retrieval replacement that reads Chroma documents and embeddings from their proper result arrays.
+- **Rollback constraint:** retain the `embeddings` include and top-level result shape; never restore embedding-in-metadata access.
+- **Commit:** `fix(#6): use Chroma documents in hybrid retrieval`.

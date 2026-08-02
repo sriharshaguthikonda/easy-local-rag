@@ -1,94 +1,43 @@
-# Issue #12 Plan: Fix Streamlit TTS worker deadlock
+# Issue #12: Stabilize the Streamlit TTS worker
 
-GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/12
+[Roadmap ledger](README.md)
 
-Priority: P1 bug
+**Status:** OPEN — `@st.cache_resource` appears in Streamlit, but the legacy backend still contains ad hoc threads and repeated event-loop startup.
+**GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/12
+**Labels / priority:** `priority:P1`, `type:bug`
+**Dependencies:** Decide at #22B; default retirement, with a per-session worker packet only if speech remains supported. Preserve the TTS-disabled fast path; no new audio dependency is required.
 
-## Goal
+## Implementation slices
 
-Make TTS processing stable across Streamlit reruns. There should be one managed
-worker resource per app session, not a new ad hoc thread/event-loop combination
-that can deadlock or duplicate audio.
+1. Give each Streamlit session an owned queue, worker, and routing/session ID; never route audio through a process-global queue shared by sessions.
+2. Run asynchronous TTS with one worker-owned event loop, or make it synchronous inside that worker; do not call `asyncio.run()` per sentence in a long-lived worker.
+3. Add a session-owned stop sentinel, idempotent start, rerun/death recovery, and shutdown that joins only that session's worker.
+4. Run two sessions concurrently with distinct fake synthesis payloads; assert no cross-session audio, queue consumption, stop, or shutdown interference.
 
-## Files to inspect
+## Affected interfaces, files, and artifacts
 
-- `streamlit_app.py`
-- `streamlit_groq_lama_chromadb_RAG_ETTS.py`
-- `kokoro_tts.py`
-- tests under `tests/`
+- `streamlit_app.py`, `streamlit_groq_lama_chromadb_RAG_ETTS.py`, `kokoro_tts.py`, optional `tts_worker.py`, tests.
+- Runtime contract: no duplicate playback, deadlock, or leaked test thread over repeated reruns.
 
-## Implementation steps
+## Concrete actions
 
-1. Extract TTS worker management into a small module, for example
-   `tts_worker.py`.
-2. In that module, define a class with:
+- Trace all thread creation sites; remove or isolate legacy global workers from the Streamlit path.
+- Cache or own the worker at session scope, store only simple routing/lifecycle state in session state, and provide clean session shutdown.
+- Add a small fake synthesis test rather than calling a live audio provider.
 
-   - one `queue.Queue`
-   - one background thread
-   - one event loop created inside that thread if async TTS is required
-   - `start()`
-   - `enqueue(text)`
-   - `stop()`
-
-3. Do not call `asyncio.run()` once per sentence inside a long-lived worker
-   thread. Use one event loop in the worker or make TTS fully synchronous inside
-   that thread.
-4. In `streamlit_app.py`, create the worker using `@st.cache_resource`:
-
-   ```python
-   @st.cache_resource
-   def get_tts_worker():
-       worker = TTSWorker(...)
-       worker.start()
-       return worker
-   ```
-
-5. Store only lightweight flags in `st.session_state`, not raw worker internals.
-6. Make reruns idempotent:
-
-   - if worker exists and alive, reuse it
-   - if worker died, create a new one and show a warning
-
-7. Add a stop sentinel for shutdown. Do not leak daemon threads during tests.
-8. Keep TTS disabled path cheap. If `tts_enabled` is false, do not enqueue.
-9. If `nest_asyncio.apply()` is only needed for old code, remove it from this
-   path or isolate it away from the worker.
-
-## Tests and verification
-
-Add tests for pure worker behavior:
-
-- calling `start()` twice creates one thread
-- enqueue sends one item
-- `stop()` drains or stops cleanly
-- simulated rerun reuses cached worker function
-
-Suggested commands:
+## Verification
 
 ```powershell
+python -m pytest tests/test_streamlit_tts_worker_config.py -q
 python -m pytest tests -q
-python -m py_compile tts_worker.py streamlit_app.py streamlit_groq_lama_chromadb_RAG_ETTS.py
+python -m py_compile streamlit_app.py streamlit_groq_lama_chromadb_RAG_ETTS.py
 ```
 
-Manual smoke:
+Manual: submit three prompts with TTS on, toggle it off/on, and confirm one audio stream per answer with no deadlock.
 
-1. Run `streamlit run streamlit_app.py`.
-2. Send 3 prompts with TTS enabled.
-3. Toggle TTS off and on.
-4. Expected: no duplicated audio and no deadlock after reruns.
+## Closure gate, rollback, and commit boundary
 
-## Acceptance checklist
-
-- [ ] TTS worker is managed as a cached resource.
-- [ ] Reruns do not spawn duplicate workers.
-- [ ] Worker uses one event loop or synchronous TTS, not repeated `asyncio.run`.
-- [ ] Stop/shutdown path exists.
-- [ ] Tests cover idempotent worker startup.
-
-## Commit boundary
-
-Use one commit for this issue only:
-
-```text
-fix(#12): stabilize Streamlit TTS worker
-```
+- **Maintained-path closure:** start is idempotent, stop/shutdown are session-owned and clean, reruns reuse that session's worker, the concurrent two-session isolation regression passes, and manual toggling produces no duplicate audio.
+- **Retirement closure (mutually exclusive):** remove TTS from maintained Streamlit controls and setup docs, prove no worker/queue starts from that path, and document any maintained TTS replacement with its own session isolation evidence.
+- **Rollback constraint:** retain a safe disabled-TTS path; do not restore unbounded daemon-thread creation.
+- **Commit:** `fix(#12): stabilize Streamlit TTS worker`.

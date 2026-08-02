@@ -1,111 +1,22 @@
-# Issue #9 Plan: Validate Streamlit conversation imports
+# Issue #9: Validate imported Streamlit conversations
 
-GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/9
+[Roadmap ledger](README.md) · [implementation packet](../superpowers/plans/2026-07-24-issue-009-validate-conversation-import-implementation.md)
 
-Priority: P0 security
+**Status:** CLOSED — COMPLETED on GitHub through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`.
 
-## Goal
+**GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/9
+**Priority/type:** `priority:P0`, `type:security`
 
-Importing a conversation JSON must not blindly overwrite `st.session_state`.
-Only safe keys with validated types should be accepted.
+## Canonical acceptance contract
 
-## Files to inspect
+Maintain the existing exporter schema (`history`, `sources`, `tags`, `favorites`) while making imports a raw-byte atomic whitelist boundary. Only UTF-8 JSON objects at most 8 MiB are accepted. Allowed top-level keys are `history`, `tags`, `favorites`, and legacy export-only `sources`; the latter is ignored with exactly `Ignored legacy export-only key: sources.`. All other keys reject, including trusted runtime/session keys and underscore keys.
 
-- `streamlit_app.py`
-- optional new file: `conversation_import.py`
-- tests under `tests/`
+History accepts at most 1,000 messages with exactly `role`/`content`, roles `system`/`user`/`assistant`, and UTF-8 content at most 64 KiB. JSON container depth is at most 32, with the root object as depth 1 and every nested dict/list adding one; parser recursion is a rejection. JSON integers allow at most 4,096 decimal digits excluding a leading minus. Every decoded dict key and string value must strictly UTF-8 encode; lone surrogates reject globally, including ignored sources. Tags accept at most 100 string keys and 100 string values total, each tag text at most 256 characters. Favorites accept at most 100 shallow dictionaries, with string keys and scalar string/int/finite-float/bool/null values; every favorite string key/value is at most 256 characters. `NaN`, infinities, and numeric overflow (for example `1e999`) reject globally; bool is accepted only as a favorite scalar.
 
-## Safe import contract
+Validation completes before any state write. Validated fields map only to `conversation_history`, `tags`, and `favorite_responses`; `sources`, `current_sources`, collection/client/filter/TTS runtime objects, and all other runtime keys are never assigned. Rejection performs zero writes and UI shows deterministic `Conversation import rejected: {error}`.
 
-Allowed top-level keys:
+## Execution and closure
 
-- `history`: list of chat messages
-- `tags`: dict of string keys to string/list values
-- `favorites`: list of saved response objects or strings
+The packet locks the frozen GUI code base and executable test/implementation snippets. The lifecycle is: planner packet -> ChatGPT review -> GSD checker -> corrector -> docs merge -> implementer initial TDD commit -> code-review agent -> accepted-finding fixer commit(s) -> verifier -> orchestrator PR merge/evidence/close. The packet ledger records historical 8d3 blockers and [99e ChatGPT blockers](https://github.com/sriharshaguthikonda/easy-local-rag/pull/31#issuecomment-5065717085), then requires a fresh exact-head re-review without copying an earlier outcome forward. PR comments—not Q&A—are verification authority: [standing authorization](https://github.com/sriharshaguthikonda/easy-local-rag/pull/31#issuecomment-5065716983), current exact-head ChatGPT/GSD SHA/verdict/finding/disposition evidence, and absence of a later revocation are required before docs merge/implementation and code-PR merge/closure; otherwise: **STOP; do not proceed**. Closure cites the PR comment URLs/IDs, and the packet is not edited after final PASS.
 
-Do not import:
-
-- `chroma_client`
-- `collection`
-- `current_sources`
-- `source_filters`
-- `tts_queue`
-- `tts_worker`
-- any key beginning with `_`
-
-## Implementation steps
-
-1. Add a pure helper, for example `conversation_import.py`.
-2. Implement `validate_message(message)`:
-
-   - must be a dict
-   - `role` must be one of `system`, `user`, `assistant`
-   - `content` must be a string under a reasonable size limit
-
-3. Implement `sanitize_conversation_import(data)`:
-
-   - parse only dict input
-   - copy allowed keys into a new dict
-   - validate every value
-   - ignore unknown keys or return them as rejected warnings
-
-4. In `streamlit_app.py`, replace:
-
-   ```python
-   st.session_state.update(imported_data)
-   ```
-
-   with explicit assignments:
-
-   ```python
-   safe_data, warnings = sanitize_conversation_import(imported_data)
-   st.session_state.conversation_history = safe_data.get("history", [])
-   st.session_state.tags = safe_data.get("tags", {})
-   st.session_state.favorite_responses = safe_data.get("favorites", [])
-   ```
-
-5. Show a warning in the UI when unknown or invalid keys are rejected.
-6. Keep export format backward compatible by either continuing to export
-   `history`, `tags`, `favorites`, or adding a `version` field while still
-   accepting old files.
-7. Never accept imported file paths into `current_sources`. Sources must be
-   rebuilt from retrieval.
-
-## Tests and verification
-
-Add tests:
-
-- malicious import with `{"collection": "...", "tts_worker": "..."}`
-- malicious import with `current_sources` file path
-- valid minimal history imports
-- invalid message role is rejected
-- huge content is rejected or truncated with a warning
-
-Suggested commands:
-
-```powershell
-python -m pytest tests -q
-python -m py_compile conversation_import.py streamlit_app.py
-```
-
-Manual smoke:
-
-1. Import JSON containing `{"collection": "owned", "history": []}`.
-2. Expected: UI warns that `collection` was rejected.
-3. Expected: `st.session_state.collection` remains the real Chroma collection.
-
-## Acceptance checklist
-
-- [ ] Import uses a whitelist, not `st.session_state.update`.
-- [ ] Unsafe session keys are rejected.
-- [ ] Valid exports still import.
-- [ ] Rejected keys are visible to the user.
-- [ ] Tests cover malicious state overwrite.
-
-## Commit boundary
-
-Use one commit for this issue only:
-
-```text
-fix(#9): validate conversation imports
-```
+The code branch is `codex/fix-issue-9` directly from `daecce8a27f50da39284f5519d77b835905209f6`, never merged/rebased with main docs. Its initial commit is `fix(#9): validate conversation imports`; closure names all docs/code/review-fix/final SHAs, compares frozen/post-change pytest/compile/live-issue commands by exit code, summary, and failing test ID, and allows no new failure. Rollback is revert of that commit and accepted review-fix commits in reverse order.
