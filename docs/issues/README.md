@@ -11,12 +11,15 @@ Canonical issue files are acceptance contracts, not implementation evidence.
 Authority precedence is: **GitHub issue = live state and human decisions;
 canonical plan = scope, invariants, and closure gates; roadmap ledger =
 ordering and handoffs; JIT packet = implementation detail and cannot weaken a
-canonical plan.** The status column reflects live state checked on 2026-07-27:
+canonical plan.** The status column reflects live state checked on 2026-08-02:
 #6 is closed through PR #29 at GUI merge `daecce8a27f50da39284f5519d77b835905209f6`;
 #9 is closed through PR #33 at merge `619365224f6db3770d3369fd84a295589699e513`;
 #14 is closed as a duplicate; #8 and #15 are closed as completed; and PR #36
 merged into the GUI branch as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205`
-from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`.
+from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`; #37 is
+closed through PR #41 at merge `f87b4cf`; and #38 is closed through PR #42 at
+merge `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head
+`5e5e8941670f519e6447a770fe0f0d012b96cbcc`.
 
 ## Required execution order
 
@@ -57,8 +60,8 @@ unresolved placeholder, implementer choice, or speculative dependency.
 | #9 | closed | Completed through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`; [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) is closed. |
 | #15 | closed | Completed through [PR #36](https://github.com/sriharshaguthikonda/easy-local-rag/pull/36), merged into the GUI branch as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205` from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`. |
 | #37 | closed | Completed through [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41), merged as `f87b4cf`; [Issue #37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) closed 2026-07-26. Validator ships at `scripts/validate_issue_ledger.py`. |
-| #38 | active | [Streamlit evidence contract](ISSUE-038-streamlit-evidence-contract.md) · [implementation packet](../superpowers/plans/2026-08-02-issue-038-streamlit-evidence-contract-implementation.md). Implementation complete on `codex/issue-038-evidence-contract` from frozen base `88d0758`; [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42) open, awaiting review. #2 remains blocked and is not advanced by this work. |
-| Active issue | #38 | #38 is the sole active issue. |
+| #38 | closed | Completed through [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42), merged with Create a merge commit as `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head `5e5e8941670f519e6447a770fe0f0d012b96cbcc`; [review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155438619), [verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155439139), and [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38#issuecomment-5155449007). Focused 19 passed; full 175 passed / 4 accepted frozen GUI failures; compile/fallback grep/ledger/lineage/diff gates passed. #2 remains blocked and #38 does not advance #2/#18/#26. |
+| Active issue | none | #38 is closed; #2 remains blocked and no issue is active. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
@@ -156,7 +159,7 @@ approval, rollback, or scope means a separate packet.
 | #26 | P1 developer experience | Open — split early/late | [Repository cleanup](ISSUE-026-repo-cleanup.md) | 26A/26B follow #2 containment/#18 and close #2 before #19; 26C/26D consume #25's immutable GUI/no-GUI handoff. | [Issue #26](https://github.com/sriharshaguthikonda/easy-local-rag/issues/26) |
 | #27 | P0 security | Open — answer-safety gate | [Grounded answers](ISSUE-027-grounded-answers.md) | Extends #5/#13 and owns structured validation associated with closed duplicate #14; after #24 and #21B/#22B, before #25. | [Issue #27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27) |
 | #37 | P1 developer experience | Closed — completed | [Ledger synchronization](ISSUE-037-ledger-sync.md) | Repaired the authoritative execution ledger; validator at `scripts/validate_issue_ledger.py`. Merged as `f87b4cf` via [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41). | [Issue #37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) |
-| #38 | P0 bug | Open — implemented, in review | [Streamlit evidence contract](ISSUE-038-streamlit-evidence-contract.md) | After #37 only; it does not unlock or bypass #2 -> #18 -> #26. Implemented from frozen base `88d0758`; [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42) open. | [Issue #38](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38) |
+| #38 | P0 bug | **Closed — completed through PR #42** | [Streamlit evidence contract](ISSUE-038-streamlit-evidence-contract.md) | After #37 only; it does not unlock or bypass #2 -> #18 -> #26. Merged with Create a merge commit as `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head `5e5e8941670f519e6447a770fe0f0d012b96cbcc`; [review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155438619), [verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155439139), and [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38#issuecomment-5155449007). | [Issue #38](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38) |
 
 ## Gate discipline
 
