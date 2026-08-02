@@ -2,6 +2,8 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 class _FakeCollection:
     def __init__(self, result):
@@ -19,6 +21,11 @@ class _NoopThread:
 
     def start(self):
         pass
+
+
+class _FailingCollection:
+    def query(self, **_kwargs):
+        raise KeyError("missing retrieval field")
 
 
 def test_hybrid_context_uses_documents_and_greedy_mmr_without_metadata_text():
@@ -71,7 +78,6 @@ def test_hybrid_context_uses_documents_and_greedy_mmr_without_metadata_text():
             "include": ["documents", "metadatas", "distances", "embeddings"],
         }
     ]
-    assert result != ("Answer this yourself!", [])
     context, returned_sources = result
     assert context == "needle alpha\n\nneedle gamma\n\nneedle beta"
     assert [
@@ -83,3 +89,28 @@ def test_hybrid_context_uses_documents_and_greedy_mmr_without_metadata_text():
         ("b.txt", "needle beta"),
     ]
     assert all(isinstance(source["score"], float) for source in returned_sources)
+
+
+def test_hybrid_retrieval_failure_raises_instead_of_returning_an_answer():
+    source = Path("streamlit_groq_lama_chromadb_RAG_ETTS.py").read_text(
+        encoding="utf-8"
+    )
+    function = next(
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "get_relevant_context_hybrid"
+    )
+    namespace = {
+        "rewrite_input_and_generate_synonyms": lambda text: (text, {}),
+        "ollama": SimpleNamespace(
+            embeddings=lambda **_kwargs: {"embedding": [1, 0]}
+        ),
+        "model": "test-model",
+        "collection": _FailingCollection(),
+        "non_keywords": set(),
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]), "backend", "exec"), namespace)
+
+    with pytest.raises(RuntimeError, match="Retrieval failed"):
+        namespace["get_relevant_context_hybrid"]("needle")
