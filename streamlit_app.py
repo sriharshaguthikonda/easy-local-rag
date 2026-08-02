@@ -285,6 +285,12 @@ def chat_with_model(
             max_input_tokens=5000,
             model_name=groq_model,
         )
+        if (
+            not messages
+            or messages[-1].get("role") != "user"
+            or messages[-1].get("content") != processed_input
+        ):
+            raise ValueError("Evidence prompt was truncated to fit token budget")
         if was_trimmed:
             st.info("Context was trimmed to fit token budget.")
 
