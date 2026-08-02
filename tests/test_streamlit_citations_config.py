@@ -161,3 +161,40 @@ def test_retrieval_failure_is_visible_and_skips_model_providers():
     assert result == (None, None, None)
     assert errors == ["An error occurred: retrieval unavailable"]
     assert provider_calls == []
+
+
+def test_empty_retrieval_is_visible_and_skips_model_providers():
+    namespace, _calls = _load_prompt_functions(("", []))
+    errors = []
+    provider_calls = []
+    namespace.update(
+        st=SimpleNamespace(
+            session_state=_SessionState(
+                conversation_history=[],
+                tts_enabled=False,
+                tts_queue=SimpleNamespace(put=lambda _value: None),
+            ),
+            error=errors.append,
+            empty=lambda: _Placeholder(),
+            info=lambda _message: None,
+        ),
+        groq_client=SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=lambda **_kwargs: provider_calls.append("groq")
+                )
+            )
+        ),
+        ollama=SimpleNamespace(
+            chat=lambda **_kwargs: provider_calls.append("ollama")
+        ),
+        groq_model="test-model",
+        ollama_model="fallback-model",
+        trim_messages_to_budget=lambda messages, **_kwargs: (messages, False),
+    )
+
+    result = namespace["chat_with_model"]("question", "system")
+
+    assert result == (None, None, None)
+    assert errors == ["An error occurred: Retrieved sources are empty"]
+    assert provider_calls == []
