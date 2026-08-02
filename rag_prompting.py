@@ -55,6 +55,8 @@ def validate_response_citations(response, sources):
 
 
 def build_guarded_context_block(sources: list[dict]) -> str:
+    if not sources:
+        raise ValueError("Retrieved sources are empty")
     blocks = ["<retrieved_context>"]
     for source in sources:
         file_name = source.get("source_name") or Path(
