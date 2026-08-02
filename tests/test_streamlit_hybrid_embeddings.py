@@ -72,6 +72,10 @@ def test_hybrid_context_uses_documents_and_greedy_mmr_without_metadata_text():
         }
     ]
     assert result != ("Answer this yourself!", [])
-    context, returned_metadata = result
+    context, returned_sources = result
     assert context == "needle alpha\n\nneedle gamma\n\nneedle beta"
-    assert returned_metadata == [metadata[0], metadata[2], metadata[1]]
+    assert returned_sources == [
+        {**metadata[0], "document": "needle alpha", "score": 0.7},
+        {**metadata[2], "document": "needle gamma", "score": 0.5599999999999999},
+        {**metadata[1], "document": "needle beta", "score": 0.6388888888888888},
+    ]
