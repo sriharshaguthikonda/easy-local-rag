@@ -47,7 +47,7 @@ retirement → `#26` repo cleanup. **Track B is gated on #2** and has not starte
 | 17 | PostgreSQL/pgvector consolidation | B | epic, not started |
 | 18–27 | Consolidation packets | B | queued behind #2 |
 | 37 | Ledger synchronization | A | closed (PR #41, `f87b4cf`) |
-| 38 | Streamlit evidence contract | A | implemented, PR #42 in review |
+| 38 | Streamlit evidence contract | A | closed (PR #42, Create a merge commit `068e0c8f986bf6e292d401d8d97b181815fc0593`; reviewed head `5e5e8941670f519e6447a770fe0f0d012b96cbcc`) |
 
 An interim [qwen3 embedding migration](proposals/qwen3-embedding-migration-implementation.md) runs
 alongside Track A. It is additive and env-reversible and does **not** pre-empt #17 — see
