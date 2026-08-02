@@ -1,138 +1,59 @@
-# Issue #16 Plan: Add .env.example, AGENTS.md, and complete requirements
+# Issue #16: Make fresh-clone setup runnable
 
-GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/16
+[Roadmap ledger](README.md)
 
-Priority: P1 developer experience
+**Status:** OPEN — setup documentation and dependency inventory need a fresh-environment proof.
+**GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/16
+**Labels / priority:** `priority:P1`, `type:dx`
+**Dependencies:** 16A proceeds via #2A safe environment setup; 16B proceeds via #26C after #21/#22 freeze supported entry points. #8 path variables and #13's shipped `tiktoken` apply only where those paths remain supported.
 
-## Goal
+## Implementation slices
 
-A fresh clone should have enough setup files to run the repo without guessing
-dependencies, secrets, or entry points.
+### 16A — early secret-safe contributor setup
 
-## Files to inspect
+1. Add a placeholder-only `.env.example`, keep `.env` ignored, document the issue #2 rotation warning, and add the minimal PowerShell venv/test bootstrap.
+2. Verify no credential-shaped value or generated local data is present or staged.
 
-- `requirements.txt`
-- `README.md`
-- `AGENTS.md`
-- `.env.example`
-- `.gitignore`
-- all tracked Python entry points
+### 16B — maintained dependency and entry-point surface
 
-## Required entry points to document
+1. After #21/#22 settle the maintained clients/providers, map only supported CLI, email, Streamlit, PyQt, ingest, monitor, vault, and Chroma viewer entry points in `README.md` / `AGENTS.md`; mark retired paths unsupported.
+2. Rebuild direct runtime requirements from imports of maintained paths, place test-only tools in `requirements-dev.txt`, then validate in a fresh virtual environment.
 
-- CLI RAG: `localrag.py`
-- email RAG: `emailrag2.py`
-- Streamlit UI: `streamlit_app.py`
-- PyQt GUI: `rag_gui.py` and split modules
-- ingestion: `Text_embeddings_to_chromadb_python.py`
-- file monitor: `monitor_file_changes_update_chromaDB.py`
-- vault builder: `Vault_json_creation_from_HTMLs.py`
-- Chroma helpers/viewers: `list_chromadb_collections.py`, `query_chromadb_*`
+## Affected interfaces, files, and artifacts
 
-## Implementation steps
+- `requirements.txt`, `requirements-dev.txt`, `README.md`, `AGENTS.md`, `.env.example`, `.gitignore`.
+- Setup contract: documented PowerShell venv install and chosen entry point work without relying on local caches.
 
-1. Create `.env.example` with placeholders only:
+## Concrete actions
 
-   ```dotenv
-   GROQ_API_KEY=
-   EASY_RAG_CHROMA_DIR=
-   EASY_RAG_MONITOR_DIR=
-   EASY_RAG_VAULT_SOURCE_DIR=
-   EASY_RAG_NLTK_DATA=
-   ```
+- Do not dump an entire local `pip freeze`; retain direct dependencies with compatible bounds and include `tiktoken` only with its shipped use.
+- Never place secrets, local Chroma, vault output, or bytecode in setup artifacts.
+- Cross-check every tracked Python entry point against the documentation.
 
-2. Confirm `.env` is ignored in `.gitignore`.
-3. Update or create `AGENTS.md` with:
+## Verification
 
-   - working branch
-   - source of truth for GitHub issues
-   - warning about issue #2 key rotation
-   - entry point map
-   - test commands
-   - rule to avoid committing generated data, `.env`, pyc files, and Chroma DB
+16A:
 
-4. Regenerate `requirements.txt` from imports, not by dumping the whole local
-   venv. Include direct runtime dependencies:
+```powershell
+git check-ignore .env
+git grep -n -I -E '(api[_-]?key|token|secret)[[:space:]]*=[[:space:]]*[^<${]' -- .env.example README.md
+python -m venv .venv-setup-smoke
+```
 
-   - `beautifulsoup4`
-   - `chromadb`
-   - `gTTS`
-   - `groq`
-   - `lxml`
-   - `matplotlib`
-   - `nest_asyncio`
-   - `networkx`
-   - `nltk`
-   - `numpy`
-   - `ollama`
-   - `pandas`
-   - `plotly`
-   - `pydub`
-   - `pymilvus`
-   - `PyPDF2`
-   - `PyQt5`
-   - `python-dotenv`
-   - `pyvis`
-   - `PyYAML`
-   - `rank_bm25`
-   - `requests`
-   - `SpeechRecognition`
-   - `streamlit`
-   - `tiktoken` if issue #13 lands
-   - `torch`
-   - `tqdm`
-   - `watchdog`
-   - `wordcloud`
-
-5. Pin direct dependencies with compatible lower bounds or exact versions based
-   on the current working environment. Do not include local path packages or
-   generated caches.
-6. Add `requirements-dev.txt` if tests need dev-only tools such as `pytest`.
-7. Update `README.md` with one-command setup:
-
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   python -m pip install -U pip
-   python -m pip install -r requirements.txt -r requirements-dev.txt
-   ```
-
-8. Add a short "choose an entry point" section so agents know which script to
-   run for each workflow.
-
-## Tests and verification
-
-Suggested commands:
+16B:
 
 ```powershell
 python -m pip install -r requirements.txt --dry-run
 python -m pytest tests -q
 python -m py_compile localrag.py streamlit_app.py rag_gui.py monitor_file_changes_update_chromaDB.py Text_embeddings_to_chromadb_python.py
-Get-ChildItem -Recurse -File -Include '*.pyc' | Select-Object -First 5
 ```
 
-Expected result: no `.pyc` files are staged for commit.
+Manual: create a fresh venv, install runtime plus dev requirements, run the listed tests and compile checks.
 
-Manual smoke:
+## Closure gate, rollback, and commit boundary
 
-1. Create a fresh venv.
-2. Install requirements.
-3. Run `python -m pytest tests -q`.
-4. Run `python -m py_compile` on the main entry points.
-
-## Acceptance checklist
-
-- [ ] `.env.example` exists and contains placeholders only.
-- [ ] `AGENTS.md` maps the repo entry points.
-- [ ] `requirements.txt` includes every direct runtime import.
-- [ ] dev-only tools are separated or clearly documented.
-- [ ] README has setup and entry point commands.
-- [ ] No generated data or pyc files are staged.
-
-## Commit boundary
-
-Use one commit for this issue only:
-
-```text
-chore(#16): document setup and requirements
-```
+- **16A gate:** `.env` is ignored, `.env.example` contains placeholders only, the rotation warning and bootstrap are documented, and no secret/generated artifact is staged.
+- **16B maintained-path gate:** after #21/#22, a clean venv installs declared dependencies, maintained entry points and environment variables are accurately mapped, and their compile/tests pass.
+- **16B retirement gate (mutually exclusive per entry point):** an unmaintained path is explicitly unsupported in docs, absent from the supported setup commands, and has a named maintained replacement with runnable evidence.
+- **Rollback constraints:** never weaken `.env` ignore or secret guidance. Revert 16B dependency/doc mapping independently without removing 16A; never replace curated requirements with a machine-specific freeze.
+- **Commits:** 16A `docs(#16): add secret-safe contributor setup`; 16B `chore(#16): document maintained setup and requirements`.

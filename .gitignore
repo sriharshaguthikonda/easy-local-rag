@@ -34,6 +34,9 @@ easyrag/
 # Ignore Python script
 Vault_json_creation_from_HTMLs.py
 
+# Generated Python bytecode
+__pycache__/
+*.py[cod]
 
 
 # Ignore large files

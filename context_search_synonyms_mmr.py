@@ -129,5 +129,4 @@ def hybrid_search_with_synonyms(
         return relevant_context
 
     except Exception as e:
-        print(f"An error occurred during hybrid search: {e}")
-        return "Answer this yourself!"
+        raise RuntimeError("Retrieval failed; no model request was made") from e
