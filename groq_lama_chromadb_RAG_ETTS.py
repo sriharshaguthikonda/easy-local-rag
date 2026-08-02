@@ -912,8 +912,7 @@ def get_relevant_context_hybrid(
         return relevant_context
 
     except Exception as e:
-        print(f"An error occurred: {e}")
-        return "Answer this yourself!"
+        raise RuntimeError("Retrieval failed; no model request was made") from e
 
 
 # List of available colors

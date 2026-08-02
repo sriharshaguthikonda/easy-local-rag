@@ -32,6 +32,8 @@ def _load_prompt_functions(retrieval_result):
 
     def retrieve(prompt, **kwargs):
         calls.append((prompt, kwargs))
+        if isinstance(retrieval_result, BaseException):
+            raise retrieval_result
         return retrieval_result
 
     namespace = {
@@ -134,3 +136,28 @@ def test_retrieved_sentinel_reaches_model_request_exactly_once():
     assert [(source["citation_id"], source["document"]) for source in sources] == [
         (1, sentinel)
     ]
+
+
+def test_retrieval_failure_is_visible_and_skips_model_providers():
+    namespace, _calls = _load_prompt_functions(RuntimeError("retrieval unavailable"))
+    errors = []
+    provider_calls = []
+    namespace.update(
+        st=SimpleNamespace(error=errors.append),
+        groq_client=SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=lambda **_kwargs: provider_calls.append("groq")
+                )
+            )
+        ),
+        ollama=SimpleNamespace(
+            chat=lambda **_kwargs: provider_calls.append("ollama")
+        ),
+    )
+
+    result = namespace["chat_with_model"]("question", "system")
+
+    assert result == (None, None, None)
+    assert errors == ["An error occurred: retrieval unavailable"]
+    assert provider_calls == []
