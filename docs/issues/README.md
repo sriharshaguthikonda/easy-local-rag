@@ -11,12 +11,15 @@ Canonical issue files are acceptance contracts, not implementation evidence.
 Authority precedence is: **GitHub issue = live state and human decisions;
 canonical plan = scope, invariants, and closure gates; roadmap ledger =
 ordering and handoffs; JIT packet = implementation detail and cannot weaken a
-canonical plan.** The status column reflects live state checked on 2026-07-27:
+canonical plan.** The status column reflects live state checked on 2026-08-02:
 #6 is closed through PR #29 at GUI merge `daecce8a27f50da39284f5519d77b835905209f6`;
 #9 is closed through PR #33 at merge `619365224f6db3770d3369fd84a295589699e513`;
 #14 is closed as a duplicate; #8 and #15 are closed as completed; and PR #36
 merged into the GUI branch as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205`
-from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`.
+from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`; #37 is
+closed through PR #41 at merge `f87b4cf`; and #38 is closed through PR #42 at
+merge `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head
+`5e5e8941670f519e6447a770fe0f0d012b96cbcc`.
 
 ## Required execution order
 
