@@ -409,6 +409,37 @@ def open_file(path):
         return False
 
 
+def render_source_documents(metadata, cited_ids):
+    source_map = {meta.get("citation_id"): meta for meta in metadata}
+    ids_to_render = cited_ids or sorted(source_map.keys())
+
+    with st.expander("Source Documents 📚", expanded=False):
+        for citation_id in ids_to_render:
+            meta = source_map.get(citation_id)
+            if not meta:
+                continue
+            file_path = Path(meta["file_name"])
+            st.markdown(f"### [{citation_id}] {file_path.name}")
+
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button(
+                    "📂 Open File",
+                    key=f"open_{citation_id}_{hash(str(file_path))}",
+                ):
+                    open_file(file_path)
+            with col2:
+                if st.button(
+                    "📋 Copy Path",
+                    key=f"copy_{citation_id}_{hash(str(file_path))}",
+                ):
+                    st.clipboard.write(str(file_path))
+
+            st.markdown("**Excerpt:**")
+            st.markdown(meta["document"])
+            st.markdown("---")
+
+
 def main():
     # Create three columns: sources, main chat, and analytics
     sources_col, main_col, analytics_col = st.columns([1, 2, 1])
@@ -530,37 +561,7 @@ def main():
                         cited_ids = validate_response_citations(full_response, metadata)
                         if not cited_ids:
                             st.warning("No citations returned in response.")
-
-                        source_map = {meta.get("citation_id"): meta for meta in metadata}
-                        ids_to_render = cited_ids or sorted(source_map.keys())
-
-                        with st.expander("Source Documents 📚", expanded=False):
-                            for citation_id in ids_to_render:
-                                meta = source_map.get(citation_id)
-                                if not meta:
-                                    continue
-                                file_path = Path(meta["file_name"])
-                                st.markdown(f"### [{citation_id}] {file_path.name}")
-
-                                # Create two columns for the controls
-                                col1, col2 = st.columns([1, 1])
-                                with col1:
-                                    if st.button(
-                                        "📂 Open File",
-                                        key=f"open_{idx}_{hash(str(file_path))}",
-                                    ):
-                                        open_file(file_path)
-                                with col2:
-                                    if st.button(
-                                        "📋 Copy Path",
-                                        key=f"copy_{idx}_{hash(str(file_path))}",
-                                    ):
-                                        st.clipboard.write(str(file_path))
-
-                                # Display excerpt
-                                st.markdown("**Excerpt:**")
-                                st.markdown(meta["text"])
-                                st.markdown("---")
+                        render_source_documents(metadata, cited_ids)
 
     with analytics_col:
         st.title("Analytics 📊")

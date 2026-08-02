@@ -58,6 +58,49 @@ class _Placeholder:
         pass
 
 
+class _DisplayContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class _DisplayStreamlit:
+    def __init__(self):
+        self.markdowns = []
+        self.buttons = []
+
+    def expander(self, *_args, **_kwargs):
+        return _DisplayContext()
+
+    def markdown(self, text):
+        self.markdowns.append(text)
+
+    def columns(self, _widths):
+        return _DisplayContext(), _DisplayContext()
+
+    def button(self, label, key):
+        self.buttons.append((label, key))
+        return False
+
+
+def _load_source_renderer():
+    tree = ast.parse(Path("streamlit_app.py").read_text(encoding="utf-8"))
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "render_source_documents"
+    ]
+    assert len(functions) == 1
+    namespace = {"Path": Path}
+    exec(
+        compile(ast.Module(body=functions, type_ignores=[]), "streamlit_app.py", "exec"),
+        namespace,
+    )
+    return namespace
+
+
 @pytest.mark.parametrize("mode", ["Standard", "Focused Search", "Brain Dump", "Summary"])
 def test_every_streamlit_mode_sends_retrieved_text_with_stable_citations(mode):
     sentinel = "SENTINEL evidence reaches the model prompt."
@@ -239,3 +282,31 @@ def test_oversized_evidence_prompt_is_visible_and_skips_model_providers():
     assert result == (None, None, None)
     assert errors == ["An error occurred: Evidence prompt was truncated to fit token budget"]
     assert provider_calls == []
+
+
+def test_source_renderer_uses_citation_ids_and_document_excerpt():
+    namespace = _load_source_renderer()
+    display = _DisplayStreamlit()
+    namespace["st"] = display
+
+    namespace["render_source_documents"](
+        [
+            {
+                "citation_id": 7,
+                "file_name": "folder/example.txt",
+                "document": "Evidence excerpt.",
+            }
+        ],
+        [7],
+    )
+
+    assert display.markdowns == [
+        "### [7] example.txt",
+        "**Excerpt:**",
+        "Evidence excerpt.",
+        "---",
+    ]
+    assert [key for _label, key in display.buttons] == [
+        f"open_7_{hash(str(Path('folder/example.txt')))}",
+        f"copy_7_{hash(str(Path('folder/example.txt')))}",
+    ]
