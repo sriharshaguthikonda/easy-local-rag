@@ -1,8 +1,10 @@
 # 0004 — Legacy hardening proceeds under the #2 gate; consolidation does not
 
 **Date:** 2026-08-02
-**Status:** Accepted
+**Status:** Proposed — not implementation authority until canonical ledger adoption
 **Context:** [ledger](../issues/README.md) · [ISSUE-002](../issues/ISSUE-002-rotate-groq-keys.md)
+
+**Authority:** The canonical issue ledger and closure gates control implementation; this ADR does not authorize work until they adopt it.
 
 ## Context
 
