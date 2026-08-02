@@ -1,5 +1,6 @@
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,12 +9,18 @@ from rag_prompting import (
     build_guarded_context_block,
     build_numbered_sources,
     context_from_sources,
+    validate_response_citations,
 )
 
 
 def _load_prompt_functions(retrieval_result):
     tree = ast.parse(Path("streamlit_app.py").read_text(encoding="utf-8"))
-    wanted = {"retrieve_numbered_sources", "build_citation_prompt", "process_chat_mode"}
+    wanted = {
+        "retrieve_numbered_sources",
+        "build_citation_prompt",
+        "process_chat_mode",
+        "chat_with_model",
+    }
     functions = [
         node
         for node in tree.body
@@ -33,9 +40,19 @@ def _load_prompt_functions(retrieval_result):
         "build_numbered_sources": build_numbered_sources,
         "context_from_sources": context_from_sources,
         "get_relevant_context_hybrid": retrieve,
+        "validate_response_citations": validate_response_citations,
     }
     exec(compile(ast.Module(body=functions, type_ignores=[]), "streamlit_app.py", "exec"), namespace)
     return namespace, calls
+
+
+class _SessionState(dict):
+    __getattr__ = dict.__getitem__
+
+
+class _Placeholder:
+    def markdown(self, _text):
+        pass
 
 
 @pytest.mark.parametrize("mode", ["Standard", "Focused Search", "Brain Dump", "Summary"])
@@ -69,3 +86,51 @@ def test_joined_context_cannot_diverge_from_structured_sources():
 
     with pytest.raises(ValueError, match="does not match structured sources"):
         namespace["retrieve_numbered_sources"]("question")
+
+
+def test_retrieved_sentinel_reaches_model_request_exactly_once():
+    sentinel = "SENTINEL evidence reaches the model request."
+    namespace, _calls = _load_prompt_functions(
+        (sentinel, [{"file_name": "one.txt", "document": sentinel}])
+    )
+    model_calls = []
+
+    def create_completion(**kwargs):
+        model_calls.append(kwargs)
+        return [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="Answer [1]."))]
+            )
+        ]
+
+    namespace.update(
+        st=SimpleNamespace(
+            session_state=_SessionState(
+                conversation_history=[],
+                tts_enabled=False,
+                tts_queue=SimpleNamespace(put=lambda _value: None),
+            ),
+            empty=lambda: _Placeholder(),
+            info=lambda _message: None,
+            error=lambda error: pytest.fail(str(error)),
+        ),
+        groq_client=SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(create=create_completion)
+            )
+        ),
+        groq_model="test-model",
+        ollama_model="fallback-model",
+        trim_messages_to_budget=lambda messages, **_kwargs: (messages, False),
+    )
+
+    _context, response, sources = namespace["chat_with_model"](
+        "question", "system"
+    )
+
+    assert response == "Answer [1]."
+    assert len(model_calls) == 1
+    assert model_calls[0]["messages"][-1]["content"].count(sentinel) == 1
+    assert [(source["citation_id"], source["document"]) for source in sources] == [
+        (1, sentinel)
+    ]
