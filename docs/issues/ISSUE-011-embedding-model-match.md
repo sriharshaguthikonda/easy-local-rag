@@ -1,101 +1,40 @@
-# Issue #11 Plan: Enforce embedding model match
+# Issue #11: Enforce the embedding-model contract
 
-GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/11
+[Roadmap ledger](README.md)
 
-Priority: P1 bug
+**Status:** OPEN — `embedding_contract.py` and GUI checks exist; complete ingest/query coverage and legacy-collection tests are required.
+**GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/11
+**Labels / priority:** `priority:P1`, `type:bug`
+**Dependencies:** Carry model provenance through #19/#20 and test the maintained legacy caller; otherwise close from retirement proof. #7 creation and #10 retrieval use this contract only while supported.
 
-## Goal
+## Implementation slices
 
-Prevent users from querying a Chroma collection with a different embedding model
-than the one used to ingest it.
+1. Set `embedding_model` metadata when creating or first writing an empty collection.
+2. Reject a non-empty collection without metadata and every requested-model mismatch before embedding/querying.
+3. Route monitor, ingest, Streamlit, and GUI paths through the shared helper; surface a concise re-index/switch-model error.
 
-## Files to inspect
+## Affected interfaces, files, and artifacts
 
-- `monitor_file_changes_update_chromaDB.py`
-- `Text_embeddings_to_chromadb_python.py`
-- `streamlit_groq_lama_chromadb_RAG_ETTS.py`
-- `GUI_direct_search.py`
-- `GUI_settings.py`
-- optional new file: `embedding_contract.py`
-- tests under `tests/`
+- `embedding_contract.py`, ingestion/monitor scripts, Streamlit backend, `GUI_direct_search.py`, `GUI_settings.py`, tests.
+- Chroma collection metadata: `embedding_model` is authoritative; dimensions alone do not prove compatibility.
 
-## Implementation steps
+## Concrete actions
 
-1. Add a shared constant:
+- Do not relabel a non-empty legacy collection; require an explicit migration/re-index.
+- Audit every caller generating embeddings, not only GUI direct search.
+- Keep the default model in one shared location where practical.
 
-   ```python
-   DEFAULT_EMBEDDING_MODEL = "mxbai-embed-large"
-   ```
-
-2. Add helper functions in `embedding_contract.py`:
-
-   - `get_collection_embedding_model(collection)`
-   - `set_collection_embedding_model(collection, model_name)`
-   - `assert_embedding_model_matches(collection, requested_model)`
-
-3. Store the model name in collection metadata when creating or first writing to
-   a collection:
-
-   ```python
-   metadata={"embedding_model": DEFAULT_EMBEDDING_MODEL}
-   ```
-
-4. In ingest scripts, before adding embeddings:
-
-   - if collection metadata has no embedding model and count is zero, set it
-   - if collection metadata has no embedding model and count is nonzero, stop and
-     ask for manual migration
-   - if metadata exists and differs, raise a clear error
-
-5. In query paths, call `assert_embedding_model_matches()` before generating the
-   query embedding.
-6. In `GUI_direct_search.py`, reject `settings["embedding_model"]` if it differs
-   from collection metadata.
-7. Surface mismatch in the UI as a readable error:
-
-   ```text
-   Collection was indexed with mxbai-embed-large, but query uses nomic-embed-text.
-   Re-index or switch the query model.
-   ```
-
-8. Do not silently update metadata for non-empty collections. That would hide an
-   already-mixed vector space.
-
-## Tests and verification
-
-Add tests:
-
-- empty collection with missing metadata can be initialized
-- non-empty collection with missing metadata raises manual migration error
-- matching model passes
-- mismatched model raises clear error
-
-Suggested commands:
+## Verification
 
 ```powershell
+python -m pytest tests/test_embedding_contract.py -q
 python -m pytest tests -q
 python -m py_compile embedding_contract.py monitor_file_changes_update_chromaDB.py Text_embeddings_to_chromadb_python.py streamlit_groq_lama_chromadb_RAG_ETTS.py GUI_direct_search.py
 ```
 
-Manual smoke:
+## Closure gate, rollback, and commit boundary
 
-1. Create collection metadata with `embedding_model=mxbai-embed-large`.
-2. Set GUI embedding model to a different model.
-3. Run a search.
-4. Expected: clear mismatch error, no query sent to Chroma.
-
-## Acceptance checklist
-
-- [ ] Ingest writes embedding model metadata.
-- [ ] Query checks metadata before embedding.
-- [ ] Mismatch fails loudly.
-- [ ] Non-empty legacy collections are not silently relabeled.
-- [ ] Tests cover match, mismatch, and legacy metadata.
-
-## Commit boundary
-
-Use one commit for this issue only:
-
-```text
-fix(#11): enforce embedding model contract
-```
+- **Maintained-path closure:** empty initialization works, matching models pass, mismatch and non-empty missing metadata fail before querying, and all maintained ingest/query paths use the helper.
+- **Retirement closure (mutually exclusive):** remove uncovered ingest/query paths from supported entry points and docs, prove they cannot generate or query embeddings, and link a maintained contract-enforcing replacement. Every remaining path must still reject mismatches.
+- **Rollback constraint:** never silently alter non-empty metadata to bypass an error.
+- **Commit:** `fix(#11): enforce embedding model contract`.

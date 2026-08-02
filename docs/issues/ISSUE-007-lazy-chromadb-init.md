@@ -1,88 +1,40 @@
-# Issue #7 Plan: Lazy-init ChromaDB collection for fresh users
+# Issue #7: Lazy-initialize Chroma for fresh installs
 
-GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/7
+[Roadmap ledger](README.md)
 
-Priority: P1 bug
+**Status:** OPEN — live code has lazy call sites, but initialization semantics and fresh-path proof remain incomplete.
+**GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/7
+**Labels / priority:** `priority:P1`, `type:bug`
+**Dependencies:** After #22B freezes supported clients, create a dedicated packet only if Chroma UI remains supported; otherwise close from #25 retirement proof. #11 collection metadata applies only while that path remains supported.
 
-## Goal
+## Implementation slices
 
-A fresh clone with an empty Chroma directory must be able to launch the app.
-Importing `streamlit_app.py` must not crash just because the collection does not
-exist yet.
+1. Remove import-time collection opening; `initialize_collection` accepts a client/name and creates only at runtime.
+2. Use `get_or_create_collection` for the onboarding creation path; expose a readable error/guidance path when creation is intentionally disabled.
+3. Cache one client/collection resource per Streamlit session and test fresh startup with a fake client and empty temporary path.
 
-## Files to inspect
+## Affected interfaces, files, and artifacts
 
-- `streamlit_groq_lama_chromadb_RAG_ETTS.py`
-- `streamlit_app.py`
-- `GUI_chromadb.py`
-- tests under `tests/`
+- `streamlit_groq_lama_chromadb_RAG_ETTS.py`, `streamlit_app.py`, `GUI_chromadb.py`, tests.
+- Public behavior: importing Streamlit code does not require a preexisting Chroma collection.
 
-## Implementation steps
+## Concrete actions
 
-1. In `streamlit_groq_lama_chromadb_RAG_ETTS.py`, remove import-time collection
-   initialization:
+- Audit callers of `initialize_collection`; do not create clients per rerun.
+- Surface onboarding rather than an import traceback when the collection is absent.
+- Confirm existing collections still load without unintended recreation.
 
-   ```python
-   if collection is None:
-       collection = initialize_collection()
-   ```
-
-2. Change `initialize_collection()` to use `get_or_create_collection()` instead
-   of `get_collection()`.
-3. Add optional arguments to `initialize_collection()`:
-
-   - `name=collection_name`
-   - `create=True`
-   - `client=None`
-
-4. If `create=False`, return a clear error when the collection is missing. If
-   `create=True`, create it.
-5. In `streamlit_app.py`, call `initialize_collection()` inside session setup and
-   catch expected Chroma errors. Show an onboarding message instead of crashing.
-6. Ensure `get_relevant_context_hybrid()` initializes lazily if `collection is
-   None`.
-7. Avoid creating multiple clients per rerun. Store the collection or client in
-   Streamlit session state or a cached resource.
-
-## Tests and verification
-
-Add tests with a fake Chroma client:
-
-- `initialize_collection(create=True)` calls `get_or_create_collection`
-- importing the module does not call Chroma
-- a missing collection returns a UI-visible error, not an import exception
-
-Suggested commands:
+## Verification
 
 ```powershell
 python -m pytest tests -q
 python -m py_compile streamlit_groq_lama_chromadb_RAG_ETTS.py streamlit_app.py
+streamlit run streamlit_app.py
 ```
 
-Manual smoke:
+## Closure gate, rollback, and commit boundary
 
-1. Temporarily point Chroma to an empty temp directory.
-2. Run:
-
-   ```powershell
-   streamlit run streamlit_app.py
-   ```
-
-3. Expected: app loads and either creates the collection or shows setup guidance.
-4. Expected: no import-time `Collection ... does not exist` crash.
-
-## Acceptance checklist
-
-- [ ] No Chroma collection is opened at import time.
-- [ ] Fresh Chroma path can launch the UI.
-- [ ] Existing Chroma path still loads existing collection.
-- [ ] Missing/empty collection has clear UI guidance.
-- [ ] Tests cover fresh-user startup.
-
-## Commit boundary
-
-Use one commit for this issue only:
-
-```text
-fix(#7): lazy-init Chroma collection
-```
+- **Maintained-path closure:** module import makes no Chroma call; an empty temporary Chroma path launches with setup guidance or a new collection; an existing collection still loads.
+- **Retirement closure (mutually exclusive):** remove an affected entry point from supported docs and launch surfaces, prove importing every maintained entry point makes no eager Chroma call, and link its maintained lazy-initialized replacement.
+- **Rollback constraint:** do not reintroduce import-time `get_collection`; retain data and metadata on any creation-path rollback.
+- **Commit:** `fix(#7): lazy-init Chroma collection`.

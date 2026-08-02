@@ -1,104 +1,41 @@
-# Issue #8 Plan: Replace hardcoded Windows-only paths with config
+# Issue #8: Make runtime paths configurable
 
-GitHub: https://github.com/sriharshaguthikonda/easy-local-rag/issues/8
+[Roadmap ledger](README.md)
 
-Priority: P1 bug
+**Status:** CLOSED — COMPLETED on GitHub. This plan remains closure evidence;
+future work must use a new issue rather than reopening this implementation.
+**GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/8
+**Labels / priority:** `priority:P1`, `type:bug`
+**Dependencies:** #26A provides early hygiene; #26C supplies final supported-path proof. #16 owns the public `.env.example` and setup documentation.
 
-## Goal
+## Implementation slices
 
-Remove user-specific paths such as `C:\Users\deletable\...` from runtime code.
-The scripts should read paths from environment variables, config, or a folder
-picker, with safe defaults based on `Path.home()`.
+1. Keep one minimal `Path`-based config helper for monitor, vault source, Chroma, and optional NLTK data paths.
+2. Replace user-specific runtime literals in the monitor and vault writer; expand `~`, resolve defaults from `Path.home()`, and retain the existing picker fallback.
+3. Test overrides, optional absence, and required-path error behavior; document names in #16's setup material.
 
-## Files to inspect
+## Affected interfaces, files, and artifacts
 
-- `monitor_file_changes_update_chromaDB.py`
-- `Vault_json_creation_from_HTMLs.py`
-- `config.yaml`
-- `.env.example`
-- optional new file: `rag_config.py`
-- tests under `tests/`
+- `rag_config.py`, `monitor_file_changes_update_chromaDB.py`, `Vault_json_creation_from_HTMLs.py`, `.env.example`, documentation, tests.
+- Environment contract: `EASY_RAG_NLTK_DATA`, `EASY_RAG_MONITOR_DIR`, `EASY_RAG_VAULT_SOURCE_DIR`, `EASY_RAG_CHROMA_DIR`.
 
-## Implementation steps
+## Concrete actions
 
-1. Add a small config helper, for example `rag_config.py`.
-2. In the helper, define env var names:
+- Do not add a second configuration system; reuse the helper at each named call site.
+- Ensure a missing optional NLTK path does nothing, while a required execution path fails with an actionable message.
+- Search runtime Python files for the historical user-specific prefix before closing.
 
-   - `EASY_RAG_NLTK_DATA`
-   - `EASY_RAG_MONITOR_DIR`
-   - `EASY_RAG_VAULT_SOURCE_DIR`
-   - `EASY_RAG_CHROMA_DIR`
-
-3. Add a function:
-
-   ```python
-   def get_path(name: str, default: Path | None = None) -> Path:
-       ...
-   ```
-
-   It should read the env var, expand `~`, and return an absolute `Path`.
-
-4. In `monitor_file_changes_update_chromaDB.py`, replace the hardcoded NLTK path
-   with:
-
-   ```python
-   nltk_data = get_path("EASY_RAG_NLTK_DATA", None)
-   if nltk_data:
-       nltk.data.path.append(str(nltk_data))
-   ```
-
-5. Replace the hardcoded monitor folder with:
-
-   ```python
-   folder = get_path("EASY_RAG_MONITOR_DIR", Path.home() / "Google Drive")
-   monitor_folder(str(folder))
-   ```
-
-6. In `Vault_json_creation_from_HTMLs.py`, replace any hardcoded source path
-   with `EASY_RAG_VAULT_SOURCE_DIR`. Keep the Tk folder picker as fallback if no
-   env var is set.
-7. Update `.env.example` with placeholders only. Do not commit real local paths
-   unless they are comments showing examples.
-8. Document the env vars in `README.md` or `AGENTS.md`.
-
-## Tests and verification
-
-Add tests for the helper:
-
-- env var overrides default
-- `~` expands
-- missing optional path returns `None`
-- missing required path raises a clear error
-
-Suggested commands:
+## Verification
 
 ```powershell
 python -m pytest tests -q
 python -m py_compile rag_config.py monitor_file_changes_update_chromaDB.py Vault_json_creation_from_HTMLs.py
+$env:EASY_RAG_MONITOR_DIR = "$PWD"; python monitor_file_changes_update_chromaDB.py
 ```
 
-Manual smoke:
+## Closure gate, rollback, and commit boundary
 
-```powershell
-$env:EASY_RAG_MONITOR_DIR = "$PWD"
-python monitor_file_changes_update_chromaDB.py
-```
-
-Stop after confirming it watches the configured folder, not a hardcoded user
-folder.
-
-## Acceptance checklist
-
-- [ ] No runtime code hardcodes `C:\Users\deletable`.
-- [ ] Monitor folder can be set by env var.
-- [ ] Vault source folder can be set by env var or picker.
-- [ ] NLTK data path is optional and configurable.
-- [ ] `.env.example` documents path variables without real secrets.
-
-## Commit boundary
-
-Use one commit for this issue only:
-
-```text
-fix(#8): make runtime paths configurable
-```
+- **Maintained-path closure:** no maintained runtime contains a hardcoded user path, overrides drive monitor/vault behavior, and picker/default behavior is tested.
+- **Retirement closure (mutually exclusive):** remove an affected utility from supported entry points and docs, prove its machine-specific path is unreachable, and document the configurable maintained replacement. A retired file must not remain advertised as runnable.
+- **Rollback constraint:** preserve safe defaults and never restore a machine-specific path.
+- **Commit:** `fix(#8): make runtime paths configurable`.
