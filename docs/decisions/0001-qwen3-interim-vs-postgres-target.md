@@ -1,8 +1,10 @@
 # 0001 — qwen3 embeddings are an interim step; pgvector remains the target
 
 **Date:** 2026-08-02
-**Status:** Accepted
+**Status:** Proposed — not implementation authority until canonical ledger adoption
 **Context:** [ISSUE-017](../issues/ISSUE-017-postgres-consolidation.md) · [ISSUE-020](../issues/ISSUE-020-deterministic-ingestion.md) · [proposal](../proposals/qwen3-embedding-migration-implementation.md)
+
+**Authority:** The canonical issue ledger and closure gates control implementation; this ADR does not authorize work until they adopt it.
 
 ## Context
 
