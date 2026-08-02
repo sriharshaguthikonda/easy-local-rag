@@ -808,10 +808,19 @@ def get_relevant_context_hybrid(
             selected_results.append(best_result)
             remaining_results.remove(best_result)
 
-        final_results = [res["meta"] for res in selected_results]
+        final_results = [
+            {
+                **res["meta"],
+                "document": res["document"],
+                "score": res["final_score"],
+            }
+            for res in selected_results
+        ]
 
         # Prepare relevant context
-        relevant_context = "\n\n".join([res["document"] for res in selected_results])
+        relevant_context = "\n\n".join(
+            source["document"] for source in final_results
+        )
 
         # Start a worker thread to print details of the results
         worker_thread = threading.Thread(
@@ -821,12 +830,11 @@ def get_relevant_context_hybrid(
         )
         worker_thread.start()
 
-        # Return both the context and the metadata
+        # Keep text and metadata together so callers cannot lose retrieved evidence.
         return relevant_context, final_results
 
     except Exception as e:
-        print(f"An error occurred: {e}")
-        return "Answer this yourself!", []
+        raise RuntimeError("Retrieval failed; no model request was made") from e
 
 
 def print_relevant_context(results):
