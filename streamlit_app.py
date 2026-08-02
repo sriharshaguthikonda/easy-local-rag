@@ -57,7 +57,6 @@ import json
 import asyncio
 import queue
 import threading
-import re
 from pathlib import Path
 import webbrowser
 import plotly.express as px
@@ -70,7 +69,13 @@ from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
 from conversation_import import apply_uploaded_conversation
-from rag_prompting import CONTEXT_GUARD, build_guarded_context_block
+from rag_prompting import (
+    CONTEXT_GUARD,
+    build_guarded_context_block,
+    build_numbered_sources,
+    context_from_sources,
+    validate_response_citations,
+)
 from token_budget import trim_messages_to_budget
 
 # Load environment variables
@@ -191,14 +196,13 @@ st.markdown(
 )
 
 
-def build_numbered_sources(metadata):
-    sources = []
-    for idx, meta in enumerate(metadata or [], start=1):
-        source = dict(meta)
-        source["citation_id"] = idx
-        source["source_name"] = Path(meta["file_name"]).name
-        sources.append(source)
-    return sources
+def retrieve_numbered_sources(prompt, **kwargs):
+    joined_context, retrieved_sources = get_relevant_context_hybrid(prompt, **kwargs)
+    numbered_sources = build_numbered_sources(retrieved_sources)
+    structured_context = context_from_sources(numbered_sources)
+    if joined_context != structured_context:
+        raise ValueError("Retrieved context does not match structured sources")
+    return structured_context, numbered_sources
 
 
 def build_citation_prompt(prefix, prompt, numbered_sources):
@@ -217,11 +221,10 @@ def process_chat_mode(prompt, mode, context_window):
     """Handle different chat modes"""
     if mode == "Focused Search":
         # Use more specific context with higher relevance threshold
-        context, metadata = get_relevant_context_hybrid(
+        context, numbered_sources = retrieve_numbered_sources(
             prompt, top_k=3, alpha=0.9, beta=0.1
         )
 
-        numbered_sources = build_numbered_sources(metadata)
         processed_input = build_citation_prompt(
             "Focusing on most relevant sources:",
             prompt,
@@ -231,7 +234,7 @@ def process_chat_mode(prompt, mode, context_window):
 
     elif mode == "Brain Dump":
         # Get more diverse sources with lower relevance threshold
-        context, metadata = get_relevant_context_hybrid(
+        context, numbered_sources = retrieve_numbered_sources(
             prompt,
             top_k=10,
             additional_unique_files=10,
@@ -240,7 +243,6 @@ def process_chat_mode(prompt, mode, context_window):
             lambda_mmr=0.7,
         )
 
-        numbered_sources = build_numbered_sources(metadata)
         processed_input = build_citation_prompt(
             "Drawing from multiple sources:",
             prompt,
@@ -250,8 +252,7 @@ def process_chat_mode(prompt, mode, context_window):
 
     elif mode == "Summary":
         # Get context and ask for a summary
-        context, metadata = get_relevant_context_hybrid(prompt, top_k=5)
-        numbered_sources = build_numbered_sources(metadata)
+        context, numbered_sources = retrieve_numbered_sources(prompt, top_k=5)
         processed_input = build_citation_prompt(
             "Please summarize the following context:",
             prompt,
@@ -260,8 +261,7 @@ def process_chat_mode(prompt, mode, context_window):
         return context, processed_input, numbered_sources
 
     else:  # Standard mode
-        context, metadata = get_relevant_context_hybrid(prompt, top_k=5)
-        numbered_sources = build_numbered_sources(metadata)
+        context, numbered_sources = retrieve_numbered_sources(prompt, top_k=5)
         processed_input = build_citation_prompt("", prompt, numbered_sources)
         return context, processed_input, numbered_sources
 
@@ -340,6 +340,8 @@ def chat_with_model(
                     response_placeholder.markdown(full_response + "▌")
 
             response_placeholder.markdown(full_response)
+
+        validate_response_citations(full_response, metadata)
 
         # Update conversation history
         st.session_state.conversation_history.extend(
@@ -519,12 +521,7 @@ def main():
                     )
                     # Display sources with clickable links
                     if metadata:
-                        cited_ids = sorted(
-                            {
-                                int(match.group(1))
-                                for match in re.finditer(r"\[(\d+)\]", full_response or "")
-                            }
-                        )
+                        cited_ids = validate_response_citations(full_response, metadata)
                         if not cited_ids:
                             st.warning("No citations returned in response.")
 
