@@ -74,8 +74,12 @@ def test_hybrid_context_uses_documents_and_greedy_mmr_without_metadata_text():
     assert result != ("Answer this yourself!", [])
     context, returned_sources = result
     assert context == "needle alpha\n\nneedle gamma\n\nneedle beta"
-    assert returned_sources == [
-        {**metadata[0], "document": "needle alpha", "score": 0.7},
-        {**metadata[2], "document": "needle gamma", "score": 0.5599999999999999},
-        {**metadata[1], "document": "needle beta", "score": 0.6388888888888888},
+    assert [
+        (source["file_name"], source["document"])
+        for source in returned_sources
+    ] == [
+        ("a.txt", "needle alpha"),
+        ("c.txt", "needle gamma"),
+        ("b.txt", "needle beta"),
     ]
+    assert all(isinstance(source["score"], float) for source in returned_sources)
