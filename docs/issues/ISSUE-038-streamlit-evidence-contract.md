@@ -2,12 +2,19 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** ACTIVE (implementation complete, awaiting review) — #37 closed
+**Status:** COMPLETED / CLOSED — #37 closed
 2026-07-26; implemented 2026-08-02 on
 `codex/issue-038-evidence-contract` from frozen base `88d0758`. Packet:
 `docs/superpowers/plans/2026-08-02-issue-038-streamlit-evidence-contract-implementation.md`.
-[PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42) is open
-and awaiting review; the issue stays open until that merges.
+[PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42) merged
+with Create a merge commit as `068e0c8f986bf6e292d401d8d97b181815fc0593` from
+reviewed head `5e5e8941670f519e6447a770fe0f0d012b96cbcc`.
+[Review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155438619),
+[verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155439139),
+and [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38#issuecomment-5155449007):
+focused 19 passed; full 175 passed / 4 accepted frozen GUI failures; compile,
+fallback grep, ledger, lineage, and diff gates passed. #2 remains blocked;
+#38 does not advance #2/#18/#26.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/38
 **Labels / priority:** `priority:P0`, `type:bug`
 **Dependencies:** Explicit independent P0 exception after #37 only. #2 stays
