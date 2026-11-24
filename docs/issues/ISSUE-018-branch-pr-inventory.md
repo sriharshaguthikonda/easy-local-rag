@@ -2,8 +2,8 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** REVIEW — Aug 2 inventory evidence is historical; public refs were
-reverified 2026-11-24; GitHub issue remains open pending current local-ref evidence and closure.
+**Status:** REVIEW — The 2026-11-25 public and local ref inventory was handed to #26B.
+The GitHub issue remains open.
 **GitHub:** [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18)
 **Parent epic:** #17.
 **Labels / priority:** `priority:P0`, `type:security`.
@@ -147,6 +147,28 @@ The Aug 2 local evidence checkpoint passed its scoped inventory and verification
 checks. This publication candidate keeps #18 open pending docs-only integration
 and public closure evidence; it is not a readiness signal for #26A/#26B and does
 not authorize ref mutation.
+
+## 2026-11-25 handoff to #26B
+
+The current operator manifest covers 39 public heads, 22 PR heads, 43 local
+heads and zero tags at the baseline snapshot. It records exact tips, ancestry,
+and dispositions. SHA-256
+`60e138a515ed73579ccb64dd3a0e601b21eeee652326b4a3a34e6515c8e42f44`.
+
+After the two hygiene PRs merged, #26B refreshed the public manifest to 41
+branch heads and 24 PR heads. SHA-256
+`0ff223cae15caa2eb347e943135fa8d9ca789112ab6fd2e3cfc2b4a180508b53`.
+Gitleaks 8.30.1 exited 3 and reported 12 redacted Groq findings. The local
+scan returned the same finding fingerprints. Scanner config SHA-256
+`cd7bf021c176de5f029826efae05c612c0db1d4acdd3636089f5aa93ef2f9959`.
+Public and local report SHA-256 values are
+`deabf24ff3701a3d0eaf07c65ad5c0ef9784662132ecc697e16fc8b21f4a41d7` and
+`3ef88a1f871b5852cdfa9f36bbc099d9c3d71db1722efda731e2cbabe1b7de7b`.
+
+PR #1 retains its documented superseded disposition and the #24 handoff.
+The inventory created no archive refs. The
+[#26B execution record](ISSUE-026-repo-cleanup.md#2026-11-25-execution-record)
+records the public rewrite and the remaining GitHub Support gate.
 
 ## Rollback constraints
 
