@@ -319,17 +319,25 @@ def _result_value(result, name, default=None):
     return getattr(result, name, default)
 
 
-def _retrieval_for_generation(user_input, provider, router=None):
+def _retrieval_for_generation(
+    user_input, provider, router=None, *, strict=False, cancelled=None
+):
     options = {"top_k": 5, "rewrite": provider != "ollama"}
     if router is not None:
         options["router"] = router
+    if strict:
+        options["strict"] = True
+    if cancelled is not None:
+        options["cancelled"] = cancelled
     try:
         return get_relevant_context_hybrid(user_input, **options)
     except TypeError as error:
         if "rewrite" not in str(error):
             raise
         options.pop("rewrite", None)
-        options.pop("router", None)
+        # Keep the selected session router and strict policy.  Dropping the
+        # router here silently recreated the process-global Groq rewrite
+        # client, bypassing the account/model policy used for the answer.
         return get_relevant_context_hybrid(user_input, **options)
 
 
@@ -359,7 +367,9 @@ def _generate_chat_result(
     on_chunk=None,
     **provider_options,
 ):
-    retrieved = _retrieval_for_generation(user_input, provider, router=router)
+    retrieved = _retrieval_for_generation(
+        user_input, provider, router=router, strict=strict, cancelled=cancelled
+    )
     relevant_context = retrieved[0] if isinstance(retrieved, tuple) else (retrieved or "")
     user_content = (
         f"{relevant_context}\n\n{user_input}" if relevant_context else user_input
@@ -603,7 +613,9 @@ def split_sentence(response):
 """
 
 
-def rewrite_input_and_generate_synonyms(original_input, *, router=None):
+def rewrite_input_and_generate_synonyms(
+    original_input, *, router=None, strict=False, cancelled=None
+):
     """Rewrite search text through the shared Groq boundary."""
     system_prompt = (
         "You are a helpful assistant working in a medical context. Your tasks are:\n"
@@ -642,7 +654,8 @@ def rewrite_input_and_generate_synonyms(original_input, *, router=None):
         result = _router_for_rewrite(router).generate(
             preferred=groq_model,
             messages=messages,
-            strict=False,
+            strict=strict,
+            cancelled=cancelled,
             stream=False,
             max_output_tokens=512,
             response_format={"type": "json_object"},
@@ -687,20 +700,27 @@ def get_relevant_context_hybrid(
     *,
     rewrite=True,
     router=None,
+    strict=False,
+    cancelled=None,
 ):
     try:
         relevant_context = ""
         if rewrite:
-            if router is None:
-                rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(
-                    user_input
-                )
-            else:
-                rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(
-                    user_input, router=router
-                )
+            rewrite_options = {}
+            if router is not None:
+                rewrite_options["router"] = router
+            if strict:
+                rewrite_options["strict"] = True
+            if cancelled is not None:
+                rewrite_options["cancelled"] = cancelled
+            rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(
+                user_input, **rewrite_options
+            )
         else:
             rewritten_input, synonym_dict = user_input, {}
+
+        if callable(cancelled) and cancelled():
+            return "", []
 
         # Encode the rewritten input into an embedding
         input_embedding = ollama.embeddings(

@@ -839,7 +839,7 @@ class TestGUIContext:
         class FailingRouter:
             def generate(self, **kwargs):
                 raise RuntimeError("API Error")
-        
+
         settings = {
             "groq_rewrite_model": "test-model",
             "generation_router_groq": FailingRouter(),

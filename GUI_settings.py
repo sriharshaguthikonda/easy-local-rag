@@ -39,30 +39,38 @@ DEFAULT_SETTINGS = {
 }
 
 
-def _selected_combo_value(combo):
+UNAVAILABLE_SUFFIX = " (unavailable)"
+UNVERIFIED_SUFFIX = " (unverified)"
+
+
+def normalize_model_id(value):
+    """Remove legacy UI-only availability suffixes from a model ID."""
+    model_id = str(value or "").strip()
+    while model_id.endswith((UNAVAILABLE_SUFFIX, UNVERIFIED_SUFFIX)):
+        model_id = model_id.rsplit(" (", 1)[0].rstrip()
+    return model_id
+
+
+def selected_model_id(combo):
     """Return raw user data instead of an availability suffix label."""
     try:
         data = combo.currentData()
         if data:
-            return str(data)
+            return normalize_model_id(data)
     except (AttributeError, TypeError):
         pass
-    value = combo.currentText()
-    for suffix in (" (unavailable)", " (unverified)"):
-        if value.endswith(suffix):
-            return value[: -len(suffix)]
-    return value
+    return normalize_model_id(combo.currentText())
 
 
 def update_settings_from_ui(window, settings):
     if window.embedding_model_combo.currentText():
-        settings['embedding_model'] = _selected_combo_value(window.embedding_model_combo)
+        settings['embedding_model'] = selected_model_id(window.embedding_model_combo)
     if window.groq_model_combo.currentText():
-        settings['groq_model'] = _selected_combo_value(window.groq_model_combo)
+        settings['groq_model'] = selected_model_id(window.groq_model_combo)
     if window.groq_rewrite_combo.currentText():
-        settings['groq_rewrite_model'] = _selected_combo_value(window.groq_rewrite_combo)
+        settings['groq_rewrite_model'] = selected_model_id(window.groq_rewrite_combo)
     if window.ollama_model_combo.currentText():
-        settings['ollama_model'] = _selected_combo_value(window.ollama_model_combo)
+        settings['ollama_model'] = selected_model_id(window.ollama_model_combo)
     provider_combo = getattr(window, 'generation_provider_combo', None)
     if provider_combo is not None:
         provider = (provider_combo.currentData()
@@ -121,6 +129,12 @@ def load_settings(window, settings):
         with open(settings_path, 'r', encoding='utf-8') as f:
             loaded = json.load(f)
             settings.update(loaded)
+
+        # Older builds persisted the display suffix when a provider was
+        # unavailable. Normalize those values before restoring the selectors.
+        for key in ('groq_model', 'groq_rewrite_model', 'ollama_model'):
+            if key in settings:
+                settings[key] = normalize_model_id(settings[key])
 
         window.embedding_model_combo.setCurrentText(settings['embedding_model'])
         window.groq_model_combo.setCurrentText(settings['groq_model'])

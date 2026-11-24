@@ -24,7 +24,7 @@ PyYAML
 rank_bm25
 requests
 SpeechRecognition
-streamlit
+streamlit>=1.37
 tiktoken
 torch
 tqdm

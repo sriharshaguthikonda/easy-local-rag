@@ -64,6 +64,22 @@ def test_model_refresh_keeps_missing_saved_preference_and_reports_it(qapp):
     assert router.refreshes == [True]
 
 
+def test_outage_marks_unverified_models_without_persisting_label(qapp):
+    class FailingRouter:
+        def catalogue(self, refresh=False):
+            raise RuntimeError("provider unavailable")
+
+    window = ModelWindow(FailingRouter())
+    window.settings["groq_model"] = "saved-model (unverified)"
+    window.load_groq_models()
+
+    assert window.groq_model_combo.currentText() == "saved-model (unverified)"
+    assert window.groq_model_combo.currentData() == "saved-model"
+    assert GUI_settings.selected_model_id(window.groq_model_combo) == "saved-model"
+    assert window.settings["groq_model"] == "saved-model"
+    assert "discovery failed" in window.statusBar.messages[-1][0]
+
+
 def test_settings_round_trip_persists_provider_and_strict_pin(tmp_path, monkeypatch, qapp):
     window = SimpleNamespace(
         embedding_model_combo=QComboBox(),

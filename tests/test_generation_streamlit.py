@@ -2,8 +2,10 @@ import importlib.util
 import json
 import socket
 import sys
+import threading
+from contextlib import nullcontext
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -20,6 +22,7 @@ class Display:
     def __init__(self):
         self.session_state = Session(conversation_history=[], tts_enabled=False)
         self.errors = []
+        self.warnings = []
         self.captions = []
         self.markdowns = []
 
@@ -40,6 +43,25 @@ class Display:
 
     def error(self, message):
         self.errors.append(message)
+
+    def warning(self, message):
+        self.warnings.append(message)
+
+    def setup_main(self, provider, prompt=None):
+        self.sidebar = nullcontext()
+        self.sidebar.title = lambda *args, **kwargs: None
+        self.sidebar.expander = lambda *args, **kwargs: nullcontext()
+        self.columns = lambda widths: tuple(nullcontext() for _ in widths)
+        self.selectbox = lambda label, choices, **kwargs: (
+            provider if label == "Provider / mode" else choices[0]
+        )
+        self.chat_input = lambda *args, **kwargs: prompt
+        self.chat_message = lambda *args, **kwargs: nullcontext()
+        self.expander = lambda *args, **kwargs: nullcontext()
+        self.slider = lambda label, minimum, maximum, default, **kwargs: default
+        for name in ("title", "text_area", "multiselect", "date_input", "text_input",
+                     "button", "metric", "file_uploader", "image"):
+            setattr(self, name, lambda *args, **kwargs: None)
 
 
 @pytest.fixture
@@ -222,11 +244,142 @@ def test_partial_stream_keeps_evidence_and_never_commits_chat_or_speech(
     assert display.errors == ["Generation cancelled."]
     assert not display.session_state.conversation_history
 
+
+def test_background_generation_cancel_reaches_blocked_provider_without_commit(
+    load_streamlit_app, monkeypatch
+):
+    app, display = load_streamlit_app
+    app._initialize_session()
+    display.session_state.tts_enabled = True
+    started = threading.Event()
+    wake = threading.Event()
+    calls = []
+    spoken = []
+    monkeypatch.setattr(
+        app,
+        "ensure_tts_worker",
+        lambda: {"queue": SimpleNamespace(put=spoken.append)},
+    )
+
+    def generate(**request):
+        calls.append(request)
+        started.set()
+        while not request["cancelled"]():
+            wake.wait(0.01)
+        return SimpleNamespace(text="Late answer [1].", actual_model="selected", reason=None)
+
+    router = SimpleNamespace(generate=generate)
+    job = app.start_generation_job(
+        "question",
+        "system",
+        provider="groq",
+        preferred="selected",
+        router=router,
+        retrieve=lambda *args, **options: (
+            "evidence",
+            [{"file_name": "source.txt", "document": "evidence"}],
+        ),
+    )
+
+    assert started.wait(2)
+    display.button = lambda *args, on_click, **kwargs: on_click()
+    app._generation_observer_impl()
+    job.thread.join(timeout=3)
+    assert not job.thread.is_alive()
+
+    # Completion is finalized by the UI/run thread, never by the worker.
+    app._generation_observer_impl()
+    assert len(calls) == 1
+    assert not display.session_state.conversation_history
+    assert spoken == []
+    assert display.errors == ["Generation cancelled."]
+    assert display.session_state.generation_job is None
+
+
+def test_selected_router_and_strict_policy_cross_retrieval_boundary(
+    load_streamlit_app,
+):
+    app, _display = load_streamlit_app
+    retrieval_calls = []
+    router = SimpleNamespace(
+        generate=lambda **request: SimpleNamespace(
+            text="Answer [1].", actual_model="selected", reason=None
+        )
+    )
+
+    def retrieve(prompt, **options):
+        retrieval_calls.append((prompt, options))
+        return "evidence", [{"file_name": "source.txt", "document": "evidence"}]
+
+    app.chat_with_model(
+        "question",
+        "system",
+        preferred="selected",
+        router=router,
+        strict=True,
+        retrieve=retrieve,
+    )
+
+    assert retrieval_calls[0][1]["router"] is router
+    assert retrieval_calls[0][1]["strict"] is True
+
+@pytest.mark.parametrize("answer, expected_citations", [("Answer [1].", [1]), ("No citations.", [])])
+def test_accepted_background_answer_and_sources_survive_full_rerun(
+    load_streamlit_app, monkeypatch, tmp_path, answer, expected_citations
+):
+    app, display = load_streamlit_app
+    app._initialize_session()
+    reruns = []
+    display.rerun = lambda: reruns.append(True)
+    router = SimpleNamespace(generate=lambda **request: SimpleNamespace(
+        text=answer, actual_model="local-model", preferred_model="local-model", reason=""
+    ))
+    job = app.start_generation_job(
+        "Question", "System", provider="ollama", preferred="local-model", router=router,
+        retrieve=lambda *args, **options: (
+            "evidence", [{"file_name": "source.txt", "document": "evidence"}]
+        ),
+    )
+    job.thread.join(timeout=3)
+    assert not job.thread.is_alive()
+    app._generation_observer_impl()
+    assert reruns == [True]
+    assert display.session_state.generation_job is None
+
+    display.markdowns.clear()
+    display.setup_main("ollama")
+    monkeypatch.setattr(app, "_generation_settings", lambda **kwargs: (
+        "ollama", router, "local-model", True
+    ))
+    monkeypatch.setattr(app, "generate_word_cloud", lambda text: SimpleNamespace(to_array=lambda: []))
+    plotly = ModuleType("plotly")
+    plotly.express = ModuleType("plotly.express")
+    monkeypatch.setitem(sys.modules, "plotly", plotly)
+    monkeypatch.setitem(sys.modules, "plotly.express", plotly.express)
+    scratch_html = tmp_path / "graph.html"
+    monkeypatch.setattr(app, "tempfile", SimpleNamespace(
+        NamedTemporaryFile=lambda **kwargs: nullcontext(SimpleNamespace(name=scratch_html))
+    ))
+    monkeypatch.setattr(app, "create_source_network", lambda sources: SimpleNamespace(
+        save_graph=lambda path: path.write_text("", encoding="utf-8")
+    ))
+    display.components = SimpleNamespace(v1=SimpleNamespace(html=lambda *args, **kwargs: None))
+    rendered = []
+    monkeypatch.setattr(app, "render_source_documents", lambda sources, ids: rendered.append((
+        [source["document"] for source in sources], ids
+    )))
+
+    app.main()
+
+    assert "Question" in display.markdowns
+    assert answer in display.markdowns
+    assert rendered == [(["evidence"], expected_citations)]
+    assert display.warnings == ([] if expected_citations else ["No citations returned in response."])
+
+
 def test_streamlit_offline_entry_runs_local_search_without_provider_or_speech(
     load_streamlit_app, monkeypatch
 ):
-    from contextlib import nullcontext
-
     app, display = load_streamlit_app
     evidence = "Synthetic pseudoferrite record."
     collection = SimpleNamespace(get=lambda **options: {
@@ -244,20 +397,7 @@ def test_streamlit_offline_entry_runs_local_search_without_provider_or_speech(
     monkeypatch.setattr(app, "load_dotenv", unexpected)
     monkeypatch.setattr(socket.socket, "connect", unexpected)
 
-    display.sidebar = nullcontext()
-    display.sidebar.title = lambda *args, **kwargs: None
-    display.sidebar.expander = lambda *args, **kwargs: nullcontext()
-    display.columns = lambda widths: tuple(nullcontext() for _ in widths)
-    display.selectbox = lambda label, choices, **kwargs: (
-        "offline" if label == "Provider / mode" else choices[0]
-    )
-    display.chat_input = lambda *args, **kwargs: "pseudoferrite"
-    display.chat_message = lambda *args, **kwargs: nullcontext()
-    display.expander = lambda *args, **kwargs: nullcontext()
-    display.slider = lambda label, minimum, maximum, default, **kwargs: default
-    for name in ("title", "text_area", "multiselect", "date_input", "text_input",
-                 "container", "button", "metric", "file_uploader"):
-        setattr(display, name, lambda *args, **kwargs: None)
+    display.setup_main("offline", "pseudoferrite")
 
     app.main()
 
