@@ -20,11 +20,12 @@ merged into the GUI branch as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205`
 from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`; #37 is
 closed through PR #41 at merge `f87b4cf`; and #38 is closed through PR #42 at
 merge `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head
-`5e5e8941670f519e6447a770fe0f0d012b96cbcc`.
+`5e5e8941670f519e6447a770fe0f0d012b96cbcc`. #44 closed through [PR #48](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48)
+at merge `695cfe73554318717437f67bb77d3d3a91c056f1` from reviewed head `3584bb1d119b92275e09f4f25bc860f4fa54ef18`.
 
 ## Required execution order
 
-`#37 -> #38 (independent P0 exception, closed) -> #44 (independent P0 exception) -> verification-only #5/#7/#12 audits -> #2A -> #18 -> #26A -> separately approved #26B -> #2 closure -> #19A -> #19B -> #20A -> .memory #4 handoff -> #20B -> .memory #5 handoff -> #21A -> #22A -> #23 -> #21B -> #22B -> #24 specification -> #27 -> #25 -> GUI/no-GUI handoff -> #26C -> #26D`
+`#37 -> #38 (independent P0 exception, closed) -> #44 (independent P0 exception, closed) -> verification-only #5/#7/#12 audits -> #2A -> #18 -> #26A -> separately approved #26B -> #2 closure -> #19A -> #19B -> #20A -> .memory #4 handoff -> #20B -> .memory #5 handoff -> #21A -> #22A -> #23 -> #21B -> #22B -> #24 specification -> #27 -> #25 -> GUI/no-GUI handoff -> #26C -> #26D`
 
 #24 is a specification-only issue. It records the future GUI contract and
 salvage decisions; it does not authorize GUI implementation. #17 is an epic,
@@ -63,8 +64,8 @@ unresolved placeholder, implementer choice, or speculative dependency.
 | #15 | closed | Completed through [PR #36](https://github.com/sriharshaguthikonda/easy-local-rag/pull/36), merged into the GUI branch as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205` from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`. |
 | #37 | closed | Completed through [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41), merged as `f87b4cf`; [Issue #37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) closed 2026-07-26. Validator ships at `scripts/validate_issue_ledger.py`. |
 | #38 | closed | Completed through [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42), merged with Create a merge commit as `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head `5e5e8941670f519e6447a770fe0f0d012b96cbcc`; [review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155438619), [verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155439139), and [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38#issuecomment-5155449007). Focused 19 passed; full 175 passed / 4 accepted frozen GUI failures; compile/fallback grep/ledger/lineage/diff gates passed. #2 remains blocked and #38 does not advance #2/#18/#26. |
-| #44 | active | [Reviewed packet](../superpowers/plans/2026-11-24-issue-044-model-discovery-and-fallback-implementation.md) merged through [PR #46](https://github.com/sriharshaguthikonda/easy-local-rag/pull/46). Run the network-free implementation and verification. |
-| Active issue | #44 | The owner approved #44 as a standalone P0. #2 remains blocked. |
+| #44 | closed | Completed through [PR #48](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48) at merge `695cfe73554318717437f67bb77d3d3a91c056f1`. [Review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48#issuecomment-7133158071), [verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48#issuecomment-7133169363), and [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44#issuecomment-7133201382). The full offline suite passed 249 tests. |
+| Active issue | none | #44 is complete. #2 remains blocked. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
@@ -86,6 +87,7 @@ invariant, closure gate, approval, or rollback constraint.
 | `.memory` #4 | Not yet produced | reciprocal SHA, schema, package version, compatibility command/result | #20B | Not passed; docs are not proof. |
 | #20B | Not yet produced | idempotent import and reconciliation evidence | `.memory` #5 | Not passed; docs are not proof. |
 | `.memory` #5 | Not yet produced | reciprocal SHA, schema, package version, compatibility command/result | #21A, #22A, #23 | Not passed; docs are not proof. |
+| #44 routing/profile contract | `695cfe73554318717437f67bb77d3d3a91c056f1`, profile schema v1 | Provider catalogue and bounded fallback, 42 routing tests passed. [Verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48#issuecomment-7133169363) | #22A | Produced by #44. #22A integration remains queued. |
 | #21A / #22A | Not yet produced | pinned interface compatibility evidence | #23 | Not passed; docs are not proof. |
 | #23 | Not yet produced | parity and citation-resolution report | #21B, #22B, #27 | Not passed; docs are not proof. |
 | #21B / #22B | Not yet produced | CLI/service and provider integration evidence | #27 | Not passed; docs are not proof. |
@@ -163,7 +165,7 @@ approval, rollback, or scope means a separate packet.
 | #27 | P0 security | Open — answer-safety gate | [Grounded answers](ISSUE-027-grounded-answers.md) | Extends #5/#13 and owns structured validation associated with closed duplicate #14; after #24 and #21B/#22B, before #25. | [Issue #27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27) |
 | #37 | P1 developer experience | Closed — completed | [Ledger synchronization](ISSUE-037-ledger-sync.md) | Repaired the authoritative execution ledger; validator at `scripts/validate_issue_ledger.py`. Merged as `f87b4cf` via [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41). | [Issue #37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) |
 | #38 | P0 bug | **Closed — completed through PR #42** | [Streamlit evidence contract](ISSUE-038-streamlit-evidence-contract.md) | After #37 only; it does not unlock or bypass #2 -> #18 -> #26. Merged with Create a merge commit as `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head `5e5e8941670f519e6447a770fe0f0d012b96cbcc`; [review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155438619), [verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155439139), and [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38#issuecomment-5155449007). | [Issue #38](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38) |
-| #44 | P0 bug | Open — active | [Model discovery and same-class fallback](ISSUE-044-model-discovery-and-fallback.md) | Owner-approved independent P0 exception after #37 and #38. Separate activation and network-free closure gates apply. | [Issue #44](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44) |
+| #44 | P0 bug | **Closed — completed through PR #48** | [Model discovery and same-class fallback](ISSUE-044-model-discovery-and-fallback.md) | Owner-approved independent P0 exception. Merged as `695cfe73554318717437f67bb77d3d3a91c056f1`. [Closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44#issuecomment-7133201382) | [Issue #44](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44) |
 
 ## Gate discipline
 
