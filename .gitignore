@@ -1,70 +1,44 @@
-# Ignore CSV files
-*.csv
-*.json
-*.pt
-*.txt
-*.sqlite3
-*.bin
-*.pickle
-*.sst
-*.wal
+# Local environments and secrets
+/.env
+/.env.*
+!/.env.example
+/easyrag/
+/.venv/
+/venv/
 
-
-# Ignore directories
-asset/*
-chroma/*
-config/*
-!config/generation-models.json
-Embeddings/*
-volumes/*
-.git/*
-
-# Ignore specific files
-output.mp3
-output1.wav
-semantic_vault.json
-vault.json
-vault.txt
-
-# Virtual environment
-easyrag/
-
-# Environment files
-.env
-
-# Ignore Python script
-Vault_json_creation_from_HTMLs.py
-
-# Generated Python bytecode
+# Python, test, coverage, and agent caches
 __pycache__/
 *.py[cod]
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+/.serena/
+/.repo-intel/
+/.coverage
+/htmlcov/
 
+# Local databases, indexes, embeddings, and model downloads
+/chroma/
+/chroma_db/
+/your_db_path/
+/Embeddings/
+/volumes/
+/asset/**/*.pt
 
-# Ignore large files
-"C:\Users\deletable\OneDrive\easy-local-rag\combined_data.csv"
-"C:\Users\deletable\OneDrive\easy-local-rag\nomic-embed-text_Backup_vault.json"
-"C:\Users\deletable\OneDrive\easy-local-rag\Pubmed_combined_data.csv"
-"C:\Users\deletable\OneDrive\easy-local-rag\Pubmed_processed_data.csv"
-"C:\Users\deletable\OneDrive\easy-local-rag\semantic_vault.json"
-"C:\Users\deletable\OneDrive\easy-local-rag\vault.json"
-"C:\Users\deletable\OneDrive\easy-local-rag\.git\objects\1b\b2547ab1374481905e02632304bb9ed0560100"
-"C:\Users\deletable\OneDrive\easy-local-rag\asset\Decoder.pt"
-"C:\Users\deletable\OneDrive\easy-local-rag\asset\GPT.pt"
-"C:\Users\deletable\OneDrive\easy-local-rag\asset\Vocos.pt"
-"C:\Users\deletable\OneDrive\easy-local-rag\chroma\chroma.sqlite3"
-"C:\Users\deletable\OneDrive\easy-local-rag\chroma\350abb27-db58-4bcf-bfe1-e8d0e4209fda\data_level0.bin"
-"C:\Users\deletable\OneDrive\easy-local-rag\chroma\c5673eb5-2fa4-4aed-9573-906be4430cd2\data_level0.bin"
-"C:\Users\deletable\OneDrive\easy-local-rag\chroma\f0947187-0373-4e40-94b8-29a9ae8e9b07\data_level0.bin"
-"C:\Users\deletable\OneDrive\easy-local-rag\Embeddings\all-minilm_vault_embeddings.pt"
-"C:\Users\deletable\OneDrive\easy-local-rag\Embeddings\mxbai-embed-large_vault_embeddings.pt"
-"C:\Users\deletable\OneDrive\easy-local-rag\Embeddings\mxbai-embed-large_vault_embeddings.txt"
-"C:\Users\deletable\OneDrive\easy-local-rag\Embeddings\nomic-embed-text_vault_embeddings.pt"
-"C:\Users\deletable\OneDrive\easy-local-rag\Embeddings\PubMedBert_vault_embeddings.txt"
-"C:\Users\deletable\OneDrive\easy-local-rag\volumes\etcd\member\wal\0000000000000000-0000000000000000.wal"
-"C:\Users\deletable\OneDrive\easy-local-rag\volumes\milvus\rdb_data\000521.sst"
-"C:\Users\deletable\OneDrive\easy-local-rag\volumes\milvus\rdb_data\000522.sst"
-"C:\Users\deletable\OneDrive\easy-local-rag\volumes\milvus\rdb_data\000523.sst"
-"C:\Users\deletable\OneDrive\easy-local-rag\volumes\milvus\rdb_data\000524.sst"
-"C:\Users\deletable\OneDrive\easy-local-rag\volumes\milvus\rdb_data\000525.sst"
-"C:\Users\deletable\OneDrive\easy-local-rag\volumes\milvus\rdb_data\000526.sst"
-"C:\Users\deletable\OneDrive\easy-local-rag\volumes\milvus\rdb_data\000527.sst"
+# Generated corpora, vaults, settings, audio, logs, and temporary downloads
+/combined_data.csv
+/processed_data.csv
+/Pubmed_combined_data.csv
+/Pubmed_processed_data.csv
+/nomic-embed-text_Backup_vault.json
+/semantic_vault.json
+/temp_vault.json
+/vault.json
+/vault.txt
+/rag_gui_settings.json
+/output.mp3
+/output1.wav
+/*.log
+/ffcache*
+/docs/issues/chatgpt_issues.txt
+/docs/Research/*.txt
