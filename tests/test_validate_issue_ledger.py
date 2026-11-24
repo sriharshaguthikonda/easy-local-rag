@@ -262,7 +262,7 @@ def test_real_canonical_corpus_matches_lifecycle_snapshot():
         "10": "OPEN", "11": "OPEN", "12": "OPEN", "13": "OPEN", "14": "CLOSED", "15": "CLOSED",
         "16": "OPEN", "17": "OPEN", "18": "OPEN", "19": "OPEN", "20": "OPEN", "21": "OPEN",
         "22": "OPEN", "23": "OPEN", "24": "OPEN", "25": "OPEN", "26": "OPEN", "27": "OPEN",
-        "37": "CLOSED", "38": "CLOSED", "44": "OPEN",
+        "37": "CLOSED", "38": "CLOSED", "44": "CLOSED",
     }
     errors = ledger_module().validate_ledger(
         roadmap_text=(issue_dir / "README.md").read_text(encoding="utf-8"),
