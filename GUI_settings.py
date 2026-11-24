@@ -10,6 +10,12 @@ DEFAULT_SETTINGS = {
     'groq_model': 'llama-3.3-70b-versatile',
     'groq_rewrite_model': 'llama-3.1-8b-instant',
     'ollama_model': 'phi-3',
+    # Generation is deliberately scoped to one provider.  The model menus
+    # remain separate so a stale Groq preference can never silently select an
+    # Ollama model (or vice versa).
+    'generation_provider': 'groq',
+    'strict_generation_model': False,
+    'generation_max_output_tokens': 1024,
     'collection_name': 'html_chunks_text_in_documents',
     'chromadb_path': r'C:\Windows_software\easy-local-rag\chroma',
     'system_message': 'You are a helpful assistant. You will give precise and concise answers from the given context. If the context does not have the answer then give it from your knowledge.',
@@ -33,15 +39,49 @@ DEFAULT_SETTINGS = {
 }
 
 
+UNAVAILABLE_SUFFIX = " (unavailable)"
+UNVERIFIED_SUFFIX = " (unverified)"
+
+
+def normalize_model_id(value):
+    """Remove legacy UI-only availability suffixes from a model ID."""
+    model_id = str(value or "").strip()
+    while model_id.endswith((UNAVAILABLE_SUFFIX, UNVERIFIED_SUFFIX)):
+        model_id = model_id.rsplit(" (", 1)[0].rstrip()
+    return model_id
+
+
+def selected_model_id(combo):
+    """Return raw user data instead of an availability suffix label."""
+    try:
+        data = combo.currentData()
+        if data:
+            return normalize_model_id(data)
+    except (AttributeError, TypeError):
+        pass
+    return normalize_model_id(combo.currentText())
+
+
 def update_settings_from_ui(window, settings):
     if window.embedding_model_combo.currentText():
-        settings['embedding_model'] = window.embedding_model_combo.currentText()
+        settings['embedding_model'] = selected_model_id(window.embedding_model_combo)
     if window.groq_model_combo.currentText():
-        settings['groq_model'] = window.groq_model_combo.currentText()
+        settings['groq_model'] = selected_model_id(window.groq_model_combo)
     if window.groq_rewrite_combo.currentText():
-        settings['groq_rewrite_model'] = window.groq_rewrite_combo.currentText()
+        settings['groq_rewrite_model'] = selected_model_id(window.groq_rewrite_combo)
     if window.ollama_model_combo.currentText():
-        settings['ollama_model'] = window.ollama_model_combo.currentText()
+        settings['ollama_model'] = selected_model_id(window.ollama_model_combo)
+    provider_combo = getattr(window, 'generation_provider_combo', None)
+    if provider_combo is not None:
+        provider = (provider_combo.currentData()
+                    if hasattr(provider_combo, 'currentData')
+                    else None)
+        provider = provider or provider_combo.currentText()
+        if provider in {'groq', 'ollama'}:
+            settings['generation_provider'] = provider
+    strict_checkbox = getattr(window, 'strict_generation_model_checkbox', None)
+    if strict_checkbox is not None:
+        settings['strict_generation_model'] = bool(strict_checkbox.isChecked())
     settings['chromadb_path'] = window.chromadb_path_edit.text()
     settings['collection_name'] = window.collection_combo.currentText()
     settings['system_message'] = window.system_message_edit.toPlainText()
@@ -90,10 +130,26 @@ def load_settings(window, settings):
             loaded = json.load(f)
             settings.update(loaded)
 
+        # Older builds persisted the display suffix when a provider was
+        # unavailable. Normalize those values before restoring the selectors.
+        for key in ('groq_model', 'groq_rewrite_model', 'ollama_model'):
+            if key in settings:
+                settings[key] = normalize_model_id(settings[key])
+
         window.embedding_model_combo.setCurrentText(settings['embedding_model'])
         window.groq_model_combo.setCurrentText(settings['groq_model'])
         window.groq_rewrite_combo.setCurrentText(settings['groq_rewrite_model'])
         window.ollama_model_combo.setCurrentText(settings['ollama_model'])
+        provider_combo = getattr(window, 'generation_provider_combo', None)
+        if provider_combo is not None:
+            provider = settings.get('generation_provider', 'groq')
+            if provider not in {'groq', 'ollama'}:
+                provider = 'groq'
+                settings['generation_provider'] = provider
+            provider_combo.setCurrentText(provider)
+        strict_checkbox = getattr(window, 'strict_generation_model_checkbox', None)
+        if strict_checkbox is not None:
+            strict_checkbox.setChecked(bool(settings.get('strict_generation_model', False)))
         window.chromadb_path_edit.setText(settings['chromadb_path'])
         window.system_message_edit.setText(settings['system_message'])
         window.top_k_spin.setValue(settings['top_k'])
