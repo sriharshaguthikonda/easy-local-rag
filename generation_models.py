@@ -165,17 +165,9 @@ def _as_sequence(value: Any) -> list[Any]:
 def _as_int(value: Any, default: int = 0) -> int:
     try:
         result = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     return result
-
-
-def _as_float(value: Any, default: float = 0.0) -> float:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return default
-    return result if result >= 0 else default
 
 
 def _is_local_host(host: str | None) -> bool:
@@ -260,18 +252,16 @@ def _context_from_metadata(*values: Any) -> int | None:
         "general.context_length",
         "llama.context_length",
     }
+    limits = []
     for value in values:
-        mapping = _mapping(value)
-        for key, item in mapping.items():
-            normalized = str(key).lower().replace("/", ".")
-            if normalized in keys or normalized.endswith(".context_length"):
-                result = _as_int(item)
-                if result > 0:
-                    return result
-        result = _context_from_metadata(_value(value, "model_info")) if value else None
-        if result:
-            return result
-    return None
+        for metadata in (value, _value(value, "model_info"), _value(value, "modelinfo")):
+            reported = [_as_int(_value(metadata, key)) for key in keys]
+            reported.extend(
+                _as_int(item) for key, item in _mapping(metadata).items()
+                if str(key).lower().replace("/", ".").endswith(".context_length")
+            )
+            limits.extend(limit for limit in reported if limit > 0)
+    return min(limits, default=None)
 
 
 def _configured_profiles(provider: str) -> dict[str, dict[str, Any]]:
@@ -294,37 +284,36 @@ def _configured_profiles(provider: str) -> dict[str, dict[str, Any]]:
     if not isinstance(providers, Mapping) or not isinstance(providers.get(provider), Mapping):
         raise GenerationError("configuration", "provider profile configuration is missing")
     rows: dict[str, dict[str, Any]] = {}
+    expected_tier = "on_demand" if provider == "groq" else "local"
     for model, row in providers[provider].items():
-        if not isinstance(row, Mapping):
+        if _safe_model_id(model) != model or not isinstance(row, Mapping):
             continue
-        classes = [str(item) for item in _as_sequence(row.get("classes"))]
-        capabilities = [str(item) for item in _as_sequence(row.get("capabilities"))]
-        tier = str(row.get("tier", ""))
+        classes = row.get("classes")
+        capabilities = row.get("capabilities")
+        quality = row.get("quality")
+        prices = [row.get("input_usd_per_mtok"), row.get("output_usd_per_mtok")]
+        sizes = [row.get("context_tokens"), row.get("output_tokens")]
         if (
-            not classes
-            or not set(classes).issubset(_CLASSES)
-            or "embedding" in classes
-            or "speech" in classes
-            or tier not in ({"on_demand"} if provider == "groq" else {"local"})
-            or not set(capabilities).issubset(_CAPABILITIES)
+            not isinstance(classes, list)
+            or not classes
+            or not all(isinstance(item, str) and item in _CLASSES for item in classes)
+            or not isinstance(capabilities, list)
+            or not all(isinstance(item, str) and item in _CAPABILITIES for item in capabilities)
+            or not isinstance(quality, str)
+            or not quality.strip()
+            or row.get("tier") != expected_tier
+            or not all(type(price) in (int, float) and 0 <= price < float("inf") for price in prices)
+            or not all(type(size) is int and size > 0 for size in sizes)
+            or type(row.get("priority")) is not int
         ):
             continue
-        context_tokens = _as_int(row.get("context_tokens"))
-        output_tokens = _as_int(row.get("output_tokens"))
-        if context_tokens <= 0 or output_tokens <= 0:
-            continue
-        rows[str(model)] = {
-            "classes": classes,
-            "quality": str(row.get("quality", "")),
-            "tier": tier,
-            "input_usd_per_mtok": _as_float(row.get("input_usd_per_mtok")),
-            "output_usd_per_mtok": _as_float(row.get("output_usd_per_mtok")),
-            "context_tokens": context_tokens,
-            "output_tokens": output_tokens,
-            "priority": _as_int(row.get("priority"), 1000),
-            "capabilities": capabilities,
-        }
+        rows[model] = {**row, "quality": quality.strip()}
     return rows
+
+
+def _profile_limit(configured, reported, default: int | None) -> int | None:
+    limits = (_as_int(configured), _as_int(reported))
+    return min((limit for limit in limits if limit > 0), default=default)
 
 
 def _profile_from_config(
@@ -343,21 +332,19 @@ def _profile_from_config(
 ) -> GenerationProfile:
     row = config or {}
     row_classes = list(classes or _as_sequence(row.get("classes")))
-    row_caps = list(capabilities or _as_sequence(row.get("capabilities")))
+    row_caps = list(capabilities if capabilities is not None else row.get("capabilities", ["stream"]))
     if not row_classes:
         row_classes = ["chat"]
-    if not row_caps:
-        row_caps = ["stream"]
     return GenerationProfile(
         id=model,
         provider=provider,
         classes=[str(value) for value in row_classes],
         quality=str(row.get("quality", "unknown")),
         tier=str(row.get("tier", "local" if provider == "ollama" else "on_demand")),
-        input_usd_per_mtok=_as_float(row.get("input_usd_per_mtok")),
-        output_usd_per_mtok=_as_float(row.get("output_usd_per_mtok")),
-        context_tokens=max(1, _as_int(context_tokens, _as_int(row.get("context_tokens"), 4096))),
-        output_tokens=max(1, _as_int(output_tokens, _as_int(row.get("output_tokens"), 1024))),
+        input_usd_per_mtok=row.get("input_usd_per_mtok", 0.0),
+        output_usd_per_mtok=row.get("output_usd_per_mtok", 0.0),
+        context_tokens=_profile_limit(row.get("context_tokens"), context_tokens, 4096),
+        output_tokens=_profile_limit(row.get("output_tokens"), output_tokens, 1024),
         priority=_as_int(row.get("priority"), 1000),
         capabilities=sorted(set(str(value) for value in row_caps if str(value) in _CAPABILITIES)),
         profiled=profiled,
@@ -872,6 +859,13 @@ class _GenerationRouter:
         requested_provider = provider_options.get("provider")
         if requested_provider is not None and str(requested_provider).lower() != self.provider:
             raise GenerationError("provider_policy", "provider switch is not permitted", provider=self.provider)
+        requested_mode = str(provider_options.get("mode", "") or "").lower()
+        expected_mode = "local" if self.provider == "ollama" else "cloud"
+        if requested_mode in {"offline", "offline-search", "local", "local-chat", "cloud", "cloud-chat"}:
+            if requested_mode not in {expected_mode, f"{expected_mode}-chat"}:
+                raise GenerationError("provider_policy", "provider is unavailable in the selected mode", provider=self.provider)
+        if self.provider == "groq" and provider_options.get("n") not in (None, 1):
+            raise GenerationError("invalid_request", "generation requires one response per request", provider=self.provider)
         requested_service_tier = provider_options.get("service_tier")
         if self.provider == "groq" and requested_service_tier not in (None, "on_demand"):
             raise GenerationError("tier_policy", "only the approved on-demand tier is permitted", provider=self.provider)
@@ -1140,7 +1134,8 @@ class GroqRouter(_GenerationRouter):
                 continue
             metadata["supported_parameters"] = [str(value)[:80] for value in _as_sequence(supported)[:40]]
             caps = set(_as_sequence(config.get("capabilities") if config else []))
-            caps.update(_normalise_caps(supported))
+            if config is None:
+                caps.update(_normalise_caps(supported))
             if supported_value is not None and isinstance(supported, Sequence) and not isinstance(supported, (str, bytes, bytearray)):
                 supported_lower = {str(value).lower() for value in supported}
                 if "tools" not in supported_lower and "tool" not in supported_lower and "function_call" not in supported_lower:
@@ -1148,7 +1143,7 @@ class GroqRouter(_GenerationRouter):
                 if not supported_lower.intersection({"response_format", "json", "json_object", "json_schema", "structured_outputs"}):
                     caps.discard("json_object")
                     caps.discard("json_schema")
-            if not caps:
+            if config is None and not caps:
                 caps.add("stream")
             profiles.append(
                 _profile_from_config(
@@ -1159,7 +1154,9 @@ class GroqRouter(_GenerationRouter):
                     profiled=config is not None,
                     capabilities=caps,
                     context_tokens=_context_from_metadata(row),
-                    output_tokens=_as_int(_value(row, "max_output_tokens"), 0) or None,
+                    output_tokens=_profile_limit(
+                        _value(row, "max_output_tokens"), _value(row, "max_completion_tokens"), None
+                    ),
                     status="active" if active is not False else "inactive",
                 )
             )
@@ -1335,7 +1332,6 @@ class OllamaRouter(_GenerationRouter):
                             caps.discard("json_schema")
                     if "json_object" not in show_caps and "json" not in raw_caps:
                         caps.discard("json_object")
-                caps.add("stream")
                 profile = _profile_from_config(
                     self.provider,
                     model,
@@ -1348,9 +1344,7 @@ class OllamaRouter(_GenerationRouter):
                     remote=remote,
                     profiled=show_verified,
                     capabilities=caps,
-                    context_tokens=min(
-                        config["context_tokens"], context
-                    ) if context and context > 0 else config["context_tokens"],
+                    context_tokens=context,
                 )
             profiles.append(profile)
         return profiles

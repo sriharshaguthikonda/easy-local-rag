@@ -525,3 +525,66 @@ def test_invalid_strict_pin_cannot_select_a_different_model():
         router.generate(preferred="invalid model id", strict=True, messages=[])
     assert caught.value.code == "strict_pin"
     assert client.events == []
+
+
+@pytest.mark.parametrize("options, code", [
+    ({"mode": "local-chat"}, "provider_policy"),
+    ({"mode": "offline-search"}, "provider_policy"),
+    ({"n": 2}, "invalid_request"),
+])
+def test_groq_rejects_incompatible_mode_and_multiple_choices_before_discovery(options, code):
+    client = FakeGroq(_groq_rows(True))
+    router = gm.groq_router(client=client)
+    with pytest.raises(gm.GenerationError) as caught:
+        router.generate(preferred="llama-3.3-70b-versatile", messages=[], **options)
+    assert caught.value.code == code
+    assert client.events == []
+
+
+@pytest.mark.parametrize("provider_limit, expected", [
+    (999999, (131072, 32768)),
+    (2048, (2048, 2048)),
+])
+def test_discovery_limits_can_narrow_but_never_widen_configured_profile(provider_limit, expected):
+    preferred = "llama-3.3-70b-versatile"
+    client = FakeGroq([{
+        "id": preferred, "active": True, "context_window": provider_limit,
+        "context_length": provider_limit, "max_output_tokens": provider_limit,
+        "max_completion_tokens": provider_limit,
+    }])
+    router = gm.groq_router(client=client)
+    profile = router.catalogue()[0]
+    assert (profile.context_tokens, profile.output_tokens) == expected
+    with pytest.raises(gm.GenerationError):
+        router.generate(preferred=preferred, messages=[], max_output_tokens=expected[1] + 1)
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("key, value", [
+    ("quality", None),
+    ("quality", " "),
+    ("input_usd_per_mtok", None),
+    ("output_usd_per_mtok", float("nan")),
+    ("output_usd_per_mtok", float("inf")),
+    ("output_usd_per_mtok", -1),
+    ("capabilities", None),
+    ("priority", None),
+])
+def test_incomplete_profile_cannot_be_used_for_generation(monkeypatch, tmp_path, key, value):
+    path = Path(__file__).parents[1] / "config" / "generation-models.json"
+    config = json.loads(path.read_text(encoding="utf-8"))
+    preferred = "llama-3.3-70b-versatile"
+    configured = config["providers"]["groq"][preferred]
+    if value is None:
+        del configured[key]
+    else:
+        configured[key] = value
+    override = tmp_path / "profiles.json"
+    override.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setenv("EASY_RAG_GENERATION_PROFILES", str(override))
+    client = FakeGroq([{"id": preferred, "active": True}])
+    router = gm.groq_router(client=client)
+    assert router.catalogue()[0].profiled is False
+    with pytest.raises(gm.GenerationError):
+        router.generate(preferred=preferred, messages=[])
+    assert client.calls == []

@@ -13,9 +13,14 @@ from unittest.mock import Mock
 import ollama
 from groq import Groq
 
+from GUI_settings import (
+    UNAVAILABLE_SUFFIX,
+    UNVERIFIED_SUFFIX,
+    selected_model_id,
+    normalize_model_id,
+)
 
-_UNAVAILABLE_SUFFIX = " (unavailable)"
-_UNVERIFIED_SUFFIX = " (unverified)"
+
 _GROQ_FALLBACK_IDS = [
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
@@ -34,19 +39,7 @@ def _profile_id(profile):
 
 def _combo_raw_id(combo):
     """Read the provider id while tolerating simple Qt test doubles."""
-    if combo is None:
-        return ""
-    try:
-        data = combo.currentData()
-        if data:
-            return str(data)
-    except (AttributeError, TypeError):
-        pass
-    text = combo.currentText() or ""
-    for suffix in (_UNAVAILABLE_SUFFIX, _UNVERIFIED_SUFFIX):
-        if text.endswith(suffix):
-            return text[: -len(suffix)]
-    return text
+    return selected_model_id(combo) if combo is not None else ""
 
 
 class ModelLoadingMixin:
@@ -108,10 +101,13 @@ class ModelLoadingMixin:
                 ids.append(str(model_id))
         return ids
 
-    def _set_model_combo(self, combo, model_ids, preference, *, unavailable=False):
+    def _set_model_combo(
+        self, combo, model_ids, preference, *, unavailable=False, unverified=False
+    ):
         """Replace a combo's visible items while retaining raw model ids."""
         if combo is None:
             return
+        preference = normalize_model_id(preference)
         try:
             combo.blockSignals(True)
         except AttributeError:
@@ -119,16 +115,17 @@ class ModelLoadingMixin:
         try:
             combo.clear()
             raw_ids = list(model_ids)
-            if unavailable and preference and preference not in raw_ids:
+            if (unavailable or unverified) and preference and preference not in raw_ids:
                 raw_ids.insert(0, preference)
             combo._generation_model_ids = raw_ids
+            labels = {}
             for model_id in raw_ids:
-                is_missing = (
-                    unavailable
-                    and model_id == preference
-                    and model_id not in model_ids
-                )
-                label = model_id + (_UNAVAILABLE_SUFFIX if is_missing else "")
+                label = model_id
+                if unverified:
+                    label += UNVERIFIED_SUFFIX
+                elif unavailable and model_id == preference and model_id not in model_ids:
+                    label += UNAVAILABLE_SUFFIX
+                labels[model_id] = label
                 try:
                     combo.addItem(label, model_id)
                 except TypeError:
@@ -142,14 +139,7 @@ class ModelLoadingMixin:
                 pass
             if index < 0:
                 try:
-                    index = combo.findText(
-                        target
-                        + (
-                            _UNAVAILABLE_SUFFIX
-                            if unavailable and target == preference
-                            else ""
-                        )
-                    )
+                    index = combo.findText(labels.get(target, target))
                 except AttributeError:
                     index = -1
             if index >= 0:
@@ -170,23 +160,29 @@ class ModelLoadingMixin:
         combo_name = "groq_model_combo" if provider == "groq" else "ollama_model_combo"
         combo = getattr(self, combo_name, None)
         settings = getattr(self, "settings", {})
-        value = settings.get(key) or _combo_raw_id(combo)
+        saved = normalize_model_id(settings.get(key))
+        if saved and settings.get(key) != saved:
+            settings[key] = saved
+        value = saved or _combo_raw_id(combo)
         return key, combo, value
 
-    def _sync_groq_rewrite_combo(self, model_ids):
+    def _sync_groq_rewrite_combo(self, model_ids, *, unverified=False):
         """Keep the existing Groq rewrite selector in the same live scope."""
         if not hasattr(self, "groq_rewrite_combo"):
             return
         settings = getattr(self, "settings", {})
-        preference = settings.get("groq_rewrite_model") or _combo_raw_id(
-            self.groq_rewrite_combo
-        )
+        preference = normalize_model_id(
+            settings.get("groq_rewrite_model")
+        ) or _combo_raw_id(self.groq_rewrite_combo)
+        if preference:
+            settings["groq_rewrite_model"] = preference
         missing = bool(preference and preference not in model_ids)
         self._set_model_combo(
             self.groq_rewrite_combo,
             model_ids,
             preference,
             unavailable=missing,
+            unverified=unverified,
         )
 
     def _show_status(self, message, timeout=4000):
@@ -306,14 +302,15 @@ class ModelLoadingMixin:
             )
             if combo is not None and combo.count() == 0:
                 self._set_model_combo(
-                    combo, [m + _UNVERIFIED_SUFFIX for m in fallback], preference
+                    combo,
+                    fallback,
+                    preference,
+                    unverified=True,
                 )
                 if provider == "groq":
-                    self._sync_groq_rewrite_combo(
-                        [m + _UNVERIFIED_SUFFIX for m in fallback]
-                    )
+                    self._sync_groq_rewrite_combo(fallback, unverified=True)
             elif combo is not None and preference and not _combo_raw_id(combo):
-                self._set_model_combo(combo, [preference], preference, unavailable=True)
+                self._set_model_combo(combo, [preference], preference, unverified=True)
             self._show_status(
                 f"{label} model discovery failed; saved model retained (no live catalogue).",
                 6000,

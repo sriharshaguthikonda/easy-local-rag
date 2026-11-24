@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import os
 import queue
@@ -7,6 +8,7 @@ import threading
 import webbrowser
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -82,12 +84,15 @@ def _initialize_session():
         "message_timestamps": [],
         "tts_enabled": True,
         "current_sources": [],
+        "current_citations": [],
         "favorite_responses": [],
         "tags": {},
         "generation_provider": "groq",
         "strict_generation_model": False,
         "generation_routers": {},
-        "generation_cancelled": False,
+        "generation_job": None,
+        "last_generation_error": None,
+        "last_generation_warning": None,
         "last_model_status": None,
     }
     for key, value in defaults.items():
@@ -102,37 +107,53 @@ def _session_router(provider):
     return routers[provider]
 
 
-def _generation_settings():
+def _generation_settings(*, active=False):
     provider = st.selectbox(
         "Provider / mode", tuple(GENERATION_LABELS),
         format_func=GENERATION_LABELS.__getitem__, key="generation_provider",
+        disabled=active,
     )
     if provider == "offline":
         return provider, None, None, False
 
-    router = _session_router(provider)
+    routers = st.session_state.setdefault("generation_routers", {})
+    router = routers.get(provider) if active else _session_router(provider)
     key = f"generation_model_{provider}"
     saved = st.session_state.setdefault(key, DEFAULT_MODELS[provider])
-    refresh = st.button("Refresh model catalogue", key=f"refresh_models_{provider}")
+    refresh = st.button(
+        "Refresh model catalogue",
+        key=f"refresh_models_{provider}",
+        disabled=active,
+    )
     missing_status = "unavailable"
-    try:
-        catalogue = [profile.id for profile in router.catalogue(refresh=refresh)]
-        if not catalogue:
-            st.warning("The provider returned an empty generation model catalogue.")
-    except GenerationError as error:
-        st.warning(str(error))
-        catalogue = []
-        missing_status = "unverified"
+    if active:
+        catalogue = list(
+            st.session_state.get(f"generation_catalogue_{provider}", [])
+        )
+    else:
+        try:
+            catalogue = [profile.id for profile in router.catalogue(refresh=refresh)]
+            st.session_state[f"generation_catalogue_{provider}"] = list(catalogue)
+            if not catalogue:
+                st.warning("The provider returned an empty generation model catalogue.")
+        except GenerationError as error:
+            st.warning(str(error))
+            catalogue = []
+            missing_status = "unverified"
 
     def label(model_id):
         return model_id if model_id in catalogue else f"{model_id} (saved, {missing_status})"
 
     options = list(dict.fromkeys([saved, *catalogue]))
     preferred = st.selectbox(
-        "Preferred generation model", options, format_func=label, key=f"model_menu_{provider}"
+        "Preferred generation model",
+        options,
+        format_func=label,
+        key=f"model_menu_{provider}",
+        disabled=active,
     )
     st.session_state[key] = preferred
-    strict = st.checkbox("Strict model pin", key="strict_generation_model")
+    strict = st.checkbox("Strict model pin", key="strict_generation_model", disabled=active)
     return provider, router, preferred, strict
 
 
@@ -177,6 +198,16 @@ def _configure_page():
 
 def retrieve_numbered_sources(prompt, *, retrieve=None, **kwargs):
     lookup = retrieve if retrieve is not None else get_relevant_context_hybrid
+    try:
+        signature = inspect.signature(lookup)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None and not any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        accepted = set(signature.parameters)
+        kwargs = {key: value for key, value in kwargs.items() if key in accepted}
     joined_context, retrieved_sources = lookup(prompt, **kwargs)
     numbered_sources = build_numbered_sources(retrieved_sources)
     structured_context = context_from_sources(numbered_sources)
@@ -197,7 +228,17 @@ def build_citation_prompt(prefix, prompt, numbered_sources):
     )
 
 
-def process_chat_mode(prompt, mode, context_window, *, retrieve=None, rewrite=True):
+def process_chat_mode(
+    prompt,
+    mode,
+    context_window,
+    *,
+    retrieve=None,
+    rewrite=True,
+    router=None,
+    strict=False,
+    cancelled=None,
+):
     """Build one current prompt and evidence set for the chosen retrieval mode."""
     prefixes = {
         "Focused Search": "Focusing on most relevant sources:",
@@ -211,11 +252,108 @@ def process_chat_mode(prompt, mode, context_window, *, retrieve=None, rewrite=Tr
             "beta": 0.4, "lambda_mmr": 0.7,
         },
     }
+    retrieval_options = {
+        "rewrite": rewrite,
+        **settings.get(mode, {"top_k": 5}),
+    }
+    if router is not None:
+        retrieval_options["router"] = router
+    if strict:
+        retrieval_options["strict"] = True
+    if cancelled is not None:
+        retrieval_options["cancelled"] = cancelled
     context, sources = retrieve_numbered_sources(
-        prompt, retrieve=retrieve, rewrite=rewrite, **settings.get(mode, {"top_k": 5})
+        prompt, retrieve=retrieve, **retrieval_options
     )
     processed = build_citation_prompt(prefixes.get(mode, ""), prompt, sources)
     return context, processed, sources
+
+
+class _PreparedGeneration(NamedTuple):
+    context: str
+    metadata: list
+    was_trimmed: bool
+    error: GenerationError | None
+    request: dict
+
+
+def _prepare_generation(
+    user_input,
+    system_message,
+    temperature,
+    mode,
+    context_window,
+    *,
+    provider,
+    preferred,
+    router,
+    strict,
+    retrieve,
+    conversation_history,
+    cancelled=None,
+):
+    """Retrieve evidence and build the bounded request exactly once."""
+
+    selected = preferred if preferred is not None else DEFAULT_MODELS[provider]
+    context, processed_input, metadata = process_chat_mode(
+        user_input,
+        mode,
+        context_window,
+        retrieve=retrieve,
+        rewrite=provider == "groq",
+        router=router,
+        strict=strict,
+        cancelled=cancelled,
+    )
+    messages = [
+        {"role": "system", "content": system_message},
+        *list(conversation_history)[-context_window:],
+        {"role": "user", "content": processed_input},
+    ]
+    messages, was_trimmed = trim_messages_to_budget(
+        messages, max_input_tokens=5000, model_name=selected
+    )
+    error = None
+    if not messages or messages[-1].get("content") != processed_input:
+        error = GenerationError(
+            "input_budget", "The full evidence does not fit the input budget."
+        )
+    request = {
+        "preferred": selected,
+        "messages": messages,
+        "strict": strict,
+        "stream": True,
+        "temperature": temperature,
+    }
+    return _PreparedGeneration(context, metadata, was_trimmed, error, request)
+
+
+def _accept_answer(placeholder, result, metadata, user_input, provider):
+    """Validate citations before adding the answer to the chat or speech queue."""
+    try:
+        cited_ids = validate_response_citations(result.text, metadata)
+    except ValueError:
+        placeholder.empty()
+        return "The answer cited an unknown source."
+
+    status = f"{provider.capitalize()} · Used {result.actual_model}"
+    if result.reason:
+        status += f" · Preferred {result.preferred_model} · {result.reason}"
+    state = st.session_state
+    state.last_model_status = status
+    state.current_citations = cited_ids
+    state.last_generation_warning = (
+        "No citations returned in response." if result.text and not cited_ids else None
+    )
+    st.caption(status)
+    placeholder.markdown(result.text)
+    state.conversation_history.extend([
+        {"role": "user", "content": user_input},
+        {"role": "assistant", "content": result.text},
+    ])
+    if provider == "groq" and state.tts_enabled:
+        ensure_tts_worker()["queue"].put(result.text)
+    return None
 
 
 def chat_with_model(
@@ -223,30 +361,34 @@ def chat_with_model(
     *, provider="groq", preferred=None, router=None, strict=False, retrieve=None,
     cancelled=None,
 ):
-    st.session_state.last_model_status = None
     st.session_state.current_sources = []
+    st.session_state.current_citations = []
+    selected_router = router if router is not None else _session_router(provider)
     try:
-        context, processed_input, metadata = process_chat_mode(
-            user_input, mode, context_window, retrieve=retrieve, rewrite=provider == "groq"
+        prepared = _prepare_generation(
+            user_input,
+            system_message,
+            temperature,
+            mode,
+            context_window,
+            provider=provider,
+            preferred=preferred,
+            router=selected_router,
+            strict=strict,
+            retrieve=retrieve,
+            conversation_history=st.session_state.conversation_history,
+            cancelled=cancelled,
         )
     except Exception:
         st.error("No usable sources were retrieved for this request.")
         return None, None, None
 
+    context, metadata = prepared.context, prepared.metadata
     st.session_state.current_sources = metadata
-    selected = preferred if preferred is not None else DEFAULT_MODELS[provider]
-    messages = [
-        {"role": "system", "content": system_message},
-        *st.session_state.conversation_history[-context_window:],
-        {"role": "user", "content": processed_input},
-    ]
-    messages, was_trimmed = trim_messages_to_budget(
-        messages, max_input_tokens=5000, model_name=selected
-    )
-    if not messages or messages[-1].get("content") != processed_input:
+    if prepared.error is not None:
         st.error("The full evidence does not fit the input budget.")
         return context, None, metadata
-    if was_trimmed:
+    if prepared.was_trimmed:
         st.info("Earlier messages were trimmed to fit the input budget.")
 
     placeholder = st.empty()
@@ -257,10 +399,8 @@ def chat_with_model(
         placeholder.markdown("".join(chunks) + "▌")
 
     try:
-        selected_router = router if router is not None else _session_router(provider)
         result = selected_router.generate(
-            preferred=selected, messages=messages, strict=strict, stream=True,
-            temperature=temperature, cancelled=cancelled, on_chunk=display_chunk,
+            **prepared.request, cancelled=cancelled, on_chunk=display_chunk
         )
     except GenerationError as error:
         if chunks:
@@ -268,27 +408,165 @@ def chat_with_model(
         st.error(str(error))
         return context, None, metadata
 
-    status = f"{provider.capitalize()} · Used {result.actual_model}"
-    if result.reason:
-        status += f" · Preferred {result.preferred_model} · {result.reason}"
-    st.session_state.last_model_status = status
-    st.caption(status)
-
-    try:
-        validate_response_citations(result.text, metadata)
-    except ValueError:
-        placeholder.empty()
-        st.error("The answer cited an unknown source.")
+    error = _accept_answer(placeholder, result, metadata, user_input, provider)
+    if error:
+        st.error(error)
         return context, None, metadata
-
-    placeholder.markdown(result.text)
-    st.session_state.conversation_history.extend([
-        {"role": "user", "content": user_input},
-        {"role": "assistant", "content": result.text},
-    ])
-    if provider == "groq" and st.session_state.tts_enabled:
-        ensure_tts_worker()["queue"].put(result.text)
+    if st.session_state.last_generation_warning:
+        st.warning(st.session_state.last_generation_warning)
     return context, result.text, metadata
+
+
+class GenerationJob:
+    """One Streamlit turn. The worker publishes chunks and its outcome only."""
+
+    def __init__(self, question, provider):
+        self.question = question
+        self.provider = provider
+        self.cancel_event = threading.Event()
+        self.lock = threading.Lock()
+        self.chunks = []
+        self.outcome = None
+        self.thread = None
+
+    def append_chunk(self, chunk):
+        with self.lock:
+            self.chunks.append(chunk)
+
+    def snapshot(self):
+        with self.lock:
+            return "".join(self.chunks), self.outcome
+
+
+def _cancelled_error():
+    return GenerationError("cancelled", "Generation cancelled.")
+
+
+def _run_generation_job(job, router, **request):
+    """Run retrieval and generation off the Streamlit thread."""
+    prepared = None
+    result = None
+    error = None
+    try:
+        if job.cancel_event.is_set():
+            raise _cancelled_error()
+        prepared = _prepare_generation(
+            job.question, provider=job.provider, router=router,
+            cancelled=job.cancel_event.is_set, **request,
+        )
+        if prepared.error:
+            raise prepared.error
+        if job.cancel_event.is_set():
+            raise _cancelled_error()
+        result = router.generate(
+            **prepared.request, cancelled=job.cancel_event.is_set, on_chunk=job.append_chunk
+        )
+    except GenerationError as exc:
+        error = exc
+    except Exception:
+        message = (
+            "No usable sources were retrieved for this request."
+            if prepared is None else "Generation failed."
+        )
+        error = GenerationError("generation_error", message)
+    finally:
+        with job.lock:
+            if job.cancel_event.is_set():
+                error = _cancelled_error()
+            job.outcome = prepared, result, error
+
+
+def _active_generation_job():
+    return st.session_state.get("generation_job")
+
+
+def start_generation_job(
+    user_input, system_message, temperature=0.7, mode="Standard", context_window=5,
+    *, provider="groq", preferred=None, router=None, strict=False, retrieve=None,
+):
+    """Start one non-blocking generation per Streamlit session."""
+    if (active := _active_generation_job()) is not None:
+        return active
+    selected_router = router if router is not None else _session_router(provider)
+    job = GenerationJob(user_input, provider)
+    job.thread = threading.Thread(
+        target=_run_generation_job,
+        args=(job, selected_router),
+        kwargs={
+            "system_message": system_message,
+            "temperature": temperature,
+            "mode": mode,
+            "context_window": context_window,
+            "preferred": preferred,
+            "strict": strict,
+            "retrieve": retrieve,
+            "conversation_history": list(st.session_state.conversation_history),
+        },
+        daemon=True,
+        name="streamlit-generation",
+    )
+    st.session_state.generation_job = job
+    st.session_state.last_generation_error = None
+    st.session_state.last_generation_warning = None
+    job.thread.start()
+    return job
+
+
+def request_generation_cancel(job=None):
+    """Set the cancellation signal while a provider call is in progress."""
+    job = job or _active_generation_job()
+    if job is None:
+        return False
+    with job.lock:
+        if job.outcome is not None:
+            return False
+        job.cancel_event.set()
+        return True
+
+
+def _generation_observer_impl():
+    job = _active_generation_job()
+    if job is None:
+        return
+    chunks, outcome = job.snapshot()
+    placeholder = st.empty()
+    if outcome is None:
+        if chunks and not job.cancel_event.is_set():
+            placeholder.markdown(chunks + "▌")
+        st.button(
+            "Cancel generation",
+            key="cancel_active_generation",
+            on_click=request_generation_cancel,
+            disabled=job.cancel_event.is_set(),
+        )
+        st.caption("Cancellation requested." if job.cancel_event.is_set() else "Generation in progress…")
+        return
+
+    prepared, result, error = outcome
+    state = st.session_state
+    state.generation_job = None
+    state.current_sources = prepared.metadata if prepared is not None else []
+    state.current_citations = []
+    try:
+        state.last_generation_error = (
+            str(error) if error else _accept_answer(
+                placeholder, result, state.current_sources, job.question, job.provider
+            )
+        )
+        if state.last_generation_error:
+            st.error(state.last_generation_error)
+    finally:
+        # Restore the input and render the accepted chat and cited sources together.
+        rerun = getattr(st, "rerun", None)
+        if callable(rerun):
+            rerun()
+
+
+_fragment = getattr(st, "fragment", None)
+_generation_observer = (
+    _fragment(run_every=0.25)(_generation_observer_impl)
+    if _fragment is not None else _generation_observer_impl
+)
 
 
 def _offline_sources(query):
@@ -388,19 +666,17 @@ def render_source_documents(metadata, cited_ids):
 def main():
     _configure_page()
     _initialize_session()
+    active_job = _active_generation_job()
     sources_col, main_col, analytics_col = st.columns([1, 2, 1])
 
     # Initialize all settings first in the sidebar
     with st.sidebar:
         st.title("Settings ⚙️")
-        provider, router, preferred, strict = _generation_settings()
+        provider, router, preferred, strict = _generation_settings(
+            active=active_job is not None
+        )
         if provider != "offline" and st.session_state.last_model_status:
             st.caption(f"Last answer · {st.session_state.last_model_status}")
-        if provider != "offline":
-            st.button(
-                "Cancel generation",
-                on_click=lambda: st.session_state.update(generation_cancelled=True),
-            )
 
         # System Message
         system_message = st.text_area(
@@ -478,26 +754,33 @@ def main():
 
     with main_col:
         st.title("RAG Chat Assistant 🤖")
+        if active_job is None and st.session_state.get("last_generation_error"):
+            st.error(st.session_state.last_generation_error)
+            st.session_state.last_generation_error = None
 
-        # Chat interface
-        chat_container = st.container()
-
-        # Display conversation history
-        # ...existing conversation history code...
+        for message in st.session_state.conversation_history:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+        if active_job is None and provider != "offline":
+            if warning := st.session_state.get("last_generation_warning"):
+                st.warning(warning)
 
         # Chat input
         prompt = st.chat_input(
             "Search local documents..." if provider == "offline" else "Enter your message...",
             key=f"chat_input_{st.session_state.chat_input_key}",
+            disabled=active_job is not None,
         )
 
+        metadata = None
+        cited_ids = []
         if prompt:
             with st.chat_message("user"):
                 st.markdown(prompt)
                 st.session_state.message_timestamps.append(datetime.now())
 
-            with st.chat_message("assistant"):
-                if provider == "offline":
+            if provider == "offline":
+                with st.chat_message("assistant"):
                     try:
                         metadata = _offline_sources(prompt)
                     except Exception:
@@ -506,24 +789,35 @@ def main():
                     else:
                         if not metadata:
                             st.info("No matching local documents.")
-                    cited_ids = []
-                else:
-                    st.session_state.generation_cancelled = False
-                    with st.spinner(f"Thinking... ({chat_mode} mode) 🤔"):
-                        _, response, metadata = chat_with_model(
-                            prompt, system_message, temperature, chat_mode, context_window,
-                            provider=provider, preferred=preferred, router=router,
-                            strict=strict,
-                            cancelled=lambda: st.session_state.generation_cancelled,
-                        )
-                    cited_ids = validate_response_citations(response, metadata)
-                    if response and not cited_ids:
-                        st.warning("No citations returned in response.")
-                st.session_state.current_sources = metadata or []
-                if metadata:
-                    render_source_documents(metadata, cited_ids)
-        elif st.session_state.current_sources:
-            render_source_documents(st.session_state.current_sources, [])
+            elif active_job is None:
+                active_job = start_generation_job(
+                    prompt,
+                    system_message,
+                    temperature,
+                    chat_mode,
+                    context_window,
+                    provider=provider,
+                    preferred=preferred,
+                    router=router,
+                    strict=strict,
+                )
+                with st.chat_message("assistant"):
+                    _generation_observer()
+        elif active_job is not None:
+            with st.chat_message("user"):
+                st.markdown(active_job.question)
+            with st.chat_message("assistant"):
+                _generation_observer()
+
+        if metadata:
+            st.session_state.current_sources = metadata
+            st.session_state.current_citations = []
+            render_source_documents(metadata, cited_ids)
+        elif _active_generation_job() is None and st.session_state.current_sources:
+            render_source_documents(
+                st.session_state.current_sources,
+                st.session_state.get("current_citations", []),
+            )
 
     with analytics_col:
         st.title("Analytics 📊")
@@ -590,9 +884,15 @@ def main():
                 file_name="conversation_export.json",
             )
 
-        uploaded_file = st.file_uploader("Import Conversation")
+        uploaded_file = st.file_uploader(
+            "Import Conversation", disabled=active_job is not None
+        )
+        if active_job is not None:
+            uploaded_file = None
         if uploaded_file:
-            apply_uploaded_conversation(uploaded_file, st.session_state, st.warning, st.success)
+            apply_uploaded_conversation(
+                uploaded_file, st.session_state, st.warning, st.success
+            )
 
     # Auto-focus script
     st.markdown(
