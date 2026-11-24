@@ -5,7 +5,12 @@ import sys
 import webbrowser
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtWidgets import QListWidgetItem, QMessageBox
+from PyQt5.QtWidgets import QListWidgetItem, QMessageBox, QTableWidgetItem
+
+try:
+    from offline_search import search_documents
+except ImportError:  # pragma: no cover - compatibility with pre-#44 checkouts
+    search_documents = None
 
 # Static script — no user data interpolated.  All params arrive via the
 # _DS_ARGS env var (JSON), so there is no code-injection surface.
@@ -325,6 +330,42 @@ class DirectSearchMixin:
                 self._self_test_sync_active = False
             return
 
+        # The visible Search Only action is lexical and offline.  Keep the
+        # historical subprocess script below for the diagnostic self-test and
+        # older callers, but never run its provider/embedding path for normal
+        # user searches.
+        if search_documents is not None:
+            self.update_settings_from_ui()
+            top_k = int(self.settings.get("top_k", 5))
+            self.statusBar.showMessage("Searching offline documents...")
+            try:
+                sources = search_documents(self.collection, query, top_k)
+                formatted = []
+                for source in sources or []:
+                    metadata = source.get("metadata") or {}
+                    file_name = metadata.get("file_name") or source.get("id") or "Unknown"
+                    score = source.get("relevance_score")
+                    formatted.append(
+                        {
+                            "id": source.get("id"),
+                            "file_name": file_name,
+                            "file_path": metadata.get("file_path"),
+                            "document": source.get("document", ""),
+                            "distance": None,
+                            "similarity": score,
+                            "metadata": metadata,
+                            "final_score": score,
+                        }
+                    )
+                self._direct_results = formatted
+                self.apply_direct_search_view()
+                self.statusBar.showMessage(
+                    f"Offline search found {len(formatted)} results", 3000
+                )
+            except Exception as error:
+                self.on_error(f"Offline search failed: {error}")
+            return
+
         # Normal path: run search via subprocess to avoid native crash in worker
         # Sync top-k from direct control before saving settings
         if hasattr(self, "direct_topk_spin"):
@@ -403,7 +444,12 @@ class DirectSearchMixin:
             "[DirectSearchMixin.on_search_results] received %s results type=%s" % (len(results), type(results)),
             flush=True,
         )
-        self.search_results_list.clear()
+        result_list = getattr(self, "search_results_list", None)
+        result_table = getattr(self, "search_results_table", None)
+        if result_list is not None:
+            result_list.clear()
+        elif result_table is not None:
+            result_table.setRowCount(len(results))
 
         for i, res in enumerate(results):
             file_name = res.get("file_name", "Unknown")
@@ -414,9 +460,17 @@ class DirectSearchMixin:
             doc = res.get("document", "")
             preview = (doc or "")[:180].replace("\n", " ")
             line = f"{file_name}\n  sim={sim_display} dist={dist_display}\n  {preview}"
-            item = QListWidgetItem(line)
-            item.setData(Qt.UserRole, res)
-            self.search_results_list.addItem(item)
+            if result_list is not None:
+                item = QListWidgetItem(line)
+                item.setData(Qt.UserRole, res)
+                result_list.addItem(item)
+            elif result_table is not None:
+                name_item = QTableWidgetItem(file_name)
+                name_item.setData(Qt.UserRole, res)
+                result_table.setItem(i, 0, name_item)
+                result_table.setItem(i, 1, QTableWidgetItem(sim_display))
+                result_table.setItem(i, 2, QTableWidgetItem(dist_display))
+                result_table.setItem(i, 3, QTableWidgetItem(preview))
 
         self.statusBar.showMessage(f"Found {len(results)} results", 3000)
         print("[DirectSearchMixin.on_search_results] table updated", flush=True)

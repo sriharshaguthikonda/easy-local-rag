@@ -52,6 +52,47 @@ class ChatFunctionalityMixin:
         self.statusBar.showMessage("Retrieving context...")
         QApplication.processEvents()  # Update UI
 
+        # Search Only is deliberately lexical and provider-free.  It must not
+        # invoke the rewrite/embedding path, create a router, or leave a
+        # failed generation worker behind.
+        if self.settings["just_search"]:
+            try:
+                from offline_search import search_documents
+
+                sources = search_documents(
+                    self.collection,
+                    user_input,
+                    int(self.settings.get("top_k", 5)),
+                )
+                context_results = []
+                for source in sources or []:
+                    metadata = source.get("metadata") or {}
+                    context_results.append(
+                        {
+                            "id": source.get("id"),
+                            "meta": metadata,
+                            "metadata": metadata,
+                            "document": source.get("document", ""),
+                            "final_score": source.get("relevance_score", 0.0),
+                            "keywords": [],
+                        }
+                    )
+                self._last_offline_search_sources = list(sources or [])
+                print(
+                    "[_do_send] offline search returned %s results"
+                    % len(context_results)
+                )
+                self.on_context_ready(context_results)
+                self.statusBar.showMessage(
+                    f"Offline search found {len(context_results)} results", 3000
+                )
+                self.on_response_complete("")
+                if hasattr(self, "set_progress_stage"):
+                    self.set_progress_stage("done")
+            except Exception as error:
+                self.on_error(f"Offline search failed: {error}")
+            return
+
         try:
             context_results = self.get_relevant_context_hybrid(user_input)
             print(f"[_do_send] Retrieved {len(context_results)} context results")
@@ -62,22 +103,27 @@ class ChatFunctionalityMixin:
             self.on_error(f"Context retrieval failed: {e}")
             return
 
-        if self.settings["just_search"]:
-            print("[_do_send] just_search=True, completing without LLM")
-            self.on_response_complete("")
-            self.set_progress_stage("done")
-            return
-
         # Start worker for LLM calls only
         print("[_do_send] Creating ChatWorker...")
+        provider = self.settings.get("generation_provider", "groq")
+        router = None
+        get_router = getattr(self, "get_generation_router", None)
+        if callable(get_router):
+            router = get_router(provider)
         self.chat_worker = ChatWorker(
-            user_input, self.settings.copy(), context_results, self.conversation_history
+            user_input,
+            self.settings.copy(),
+            context_results,
+            self.conversation_history,
+            router=router,
         )
         print("[_do_send] Connecting ChatWorker signals")
         self.chat_worker.response_chunk.connect(self.on_response_chunk)
         self.chat_worker.response_complete.connect(self.on_response_complete)
         self.chat_worker.error_occurred.connect(self.on_error)
         self.chat_worker.status_update.connect(self.on_status_update)
+        if hasattr(self.chat_worker, "generation_result"):
+            self.chat_worker.generation_result.connect(self.on_generation_result)
         print("[_do_send] Starting ChatWorker thread")
         self.chat_worker.start()
         self.set_progress_stage("streaming")
@@ -102,7 +148,8 @@ class ChatFunctionalityMixin:
         self.send_btn.setEnabled(True)
         self.search_only_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.set_progress_stage("done")
+        if hasattr(self, "set_progress_stage"):
+            self.set_progress_stage("done")
         self.statusBar.showMessage("Ready", 3000)
 
         # Clean up worker thread (it has already finished when signal is emitted)
@@ -176,13 +223,26 @@ class ChatFunctionalityMixin:
         self.send_btn.setEnabled(True)
         self.search_only_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.set_progress_stage("error")
+        if hasattr(self, "set_progress_stage"):
+            self.set_progress_stage("error")
 
         self.append_message("System", f"Error: {error}", "#E74C3C")
         self.statusBar.showMessage(f"Error: {error}", 5000)
 
     def on_status_update(self, status):
         self.statusBar.showMessage(status)
+
+    def on_generation_result(self, result):
+        """Display the safe selected/actual model status from the router."""
+        if result is None:
+            return
+        actual = getattr(result, "actual_model", None)
+        reason = getattr(result, "reason", None)
+        if actual:
+            message = f"Answered with {actual}"
+            if reason:
+                message += f" ({reason})"
+            self.statusBar.showMessage(message, 5000)
 
     def _cleanup_tts_worker(self, worker):
         """Clean up finished TTS worker and start the next one if available"""

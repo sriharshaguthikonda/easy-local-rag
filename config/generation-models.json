@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "providers": {
+    "groq": {
+      "llama-3.3-70b-versatile": {
+        "classes": ["chat"],
+        "quality": "large",
+        "tier": "on_demand",
+        "input_usd_per_mtok": 0.59,
+        "output_usd_per_mtok": 0.79,
+        "context_tokens": 131072,
+        "output_tokens": 32768,
+        "priority": 10,
+        "capabilities": ["stream", "tools", "json_object", "reasoning_off"]
+      },
+      "openai/gpt-oss-120b": {
+        "classes": ["chat", "reasoning"],
+        "quality": "large",
+        "tier": "on_demand",
+        "input_usd_per_mtok": 0.15,
+        "output_usd_per_mtok": 0.6,
+        "context_tokens": 131072,
+        "output_tokens": 65536,
+        "priority": 20,
+        "capabilities": ["stream", "tools", "json_object", "json_schema"]
+      },
+      "llama-3.1-8b-instant": {
+        "classes": ["chat"],
+        "quality": "compact",
+        "tier": "on_demand",
+        "input_usd_per_mtok": 0.05,
+        "output_usd_per_mtok": 0.08,
+        "context_tokens": 131072,
+        "output_tokens": 131072,
+        "priority": 10,
+        "capabilities": ["stream", "tools", "json_object", "reasoning_off"]
+      },
+      "openai/gpt-oss-20b": {
+        "classes": ["chat", "reasoning"],
+        "quality": "compact",
+        "tier": "on_demand",
+        "input_usd_per_mtok": 0.075,
+        "output_usd_per_mtok": 0.3,
+        "context_tokens": 131072,
+        "output_tokens": 65536,
+        "priority": 20,
+        "capabilities": ["stream", "tools", "json_object", "json_schema"]
+      }
+    },
+    "ollama": {
+      "phi-3": {
+        "classes": ["chat"],
+        "quality": "compact",
+        "tier": "local",
+        "input_usd_per_mtok": 0,
+        "output_usd_per_mtok": 0,
+        "context_tokens": 4096,
+        "output_tokens": 1024,
+        "priority": 10,
+        "capabilities": ["stream", "json_object", "json_schema"]
+      },
+      "phi3:latest": {
+        "classes": ["chat"],
+        "quality": "compact",
+        "tier": "local",
+        "input_usd_per_mtok": 0,
+        "output_usd_per_mtok": 0,
+        "context_tokens": 4096,
+        "output_tokens": 1024,
+        "priority": 20,
+        "capabilities": ["stream", "json_object", "json_schema"]
+      },
+      "llama3.2:3b": {
+        "classes": ["chat"],
+        "quality": "compact",
+        "tier": "local",
+        "input_usd_per_mtok": 0,
+        "output_usd_per_mtok": 0,
+        "context_tokens": 4096,
+        "output_tokens": 1024,
+        "priority": 30,
+        "capabilities": ["stream", "json_object", "json_schema"]
+      }
+    }
+  }
+}
