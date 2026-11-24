@@ -1,0 +1,36 @@
+issue: 44
+decision: Adapt the existing Model Bridge catalogue and eligibility design to the existing SDK calls.
+checked: 2026-11-24
+discarded_urls: 1
+candidates:
+  - name: Model Bridge
+    commit: 56519023e22f6f7a91f36a7074352c771bdc4176
+    paths: [src/model_bridge_mcp/discovery.py, src/model_bridge_mcp/router.py]
+    verified: source and 23 passing network-free tests
+    recheck_after: 2027-02-24
+    fit: Reuse its discovery and eligibility design with provider-scoped, in-memory caches.
+  - name: LiteLLM Router
+    url: https://raw.githubusercontent.com/BerriAI/litellm/3d49fb91d447e1b917880b053bf7a31dfbdfb4da/litellm/router.py
+    verified: source
+    recheck_after: 2027-02-24
+    fit: Provides pre-call context and fallback authorization hooks. A dependency would enlarge the transport surface.
+  - name: Portkey Gateway
+    url: https://raw.githubusercontent.com/Portkey-AI/gateway/669825cbe89ee51569918b8f78a9db486fd69dd4/src/handlers/retryHandler.ts
+    verified: source
+    recheck_after: 2027-02-24
+    fit: Provides bounded, configurable HTTP retry. A gateway would expand the runtime and data path.
+  - name: OpenRouter
+    url: https://openrouter.ai/docs/guides/routing/model-fallbacks
+    verified: documentation
+    recheck_after: 2027-02-24
+    fit: Hosted model failover would add an external provider and change the egress policy.
+  - name: vLLM
+    url: https://github.com/vllm-project/vllm
+    verified: repository
+    recheck_after: 2027-02-24
+    fit: Provides a serving engine catalogue. This app routes within the existing SDK and account boundaries.
+  - name: Plano
+    url: https://github.com/katanemo/plano
+    verified: repository
+    recheck_after: 2027-02-24
+    fit: Proxy routing adds another process and expands the prompt handling boundary.
