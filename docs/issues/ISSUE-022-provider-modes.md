@@ -34,6 +34,13 @@ validation and #25 cutover.
 behavior to #21 ports, but cannot redefine `.memory` #5 retrieval/hydration or
 #27 answer/citation/abstention validation.
 
+## Routing handoff from #44
+
+[Issue #44](ISSUE-044-model-discovery-and-fallback.md) owns the maintained-app
+repair for catalogue discovery and same-provider, same-class retry. #22A
+consumes its verified contract and profile schema when pinning the provider
+interface. The existing #22 integration dependencies apply.
+
 ## Affected interfaces, files, and artifacts
 
 - Provider adapter interfaces and provider status consumed by #21 `status`/`doctor` and `chat`.

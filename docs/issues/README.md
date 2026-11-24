@@ -1,17 +1,18 @@
 # Canonical issue-plan index
 
 This index is the authoritative issue/plan/status index and roadmap ledger for
-the 26 tracked issues:
+the 27 tracked issues:
 [#2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2) and
 [#5](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5) through
 [#27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27), plus
-[#37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) and
-[#38](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38).
+[#37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37),
+[#38](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38), and
+[#44](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44).
 Canonical issue files are acceptance contracts, not implementation evidence.
 Authority precedence is: **GitHub issue = live state and human decisions;
 canonical plan = scope, invariants, and closure gates; roadmap ledger =
 ordering and handoffs; JIT packet = implementation detail and cannot weaken a
-canonical plan.** The status column reflects live state checked on 2026-08-02:
+canonical plan.** The status column reflects live state checked on 2026-11-24:
 #6 is closed through PR #29 at GUI merge `daecce8a27f50da39284f5519d77b835905209f6`;
 #9 is closed through PR #33 at merge `619365224f6db3770d3369fd84a295589699e513`;
 #14 is closed as a duplicate; #8 and #15 are closed as completed; and PR #36
@@ -23,7 +24,7 @@ merge `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head
 
 ## Required execution order
 
-`#37 -> #38 (independent P0 exception) -> verification-only #5/#7/#12 audits -> #2A -> #18 -> #26A -> separately approved #26B -> #2 closure -> #19A -> #19B -> #20A -> .memory #4 handoff -> #20B -> .memory #5 handoff -> #21A -> #22A -> #23 -> #21B -> #22B -> #24 specification -> #27 -> #25 -> GUI/no-GUI handoff -> #26C -> #26D`
+`#37 -> #38 (independent P0 exception, closed) -> #44 (independent P0 exception) -> verification-only #5/#7/#12 audits -> #2A -> #18 -> #26A -> separately approved #26B -> #2 closure -> #19A -> #19B -> #20A -> .memory #4 handoff -> #20B -> .memory #5 handoff -> #21A -> #22A -> #23 -> #21B -> #22B -> #24 specification -> #27 -> #25 -> GUI/no-GUI handoff -> #26C -> #26D`
 
 #24 is a specification-only issue. It records the future GUI contract and
 salvage decisions; it does not authorize GUI implementation. #17 is an epic,
@@ -40,10 +41,11 @@ once created; this ledger tracks its state. The only states are `queued`,
 `planning`, `active`, `review`, `blocked-awaiting-user`, and `closed`. At most
 one issue may be `active`: an activated issue is the declared sole active
 issue, while stable between-issues/after-closure states may have zero. A
-blocked-awaiting-user #2 parks #2. #38 is the one approved independent P0
-exception after #37; it does not advance or bypass the #2/#18/#26 security
-sequence. If #2 remains blocked after #38, only read-only evidence audits and
-draft recommendations may continue; do not activate further implementation.
+blocked-awaiting-user #2 parks #2. #38 completed its independent P0 scope.
+On 2026-11-24 the owner approved #44 as the sole new P0 implementation
+exception, with network-free verification. Its separate activation merge
+precedes implementation. #2, credentialed testing, history remediation and
+migration retain their existing gates.
 
 Each packet must contain issue/canonical/roadmap links; exact target branch and
 frozen base SHA; maintained-path or retirement mode chosen first; current
@@ -61,7 +63,8 @@ unresolved placeholder, implementer choice, or speculative dependency.
 | #15 | closed | Completed through [PR #36](https://github.com/sriharshaguthikonda/easy-local-rag/pull/36), merged into the GUI branch as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205` from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`. |
 | #37 | closed | Completed through [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41), merged as `f87b4cf`; [Issue #37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) closed 2026-07-26. Validator ships at `scripts/validate_issue_ledger.py`. |
 | #38 | closed | Completed through [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42), merged with Create a merge commit as `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head `5e5e8941670f519e6447a770fe0f0d012b96cbcc`; [review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155438619), [verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155439139), and [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38#issuecomment-5155449007). Focused 19 passed; full 175 passed / 4 accepted frozen GUI failures; compile/fallback grep/ledger/lineage/diff gates passed. #2 remains blocked and #38 does not advance #2/#18/#26. |
-| Active issue | none | #38 is closed; #2 remains blocked and no issue is active. |
+| #44 | planning | [Reviewed packet](../superpowers/plans/2026-11-24-issue-044-model-discovery-and-fallback-implementation.md) and separate activation precede runtime changes. |
+| Active issue | none | #44 is in planning and #2 remains blocked. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
@@ -104,7 +107,7 @@ Consumer: issue number; accepted scope/gates: canonical gate names; rollback: na
 
 - `.memory` #5 owns retrieval, search, hydration, and evidence IDs.
 - #21 owns CLI/service ports, transport, and categorized errors.
-- #22 owns provider capabilities, status, requests, streaming, and cancellation.
+- #22 owns provider capabilities, status, requests, streaming, and cancellation. It consumes #44's verified generation-discovery contract.
 - #27 owns answer, citation, and abstention validation.
 
 No owner may redefine another owner's contract; consumers adapt to the pinned
@@ -160,6 +163,7 @@ approval, rollback, or scope means a separate packet.
 | #27 | P0 security | Open — answer-safety gate | [Grounded answers](ISSUE-027-grounded-answers.md) | Extends #5/#13 and owns structured validation associated with closed duplicate #14; after #24 and #21B/#22B, before #25. | [Issue #27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27) |
 | #37 | P1 developer experience | Closed — completed | [Ledger synchronization](ISSUE-037-ledger-sync.md) | Repaired the authoritative execution ledger; validator at `scripts/validate_issue_ledger.py`. Merged as `f87b4cf` via [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41). | [Issue #37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) |
 | #38 | P0 bug | **Closed — completed through PR #42** | [Streamlit evidence contract](ISSUE-038-streamlit-evidence-contract.md) | After #37 only; it does not unlock or bypass #2 -> #18 -> #26. Merged with Create a merge commit as `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head `5e5e8941670f519e6447a770fe0f0d012b96cbcc`; [review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155438619), [verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155439139), and [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38#issuecomment-5155449007). | [Issue #38](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38) |
+| #44 | P0 bug | Open — planning | [Model discovery and same-class fallback](ISSUE-044-model-discovery-and-fallback.md) | Owner-approved independent P0 exception after #37 and #38. Separate activation and network-free closure gates apply. | [Issue #44](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44) |
 
 ## Gate discipline
 
