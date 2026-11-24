@@ -116,33 +116,149 @@ every dispatch. Pass temperatures and other supported provider options
 through the same SDK, never through the other provider. Report a safe error
 category on failures and keep retrieval/evidence with the calling UI.
 
+## Profile schema and first supported models
+
+The config is `{"version": 1, "providers": {"groq": {MODEL_ID: PROFILE},
+"ollama": {MODEL_ID: PROFILE}}}`. The user can override this file via
+`EASY_RAG_GENERATION_PROFILES`. A profile has `classes` (a list of
+`chat` and/or `reasoning`), `quality` (a string), `tier` (Groq
+`on_demand` or Ollama `local`), nonnegative `input_usd_per_mtok`
+and `output_usd_per_mtok`, positive `context_tokens` and
+`output_tokens`, integer `priority` (lower first), and literal
+capabilities from `stream`, `tools`, `json_object`, `json_schema` and
+`reasoning_off`. Embedding and speech records are excluded. Invalid
+or unknown profiles cannot be used for fallback. The replacement must
+match class, quality and tier. Each USD limit must be at most the
+preferred profile's limit. Apply the same maximum output count on every
+attempt, including reasoning tokens when the provider uses them.
+
+| Groq ID | Class and quality | On-demand input/output USD per million | Context/output tokens | Priority |
+|---|---|---|---|---|
+| `llama-3.3-70b-versatile` | chat, large | 0.59 / 0.79 (legacy ceiling) | 131072 / 32768 | 10 |
+| `openai/gpt-oss-120b` | chat and reasoning, large | 0.15 / 0.60 | 131072 / 65536 | 20 |
+| `llama-3.1-8b-instant` | chat, compact | 0.05 / 0.08 (legacy ceiling) | 131072 / 131072 | 10 |
+| `openai/gpt-oss-20b` | chat and reasoning, compact | 0.075 / 0.30 | 131072 / 65536 | 20 |
+
+Use Groq's verified standard on-demand tier explicitly for fallback.
+Enterprise or opaque negotiated pricing requires an explicit profile.
+The Llama rows are legacy standard-spend ceilings. Groq's current
+model pages list enterprise access separately. GPT-OSS 120B may serve
+plain chat with `include_reasoning=False` and low reasoning effort.
+It lacks the `reasoning_off` capability. No tools run implicitly. GPT-OSS
+20B exceeds the old compact model's ceilings, so an unavailable default
+rewrite continues with the original query, unless the user explicitly
+selects another rewrite model. [Groq service tiers](https://console.groq.com/docs/service-tiers) ·
+[Groq model details](https://console.groq.com/docs/models) ·
+[Groq structured output](https://console.groq.com/docs/structured-outputs).
+
+For Ollama use server metadata for task class and effective context, capped
+at the request's explicit `options.num_ctx` (default 4096), and profile
+quality/priority. Include reviewed zero-cost local compact profiles
+`phi-3`, `phi3:latest`, and `llama3.2:3b`, with priorities 10, 20 and 30,
+a 4096-token context limit and a 1024-token output ceiling. Local IDs
+reported as installed completion models can appear for explicit selection
+when unprofiled. Require a configured profile before an automatic fallback.
+Inspect `remote_model` and `remote_host` before dispatch. Check Ollama
+server metadata for all candidates and cap local output through
+`options.num_predict`. [Ollama schema](https://github.com/ollama/ollama/blob/main/docs/openapi.yaml).
+
+## Implementation tasks and seams
+
+1. **Router and policy.** Own `generation_models.py`,
+   `config/generation-models.json` and `tests/test_generation_models.py`.
+   Use fake client catalogue/stream objects and injected monotonic clock.
+   Assert the ordered attempts `[llama-3.3-70b-versatile, openai/gpt-oss-120b]`
+   after a real SDK-shaped 404 body, unchanged message text and citations,
+   `on_demand` on both calls, and result status naming the replacement.
+   Test two simultaneous account clients, forced refresh and TTL, and assert
+   no retry after auth failure, other 404, cancellation or the first
+   nonempty delta. Deny candidates on class, quality, remote manifest,
+   paid limit, context, strict JSON, tools, or max output. Assert the call
+   count stays at three after a sequence of typed pre-output failures.
+2. **Offline lexical search.** Own `offline_search.py` and its tests.
+   Export `search_documents(collection, query, limit)` returning existing
+   source dicts with `id`, `document`, `metadata`, and
+   `relevance_score`. Use the existing selected persistent collection's
+   `get(include=["documents", "metadatas"])` and reuse BM25Okapi scoring
+   from the direct search path on raw query text. Corpus is local and
+   telemetry is disabled on the reader. For the network-denial fixture,
+   use temporary Chroma data with document IDs `doc-beta` and
+   `doc-alpha` and a unique term in `doc-alpha`. Assert that ID and exact
+   document on search, reject every attempted socket, and assert no model
+   client factory or embedding function is called.
+3. **Qt.** Own `GUI_models.py`, `GUI_settings.py`, `rag_gui.py`,
+   `GUI_chat.py`, `GUI_workers.py`, `GUI_context.py`, `GUI_direct_search.py`
+   and `tests/test_generation_qt.py`. Persist `generation_provider`
+   (`groq` or `ollama`, default `groq`) and
+   `strict_generation_model` (bool, default false) in existing settings.
+   The provider combo scopes active model discovery. The model menu keeps
+   unavailable preferences visible and displays a distinct availability
+   message. Use Qt interruption instead of terminating the worker. The
+   existing Search Only button takes the lexical path, never instantiates
+   a provider, and still works after failed answers. Local generation uses
+   the original query for retrieval instead of a Groq rewrite. Exercise the
+   model mixin and worker with injected fake routers and Qt offscreen,
+   including the selected preference after account refresh and the status
+   emitted by a successful fallback.
+4. **Streamlit.** Own `streamlit_app.py`,
+   `tests/test_generation_streamlit.py` and the existing Streamlit
+   citation/config tests that use the affected callable. Store
+   `generation_provider`, `strict_generation_model` and
+   `generation_model_groq` / `generation_model_ollama` in session state.
+   Feed the current selector and a scoped router to `chat_with_model`.
+   Declare search-only in the sidebar and route it to lexical search.
+   Keep a distinct last-model status and expose retrieved evidence on
+   generation-only errors. Move provider creation to lazy session helpers
+   and accept injectable router, Streamlit presentation and retrieval
+   dependencies at the generation boundary. Exercise the existing
+   `chat_with_model` callable, including #38 exact evidence and citation
+   verification. Test workflow wiring with Streamlit test stubs and fake
+   provider clients with outbound sockets denied.
+5. **CLI and shared legacy backend.** Own
+   `groq_lama_chromadb_RAG_ETTS.py`,
+   `streamlit_groq_lama_chromadb_RAG_ETTS.py` and
+   `tests/test_generation_cli.py`. Extend the existing provider option
+   with `--model`, `--list-models`, `--refresh-models`,
+   `--strict-model` and `--offline-search QUERY`. Parse before
+   opening a collection or constructing provider clients. Lazy-init the
+   Groq and Ollama SDK clients after the corresponding provider is
+   selected and export their pure generation functions through the
+   shared boundary. Use test transport injection and the real CLI
+   callable or a subprocess with synthetic dependencies. Keep the
+   maintained-backend import restriction from AGENTS in test processes.
+   Do not add source-string assertions. Assert preferred/actual/reason
+   on the CLI and exact evidence across the fallback. Keep speech
+   downstream of accepted output and honor Ctrl+C.
+
 ## Execution and tests
 
-Use the existing Easy Local RAG virtual environment with the working directory
-set to the isolated checkout. In each task run the listed selection before
-the production change and record the expected behavior failure, then rerun for
-green. Fake SDKs use synthetic documents and a fake clock.
+From the isolated checkout in PowerShell, set
+`$ragPython = (Resolve-Path ../easy-local-rag/easyrag/Scripts/python.exe).Path`
+and `$env:PYTHONDONTWRITEBYTECODE = '1'` to avoid touching tracked cache
+files. In tasks 1–5, run the focused test before production changes and
+record the assertions that failed. Run it again for green.
 
-- [ ] `python -m pytest -q tests/test_generation_models.py -k "catalogue or ranking"`.
-  RED — no account-scoped catalogue/refresh or compatible ranking. GREEN —
-  menu list data, TTL and isolation, stale/missing preference, outage vs empty,
-  deterministic rank, unsupported capabilities and unsafe tiers.
-- [ ] `python -m pytest -q tests/test_generation_models.py -k "retry or budget or cancel"`.
-  RED — typed 404 has no safe same-provider retry. GREEN — refresh excludes
-  the failing model, retries under the explicit cap, actual status and
-  evidence are exact, and auth/unrelated 404, strict pin, partial stream,
-  oversized request and cancellation stop without a second dispatch.
-- [ ] `python -m pytest -q tests/test_generation_entrypoints.py`.
-  RED — maintained callers hardcode, switch providers, or depend on network
-  in offline mode. GREEN — fake Groq reports the owner-observed 404, a
-  compatible same-class model answers in Qt, Streamlit and both CLI entry
-  paths, and an offline test denies sockets and cloud/embedding/TTS calls.
-  Run maintained path functions with AST extraction or controlled dependencies
-  as needed to avoid live Chroma/telemetry imports.
-- [ ] Run `python -m pytest -q tests`, compile touched Python files with
-  `python -m py_compile`, run `python scripts/validate_issue_ledger.py --repo sriharshaguthikonda/easy-local-rag`,
-  `git diff --check` and a redacted range scan. Compare to the frozen #38
-  baseline and name any failures. Zero additional failures required.
+```powershell
+& $ragPython -m pytest tests/test_generation_models.py -q
+& $ragPython -m pytest tests/test_offline_search.py tests/test_generation_qt.py -q
+& $ragPython -m pytest tests/test_generation_streamlit.py tests/test_streamlit_citations_config.py -q
+& $ragPython -m pytest tests/test_generation_cli.py -q
+& $ragPython -m pytest tests -q
+& $ragPython -m py_compile generation_models.py offline_search.py GUI_models.py GUI_settings.py rag_gui.py GUI_chat.py GUI_workers.py GUI_context.py GUI_direct_search.py streamlit_app.py groq_lama_chromadb_RAG_ETTS.py streamlit_groq_lama_chromadb_RAG_ETTS.py tests/test_generation_models.py tests/test_offline_search.py tests/test_generation_qt.py tests/test_generation_streamlit.py tests/test_generation_cli.py tests/test_streamlit_citations_config.py
+& $ragPython scripts/validate_issue_ledger.py --repo sriharshaguthikonda/easy-local-rag
+git diff --check "$activationSha..HEAD"
+gitleaks git --redact=100 --no-banner --log-opts="$activationSha..HEAD" .
+```
+
+Resolve `$activationSha` to the exact merged activation SHA before
+execution. No additional test failures are allowed. The frozen GUI tip
+failed four mocks in `test_rag_gui_comprehensive.py` covering
+`test_on_error_re_enables_buttons`,
+`test_on_response_complete_re_enables_buttons`,
+`test_on_response_complete_cleans_up_worker`, and
+`test_on_search_results_populates_table`. It also failed the stale
+`test_validate_issue_ledger.py` snapshot. The planning change refreshes
+the snapshot for the #38 closure and #44 addition (20 ledger tests pass).
 
 ## Review, merge and rollback
 
