@@ -27,6 +27,14 @@ _CAPABILITIES = frozenset(
     {"stream", "tools", "json_object", "json_schema", "reasoning_off"}
 )
 _CLASSES = frozenset({"chat", "reasoning"})
+_TASK_MODES = {
+    "answer": "chat",
+    "chat": "chat",
+    "plain": "chat",
+    "reasoning": "reasoning",
+    "think": "reasoning",
+    "thinking": "reasoning",
+}
 _MODEL_UNAVAILABLE_CODES = frozenset(
     {
         "model_not_found",
@@ -255,12 +263,12 @@ def _context_from_metadata(*values: Any) -> int | None:
     limits = []
     for value in values:
         for metadata in (value, _value(value, "model_info"), _value(value, "modelinfo")):
-            reported = [_as_int(_value(metadata, key)) for key in keys]
+            reported = [_value(metadata, key) for key in keys]
             reported.extend(
-                _as_int(item) for key, item in _mapping(metadata).items()
+                item for key, item in _mapping(metadata).items()
                 if str(key).lower().replace("/", ".").endswith(".context_length")
             )
-            limits.extend(limit for limit in reported if limit > 0)
+            limits.extend(_as_int(item) for item in reported if item is not None)
     return min(limits, default=None)
 
 
@@ -312,8 +320,8 @@ def _configured_profiles(provider: str) -> dict[str, dict[str, Any]]:
 
 
 def _profile_limit(configured, reported, default: int | None) -> int | None:
-    limits = (_as_int(configured), _as_int(reported))
-    return min((limit for limit in limits if limit > 0), default=default)
+    limits = [_as_int(value) for value in (configured, reported) if value is not None]
+    return min(limits, default=default)
 
 
 def _profile_from_config(
@@ -335,6 +343,8 @@ def _profile_from_config(
     row_caps = list(capabilities if capabilities is not None else row.get("capabilities", ["stream"]))
     if not row_classes:
         row_classes = ["chat"]
+    context_limit = _profile_limit(row.get("context_tokens"), context_tokens, 4096)
+    output_limit = _profile_limit(row.get("output_tokens"), output_tokens, 1024)
     return GenerationProfile(
         id=model,
         provider=provider,
@@ -343,12 +353,12 @@ def _profile_from_config(
         tier=str(row.get("tier", "local" if provider == "ollama" else "on_demand")),
         input_usd_per_mtok=row.get("input_usd_per_mtok", 0.0),
         output_usd_per_mtok=row.get("output_usd_per_mtok", 0.0),
-        context_tokens=_profile_limit(row.get("context_tokens"), context_tokens, 4096),
-        output_tokens=_profile_limit(row.get("output_tokens"), output_tokens, 1024),
+        context_tokens=context_limit,
+        output_tokens=output_limit,
         priority=_as_int(row.get("priority"), 1000),
         capabilities=sorted(set(str(value) for value in row_caps if str(value) in _CAPABILITIES)),
         profiled=profiled,
-        available=True,
+        available=context_limit > 0 and output_limit > 0,
         remote=remote,
         status=status,
         metadata=dict(metadata or {}),
@@ -554,10 +564,7 @@ def _policy_options(
     reasoning = options.get("reasoning")
     if reasoning is True or options.get("reasoning_effort") not in (None, "", "none", "off", False):
         task_class = "reasoning"
-    if mode in {"reasoning", "think", "thinking"}:
-        task_class = "reasoning"
-    elif mode in {"answer", "chat", "plain"}:
-        task_class = "chat"
+    task_class = _TASK_MODES.get(mode, task_class)
     options["_task_class"] = task_class
     options["_reasoning_disabled"] = reasoning is False or options.get("reasoning_off") is True
     required = set(str(value) for value in _as_sequence(options.get("required_capabilities", [])))
@@ -859,11 +866,14 @@ class _GenerationRouter:
         requested_provider = provider_options.get("provider")
         if requested_provider is not None and str(requested_provider).lower() != self.provider:
             raise GenerationError("provider_policy", "provider switch is not permitted", provider=self.provider)
-        requested_mode = str(provider_options.get("mode", "") or "").lower()
+        requested_mode = provider_options.get("mode")
         expected_mode = "local" if self.provider == "ollama" else "cloud"
-        if requested_mode in {"offline", "offline-search", "local", "local-chat", "cloud", "cloud-chat"}:
-            if requested_mode not in {expected_mode, f"{expected_mode}-chat"}:
-                raise GenerationError("provider_policy", "provider is unavailable in the selected mode", provider=self.provider)
+        allowed_modes = {expected_mode, f"{expected_mode}-chat", *_TASK_MODES}
+        if requested_mode is not None and str(requested_mode).lower() not in allowed_modes:
+            raise GenerationError(
+                "provider_policy", "provider is unavailable in the selected mode",
+                provider=self.provider,
+            )
         if self.provider == "groq" and provider_options.get("n") not in (None, 1):
             raise GenerationError("invalid_request", "generation requires one response per request", provider=self.provider)
         requested_service_tier = provider_options.get("service_tier")
@@ -1313,7 +1323,7 @@ class OllamaRouter(_GenerationRouter):
                     profiled=False,
                     classes=classes,
                     capabilities=caps,
-                    context_tokens=context or 4096,
+                    context_tokens=context,
                     output_tokens=1024,
                 )
             else:
