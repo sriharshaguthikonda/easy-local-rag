@@ -50,7 +50,7 @@ unresolved placeholder, implementer choice, or speculative dependency.
 
 | Issue | State | Packet / next gate |
 |---|---|---|
-| #2 | awaiting GitHub Support | Source containment and recurrence scanning are in place. The owner confirmed rotating the exposed keys. The 41 rewritten public branch heads scan clean, and 24 read-only PR refs still reach affected commits. |
+| #2 | blocked-awaiting-user | Source containment and recurrence scanning are in place. The owner confirmed rotating the exposed keys. The 41 rewritten public branch heads scan clean, and 24 read-only PR refs still reach affected commits. |
 | #9 | closed | Completed through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`; [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) is closed. |
 | #15 | closed | Completed through [PR #36](https://github.com/sriharshaguthikonda/easy-local-rag/pull/36), merged into the GUI branch as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205` from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`. |
 | #37 | closed | Ledger validator completed through [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41). |
