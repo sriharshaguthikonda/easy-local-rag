@@ -1,6 +1,6 @@
 # Issue #44 — Model discovery and same-class fallback
 
-**Status:** Planning — owner-approved independent P0 scope. Activation requires the separate ledger PR.
+**Status:** Active — owner-approved independent P0 scope.
 **GitHub:** [#44](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44).
 **Packet:** [Implementation and verification](../superpowers/plans/2026-11-24-issue-044-model-discovery-and-fallback-implementation.md).
 **Ledger:** [Required execution order](README.md#required-execution-order).
