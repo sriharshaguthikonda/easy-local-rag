@@ -29,6 +29,11 @@ retirement → `#26` repo cleanup. **Track B is gated on #2** and has not starte
 
 ## Status
 
+[Issue #44](issues/ISSUE-044-model-discovery-and-fallback.md) is next by
+owner decision on 2026-11-24. Its independently approved P0 scope fixes
+model discovery and same-class fallback in the maintained app. #2 and
+Track B retain their gates.
+
 | # | Title | Track | Status |
 |---|---|---|---|
 | 2 | Rotate/remove hardcoded Groq keys | A | **blocked — needs the maintainer.** Code paths clean; git history still contains keys. Rotation and history remediation are human actions. Gates all of Track B. |
