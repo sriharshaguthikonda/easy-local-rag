@@ -41,6 +41,10 @@ repair for catalogue discovery and same-provider, same-class retry. #22A
 consumes its verified contract and profile schema when pinning the provider
 interface. The existing #22 integration dependencies apply.
 
+- Producer commit `695cfe73554318717437f67bb77d3d3a91c056f1`. The routing API exposes `groq_router` and `ollama_router`, with `catalogue(refresh=...)` returning a list of `GenerationProfile` records and `generate(...)` returning `GenerationResult`. The result carries `preferred_model`, `actual_model`, `provider`, `reason`, and `attempted_models`. [Pinned routing API](https://github.com/sriharshaguthikonda/easy-local-rag/blob/695cfe73554318717437f67bb77d3d3a91c056f1/generation_models.py).
+- Caps, task classes and price ceilings use [profile schema v1](https://github.com/sriharshaguthikonda/easy-local-rag/blob/695cfe73554318717437f67bb77d3d3a91c056f1/config/generation-models.json).
+- Compatibility on the producer head ran with `python -m pytest tests/test_generation_models.py -q` and passed 42 tests. [Verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48#issuecomment-7133169363). The producer rollback is `git revert -m 1 695cfe73554318717437f67bb77d3d3a91c056f1`.
+
 ## Affected interfaces, files, and artifacts
 
 - Provider adapter interfaces and provider status consumed by #21 `status`/`doctor` and `chat`.

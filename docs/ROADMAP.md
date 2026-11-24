@@ -29,10 +29,8 @@ retirement → `#26` repo cleanup. **Track B is gated on #2** and has not starte
 
 ## Status
 
-[Issue #44](issues/ISSUE-044-model-discovery-and-fallback.md) is next by
-owner decision on 2026-11-24. Its independently approved P0 scope fixes
-model discovery and same-class fallback in the maintained app. #2 and
-Track B retain their gates.
+Model discovery and same-class fallback shipped on the GUI lineage through
+[PR #48](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48). The [#44 closure](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44#issuecomment-7133201382) records network-free verification. #2 and Track B retain their gates.
 
 | # | Title | Track | Status |
 |---|---|---|---|
@@ -53,6 +51,7 @@ Track B retain their gates.
 | 18–27 | Consolidation packets | B | queued behind #2 |
 | 37 | Ledger synchronization | A | closed (PR #41, `f87b4cf`) |
 | 38 | Streamlit evidence contract | A | closed (PR #42, Create a merge commit `068e0c8f986bf6e292d401d8d97b181815fc0593`; reviewed head `5e5e8941670f519e6447a770fe0f0d012b96cbcc`) |
+| 44 | Model discovery and same-class fallback | A | closed ([PR #48](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48), `695cfe73554318717437f67bb77d3d3a91c056f1`) |
 
 An interim [qwen3 embedding migration](proposals/qwen3-embedding-migration-implementation.md) runs
 alongside Track A. It is additive and env-reversible and does **not** pre-empt #17 — see
