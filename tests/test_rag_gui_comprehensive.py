@@ -679,8 +679,9 @@ class TestChromaDBMixin:
         assert "No collection connected" in window.stats_display._text
     
     @patch("GUI_chromadb.chromadb.PersistentClient")
-    def test_connect_chromadb_creates_client(self, mock_client_class):
-        """Verify connect_chromadb creates ChromaDB client."""
+    def test_connect_chromadb_creates_client(self, mock_client_class, monkeypatch):
+        """Verify the GUI connection is safe to reuse for offline search."""
+        monkeypatch.setenv("ANONYMIZED_TELEMETRY", "True")
         mock_client = DummyChromaClient()
         mock_client_class.return_value = mock_client
         
@@ -690,6 +691,7 @@ class TestChromaDBMixin:
         window.connect_chromadb(show_errors=False)
         
         assert window.chromadb_client is mock_client
+        assert mock_client_class.call_args.kwargs["settings"].anonymized_telemetry is False
 
 
 # =============================================================================

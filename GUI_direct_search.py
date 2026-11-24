@@ -51,7 +51,7 @@ def phrase_boost(document, rewritten):
     doc = (document or "").lower()
     return doc.count(phrase)
 
-client = chromadb.PersistentClient(path=path, settings=Settings(), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
+client = chromadb.PersistentClient(path=path, settings=Settings(anonymized_telemetry=False), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
 col = client.get_collection(col_name)
 collection_meta = getattr(col, "metadata", {}) or {}
 stored_model = collection_meta.get("embedding_model")
@@ -531,7 +531,7 @@ path = {repr(chroma_path)}
 col_name = {repr(col_name)}
 query = {repr(query)}
 emb = ollama.embeddings(model={repr(embed_model)}, prompt=query, keep_alive=-1)["embedding"]
-client = chromadb.PersistentClient(path=path, settings=Settings(), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
+client = chromadb.PersistentClient(path=path, settings=Settings(anonymized_telemetry=False), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
 col = client.get_collection(col_name)
 res = col.query(query_embeddings=[emb], n_results={int(n_results)}, include={include_literal})
 print(json.dumps(res))
