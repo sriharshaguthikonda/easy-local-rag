@@ -1,4 +1,5 @@
 import argparse
+import sys
 
 import ollama
 from groq import Groq
@@ -208,11 +209,20 @@ def process_TTS_Audio_play_queue(TTS_Audio_play_queue):
 # Queue for sentences
 TTS_Audio_play_queue = queue.Queue()
 
-# Start the worker thread
-worker_thread = threading.Thread(
-    target=process_TTS_Audio_play_queue, args=(TTS_Audio_play_queue,), daemon=True
-)
-worker_thread.start()
+# Start the audio worker only after an accepted answer needs speech.  Import,
+# offline-search and model-list paths must not create background workers.
+worker_thread = None
+
+
+def _ensure_tts_audio_worker():
+    global worker_thread
+    if worker_thread is None or not worker_thread.is_alive():
+        worker_thread = threading.Thread(
+            target=process_TTS_Audio_play_queue,
+            args=(TTS_Audio_play_queue,),
+            daemon=True,
+        )
+        worker_thread.start()
 
 
 # Function to convert text to speech using edge-tts and play using pydub with speed adjustment
@@ -308,26 +318,192 @@ def listen_for_wake_word(wake_word="hey llama"):
 """
 
 
+def _router_for(provider, router=None, router_factory=None):
+    """Return one provider-scoped router without constructing the other SDK."""
+    if router is not None:
+        return router
+    if router_factory is not None:
+        try:
+            return router_factory(provider)
+        except TypeError:
+            return router_factory()
+    from generation_models import groq_router, ollama_router
+
+    if provider == "groq":
+        return groq_router()
+    if provider == "ollama":
+        return ollama_router()
+    raise ValueError(f"Unsupported generation provider: {provider}")
+
+
+_rewrite_router = None
+
+
+def _router_for_rewrite(router=None):
+    """Reuse one standalone Groq rewrite router for this process/session."""
+    global _rewrite_router
+    if router is not None:
+        return router
+    if _rewrite_router is None:
+        _rewrite_router = _router_for("groq")
+    return _rewrite_router
+
+
+def _result_value(result, name, default=None):
+    if isinstance(result, dict):
+        return result.get(name, default)
+    return getattr(result, name, default)
+
+
+def _retrieval_for_generation(user_input, provider, router=None):
+    options = {"top_k": 5, "rewrite": provider != "ollama"}
+    if router is not None and provider == "groq":
+        options["router"] = router
+    try:
+        return get_relevant_context_hybrid(user_input, **options)
+    except TypeError as error:
+        # Preserve compatibility with injected retrieval callables from older
+        # callers that do not yet expose the keyword-only rewrite switch.
+        if "rewrite" not in str(error):
+            raise
+        options.pop("rewrite")
+        options.pop("router", None)
+        return get_relevant_context_hybrid(user_input, **options)
+
+
+def _accepted_speech(text):
+    if not text or globals().get("dont_read_tts", False):
+        return
+    _ensure_tts_audio_worker()
+    speech_queue = queue.Queue()
+    speech_worker = threading.Thread(
+        target=process_TTS_queue, args=(speech_queue,), daemon=True
+    )
+    speech_worker.start()
+    speech_queue.put(text)
+    speech_queue.put(None)
+
+
+def _generate_chat_result(
+    user_input,
+    system_message,
+    model_name,
+    conversation_history,
+    *,
+    provider,
+    router=None,
+    strict=False,
+    cancelled=None,
+    on_chunk=None,
+    **provider_options,
+):
+    retrieved = _retrieval_for_generation(user_input, provider, router=router)
+    if isinstance(retrieved, tuple):
+        relevant_context = retrieved[0]
+    else:
+        relevant_context = retrieved or ""
+    user_content = (
+        f"{relevant_context}\n\n{user_input}" if relevant_context else user_input
+    )
+    messages = [
+        {"role": "system", "content": system_message},
+        *conversation_history,
+        {"role": "user", "content": user_content},
+    ]
+
+    emitted = []
+
+    def emit(chunk):
+        if not chunk:
+            return
+        chunk = str(chunk)
+        emitted.append(chunk)
+        if on_chunk is None:
+            print(NEON_GREEN + chunk, end="", flush=True)
+        if on_chunk is not None:
+            on_chunk(chunk)
+
+    selected_router = _router_for(provider, router=router)
+    result = selected_router.generate(
+        preferred=model_name,
+        messages=messages,
+        strict=strict,
+        stream=True,
+        max_output_tokens=provider_options.pop("max_output_tokens", 1024),
+        cancelled=cancelled,
+        on_chunk=emit,
+        **provider_options,
+    )
+    text = _result_value(result, "text", "") or "".join(emitted)
+    if text and not _result_value(result, "text", None):
+        try:
+            result.text = text
+        except Exception:
+            pass
+    conversation_history.append({"role": "user", "content": user_content})
+    conversation_history.append({"role": "assistant", "content": text})
+    _accepted_speech(text)
+    if text and on_chunk is None:
+        print(RESET_COLOR + "\n")
+    return result
+
+
+def generate_answer(
+    user_input,
+    system_message,
+    model_name,
+    conversation_history,
+    *,
+    provider="groq",
+    router=None,
+    strict=False,
+    cancelled=None,
+    on_chunk=None,
+    **provider_options,
+):
+    """Pure generation boundary used by the legacy CLI and tests."""
+    return _generate_chat_result(
+        user_input,
+        system_message,
+        model_name,
+        conversation_history,
+        provider=provider,
+        router=router,
+        strict=strict,
+        cancelled=cancelled,
+        on_chunk=on_chunk,
+        **provider_options,
+    )
+
 def chat_with_model(
     user_input,
     system_message,
     groq_model,
     ollama_model,
     conversation_history,
+    *,
+    provider="groq",
+    router=None,
+    strict=False,
+    cancelled=None,
+    on_chunk=None,
+    return_result=False,
+    **provider_options,
 ):
-    try:
-        response = groq_chat(
-            user_input, system_message, groq_model, conversation_history
-        )
-    except Exception as e:
-        if "Groq API limit reached" in str(e):
-            response = ollama_chat(
-                user_input, system_message, ollama_model, conversation_history
-            )
-        else:
-            raise e
-
-    return response
+    model_name = groq_model if provider == "groq" else ollama_model
+    result = generate_answer(
+        user_input,
+        system_message,
+        model_name,
+        conversation_history,
+        provider=provider,
+        router=router,
+        strict=strict,
+        cancelled=cancelled,
+        on_chunk=on_chunk,
+        **provider_options,
+    )
+    return result if return_result else _result_value(result, "text", "")
 
 
 """
@@ -347,61 +523,29 @@ def ollama_chat(
     system_message,
     ollama_model,
     conversation_history,
+    *,
+    router=None,
+    strict=False,
+    cancelled=None,
+    on_chunk=None,
+    **provider_options,
 ):
-    global just_query_file_search
-    # Get relevant context from Milvus
-    relevant_context = get_relevant_context_hybrid(user_input, top_k=5)
-
-    # Prepare the user's input by concatenating it with the relevant context
-    if relevant_context:
-        user_input_with_context = relevant_context + "\n\n" + user_input
-    else:
-        user_input_with_context = user_input
-
-    # Append the user's input to the conversation history
-    conversation_history.append({"role": "user", "content": user_input_with_context})
-
-    # Create a message history including the system message and the conversation history
-    messages = [{"role": "system", "content": system_message}, *conversation_history]
-
-    if just_query_file_search is False:
-        just_query_file_search = True
-
-        # Send the completion request to the Ollama model with stream=True
-        stream = ollama.chat(
-            model=ollama_model,
-            messages=messages,
-            stream=True,
-            keep_alive=-1,
-        )
-
-        # Queue for sentences
-        TTS_queue = queue.Queue()
-
-        # Start the worker thread
-        worker_thread = threading.Thread(
-            target=process_TTS_queue, args=(TTS_queue,), daemon=True
-        )
-        worker_thread.start()
-
-        response = ""
-        for chunk in stream:
-            print(NEON_GREEN + chunk["message"]["content"], end="", flush=True)
-            chunk_text = chunk["message"]["content"]
-            response = f"{response}{chunk_text}"
-
-            if any(delimiter in response for delimiter in ".;,!?"):
-                response = response[1:]  # Remove the first character
-                sentence, response = split_sentence(response)
-                TTS_queue.put(sentence)
-
-        # Print the response
-        print(RESET_COLOR + "\n")
-
-    else:
-        pass
-
-    return response
+    return _result_value(
+        generate_answer(
+            user_input,
+            system_message,
+            ollama_model,
+            conversation_history,
+            provider="ollama",
+            router=router,
+            strict=strict,
+            cancelled=cancelled,
+            on_chunk=on_chunk,
+            **provider_options,
+        ),
+        "text",
+        "",
+    )
 
 
 """
@@ -420,10 +564,9 @@ load_dotenv()
 # Retrieve API key from environment variables
 api_key = os.getenv("GROQ_API_KEY")
 
-# Initialize Groq client
-client = Groq(
-    api_key=api_key,
-)
+# Provider clients are owned by generation_models and created only after CLI
+# mode/provider selection.  Keep the name for compatibility with old callers.
+client = None
 
 
 def groq_chat(
@@ -431,120 +574,29 @@ def groq_chat(
     system_message,
     groq_model,
     conversation_history,
+    *,
+    router=None,
+    strict=False,
+    cancelled=None,
+    on_chunk=None,
+    **provider_options,
 ):
-    global just_query_file_search
-    response = ""
-
-    # Get relevant context from Milvus
-    relevant_context = get_relevant_context_hybrid(user_input, top_k=5)
-
-    # Prepare the user's input by concatenating it with the relevant context
-    if relevant_context:
-        user_input_with_context = relevant_context + "\n\n" + user_input
-    else:
-        user_input_with_context = user_input
-
-    # Append the user's input to the conversation history
-    conversation_history.append({"role": "user", "content": user_input_with_context})
-
-    # Create a message history including the system message and the conversation history
-    messages = [
-        {"role": "system", "content": system_message},
-        *conversation_history,
-        {"role": "user", "content": user_input},
-    ]
-
-    # Step 1: Calculate total tokens and adjust dynamically
-    max_tpm = 6000  # Token per minute limit
-    input_tokens = count_tokens(messages, groq_model)
-
-    # Ensure total tokens (input + response) stay within the TPM limit
-    available_tokens_for_response = max(max_tpm - input_tokens, 0)
-    max_response_tokens = min(6000, available_tokens_for_response)
-
-    if input_tokens > max_tpm:
-        # Step 2: Trim conversation history and user input
-        while input_tokens > max_tpm:
-            if conversation_history:
-                # Remove the oldest non-system message from conversation history
-                for i, msg in enumerate(conversation_history):
-                    if msg["role"] != "system":
-                        del conversation_history[i]
-                        break
-            else:
-                # Truncate user input if no more history can be removed
-                user_input = user_input[
-                    : len(user_input) - 20
-                ]  # Remove in chunks of 20 characters
-                messages[-1] = {"role": "user", "content": user_input}
-
-            # Recalculate total tokens
-            messages = [
-                {"role": "system", "content": system_message},
-                *conversation_history,
-                {"role": "user", "content": user_input},
-            ]
-            input_tokens = count_tokens(messages, groq_model)
-
-        # Update available tokens for response after adjustments
-        available_tokens_for_response = max(max_tpm - input_tokens, 0)
-        max_response_tokens = min(6000, available_tokens_for_response)
-
-    # Step 3: Send the request
-    if just_query_file_search is False:
-        just_query_file_search = True
-
-        try:
-            stream = client.chat.completions.create(
-                # Required parameters
-                messages=messages,
-                model=groq_model,
-                temperature=1,
-                max_tokens=max_response_tokens,  # Dynamically adjusted
-                top_p=1,
-                stop="",
-                stream=True,
-            )
-            # Queue for sentences
-            TTS_queue = queue.Queue()
-
-            # Start the worker thread
-            worker_thread = threading.Thread(
-                target=process_TTS_queue, args=(TTS_queue,), daemon=True
-            )
-            worker_thread.start()
-
-            response = ""
-            print(NEON_GREEN)
-            for chunk in stream:
-                print(chunk.choices[0].delta.content, end="")
-                chunk_text = chunk.choices[0].delta.content
-                response = f"{response}{chunk_text}"
-
-                if any(delimiter in response for delimiter in ".:!?"):
-                    response = response[1:]  # Remove the first character
-                    sentence, response = split_sentence(response)
-                    TTS_queue.put(sentence)
-            # Process the stream here
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            # Handle the error or perform any necessary cleanup
-            # You can also log the error or take other actions as needed
-
-        # Print the response
-        print(RESET_COLOR + "\n")
-
-    # Append the assistant's response to the conversation history
-    conversation_history.append({"role": "assistant", "content": response})
-
-    # Step 4: Trim conversation history for the next cycle if needed
-    while count_tokens(conversation_history, groq_model) > max_tpm:
-        for i, msg in enumerate(conversation_history):
-            if msg["role"] != "system":
-                del conversation_history[i]
-                break
-
-    return response
+    return _result_value(
+        generate_answer(
+            user_input,
+            system_message,
+            groq_model,
+            conversation_history,
+            provider="groq",
+            router=router,
+            strict=strict,
+            cancelled=cancelled,
+            on_chunk=on_chunk,
+            **provider_options,
+        ),
+        "text",
+        "",
+    )
 
 
 def count_tokens(messages, model="llama-3.3-70b-versatile"):
@@ -599,73 +651,65 @@ def split_sentence(response, min_words=10):
 """
 
 
-def rewrite_input_and_generate_synonyms(original_input):
+def rewrite_input_and_generate_synonyms(original_input, *, router=None):
+    """Rewrite search text through the Groq router, falling back to raw input."""
+    system_prompt = (
+        "You are a helpful assistant working in a medical context. Your tasks are:\n"
+        "1) Rephrase the given input to make it clearer and more precise in one sentence while preserving its original meaning. It will be used for searching ChromaDB after conversion to embeddings.\n"
+        "2) Provide a list of synonyms for each keyword in the rephrased input.\n"
+        "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword.\n"
+        "4) Provide plural and singular forms for each keyword.\n"
+        "5) Provide other parts of speech forms for each keyword.\n"
+        "6) Provide closely related terms for each keyword.\n"
+        "Respond in the following JSON format:\n"
+        "{\n"
+        '  "rephrased": "[sentence]",\n'
+        '  "keywords": {\n'
+        '    "[word]": {\n'
+        '      "synonyms": ["synonym1", "synonym2"],\n'
+        '      "spelling_variants": ["variant1", "variant2"],\n'
+        '      "plural_singular": ["plural_form", "singular_form"],\n'
+        '      "parts_of_speech": ["noun form", "verb form"],\n'
+        '      "related_terms": ["related1", "related2"]\n'
+        "    }\n"
+        "  }\n"
+        "}"
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": (
+                "Rewrite and generate synonyms, spelling variants, "
+                "plural/singular forms, parts of speech, and related terms "
+                f'for: "{original_input}".'
+            ),
+        },
+    ]
     try:
-        # Define the desired JSON structure in the system prompt
-        system_prompt = (
-            "You are a helpful assistant working in a medical context. Your tasks are:\n"
-            "1) Rephrase the given input to make it clearer and more precise in one sentence while preserving its original meaning. It will be used for searching ChromaDB after conversion to embeddings.\n"
-            "2) Provide a list of synonyms for each keyword in the rephrased input.\n"
-            "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword.\n"
-            "4) Provide plural and singular forms for each keyword.\n"
-            "5) Provide other parts of speech forms for each keyword.\n"
-            "6) Provide closely related terms for each keyword.\n"
-            "Respond in the following JSON format:\n"
-            "{\n"
-            '  "rephrased": "[sentence]",\n'
-            '  "keywords": {\n'
-            '    "[word1]": {\n'
-            '      "synonyms": ["synonym1", "synonym2", "synonym3", "synonym4",....],\n'
-            '      "spelling_variants": ["variant1", "variant2", "variant3",....],\n'
-            '      "plural_singular": ["plural_form", "singular_form"],\n'
-            '      "parts_of_speech": ["noun form ", "verb form", "adjective form",....],\n'
-            '      "related_terms": ["related1", "related2", "related3",....]\n'
-            "    },\n"
-            '    "[word2]": {\n'
-            '      "synonyms": ["synonym1", "synonym2", "synonym3", "synonym4",....],\n'
-            '      "spelling_variants": ["variant1", "variant2", "variant3",....],\n'
-            '      "plural_singular": ["plural_form", "singular_form"],\n'
-            '      "parts_of_speech": ["noun form ", "verb form", "adjective form",....],\n'
-            '      "related_terms": ["related1", "related2", "related3",....]\n'
-            "    }\n"
-            "  }\n"
-            "}"
+        result = _router_for_rewrite(router).generate(
+            preferred=groq_rewrite_model,
+            messages=messages,
+            strict=False,
+            stream=False,
+            max_output_tokens=512,
+            response_format={"type": "json_object"},
         )
-
-        # Make the API call with JSON mode enabled
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": f'Rewrite and generate synonyms, spelling variants, plural/singular forms, parts of speech, and related terms for: "{original_input}".',
-                },
-            ],
-            model=groq_model,
-            temperature=0.7,
-            stream=False,  # JSON mode does not support streaming
-            response_format={"type": "json_object"},  # Enable JSON mode
-        )
-
-        pprint.pprint(chat_completion)
-
-        # Parse the JSON response
-        response_json = chat_completion.choices[0].message.content.strip()
-        response_data = json.loads(response_json)
-
-        rewritten_input = response_data.get("rephrased", "")
-        synonym_and_variant_dict = response_data.get("keywords", {})
-
-        # print("synonym_and_variant_dict :", synonym_and_variant_dict)
-        # print("rewritten_input :", rewritten_input)
-
-        return rewritten_input, synonym_and_variant_dict
-
-    except json.JSONDecodeError as e:
-        print(f"JSON decoding error: {e}")
-        return original_input, {}
-    except Exception as e:
-        print(f"An error occurred: {e}")
+        raw = _result_value(result, "text", "") or ""
+        if isinstance(raw, dict):
+            data = raw
+        else:
+            raw = str(raw).strip()
+            if raw.startswith(chr(96) * 3):
+                raw = raw.strip(chr(96))
+                if raw.startswith("json"):
+                    raw = raw[4:].strip()
+            data = json.loads(raw)
+        rewritten = data.get("rephrased") or data.get("rewritten") or original_input
+        keywords_data = data.get("keywords") or {}
+        return rewritten, keywords_data if isinstance(keywords_data, dict) else {}
+    except Exception as error:
+        print(f"Rewrite unavailable; using original query ({type(error).__name__}).")
         return original_input, {}
 
 
@@ -689,13 +733,24 @@ def get_relevant_context_hybrid(
     beta=0.3,  # Weight for keyword match
     gamma=0.2,  # Weight for BM25 score
     lambda_mmr=0.5,  # Balance parameter for MMR
+    *,
+    rewrite=True,
+    router=None,
 ):
     global keywords
     try:
         relevant_context = ""
-        rewritten_input, synonym_and_variant_dict = rewrite_input_and_generate_synonyms(
-            user_input
-        )
+        if rewrite:
+            if router is None:
+                rewritten_input, synonym_and_variant_dict = (
+                    rewrite_input_and_generate_synonyms(user_input)
+                )
+            else:
+                rewritten_input, synonym_and_variant_dict = (
+                    rewrite_input_and_generate_synonyms(user_input, router=router)
+                )
+        else:
+            rewritten_input, synonym_and_variant_dict = user_input, {}
 
         # Encode the rewritten input into an embedding
         input_embedding = ollama.embeddings(
@@ -1020,73 +1075,224 @@ def start_ollama_server():
 """
 
 
-def main():
-    global collection, conversation_history, dont_read_tts, just_query_file_search
-    # Reset conversation history
-
-    system_message = "You are a helpful assistant. You will give precise and concise answers from the given context. if the context doesnot have the answer then give it from your knowledge"
-
-    dont_read_tts = False
-    just_query_file_search = False
-
-    parser = argparse.ArgumentParser(description="Ollama Chat")
+def build_parser():
+    parser = argparse.ArgumentParser(description="Easy local RAG legacy chat")
     parser.add_argument(
-        "--model", default="phi3", help="Ollama model to use phi3 (default: llama3)"
+        "--provider",
+        choices=("groq", "ollama"),
+        default=None,
+        help="generation provider (default: groq; --model alone keeps legacy Ollama mode)",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="preferred model for the selected provider",
+    )
+    parser.add_argument(
+        "--list-models",
+        action="store_true",
+        help="list models discovered for the selected provider and exit",
+    )
+    parser.add_argument(
+        "--refresh-models",
+        action="store_true",
+        help="refresh the selected provider catalogue before use",
+    )
+    parser.add_argument(
+        "--strict-model",
+        action="store_true",
+        help="pin generation to the preferred model; do not retry another model",
+    )
+    parser.add_argument(
+        "--offline-search",
+        metavar="QUERY",
+        help="search the local persisted collection without providers or embeddings",
+    )
+    return parser
 
-    # Example conversation history
-    conversation_history = [{"role": "system", "content": "Welcome to Ollama Chat!"}]
 
-    # Start the Ollama server in a separate thread
-    ollama_thread = threading.Thread(target=check_and_start_ollama, daemon=True)
-    ollama_thread.start()
-
+def _open_legacy_collection(path=CHROMADB_PATH, name=collection_name):
     client = chromadb.PersistentClient(
-        path=CHROMADB_PATH,
-        settings=Settings(),
+        path=path,
+        settings=Settings(anonymized_telemetry=False),
         tenant=DEFAULT_TENANT,
         database=DEFAULT_DATABASE,
     )
+    return client.get_collection(name)
 
-    # Get or create the collection
-    collection = client.get_collection(collection_name)
 
-    get_relevant_context_hybrid(
-        user_input="just loading ollama embeddings model and chromadb, dont respond"
-    )
+def _safe_error_code(error, default="generation_error"):
+    code = getattr(error, "code", None)
+    if not code:
+        return default
+    return re.sub(r"[^a-z0-9_.-]+", "_", str(code).lower()).strip("_") or default
 
-    while True:
-        user_input = input(
-            "\n"
-            + RED
-            + BOLD
-            + "Enter your message (or 'exit' to quit):"
-            + "\n"
-            + RESET_COLOR
-            + "\n"
+
+def _print_model_catalogue(router, stdout, refresh=False, provider=None):
+    provider_label = provider or "selected provider"
+    try:
+        profiles = router.catalogue(refresh=refresh)
+    except Exception as error:
+        stdout.write(
+            f"Model catalogue unavailable for {provider_label}: "
+            f"{_safe_error_code(error, 'catalogue_unavailable')}\n"
         )
-        if user_input.lower() == "exit" or user_input.lower() == "quit":
+        return None
+    if not profiles:
+        stdout.write(f"No models available for {provider_label}.\n")
+        return []
+    for profile in profiles:
+        model_id = _result_value(profile, "id", _result_value(profile, "model_id", ""))
+        capabilities = _result_value(profile, "capabilities", ())
+        stdout.write(f"{model_id}\t{sorted(capabilities) if capabilities else ''}\n")
+    return profiles
+
+
+def _write_offline_results(local_collection, query, searcher, stdout):
+    try:
+        results = searcher(local_collection, query, limit=5)
+        stdout.write(json.dumps(results, default=str) + "\n")
+        return True
+    except Exception as error:
+        stdout.write(f"Offline search failed: {_safe_error_code(error, 'offline_search_failed')}\n")
+        return False
+
+def main(
+    argv=None,
+    *,
+    router_factory=None,
+    collection_opener=None,
+    searcher=None,
+    input_fn=input,
+    stdout=None,
+):
+    global collection, conversation_history, dont_read_tts, just_query_file_search
+    stdout = stdout or sys.stdout
+    args = build_parser().parse_args(argv)
+
+    if args.offline_search is not None:
+        if collection_opener is None:
+            from offline_search import open_local_collection
+
+            collection_opener = open_local_collection
+        if searcher is None:
+            from offline_search import search_documents
+
+            searcher = search_documents
+        local_collection = collection_opener(CHROMADB_PATH, collection_name)
+        return 0 if _write_offline_results(
+            local_collection, args.offline_search, searcher, stdout
+        ) else 1
+
+    # A bare --model retains the old CLI's Ollama meaning. Otherwise the
+    # default is Groq, and failures never cross provider boundaries.
+    provider = args.provider or ("ollama" if args.model else "groq")
+    model_name = args.model or (groq_model if provider == "groq" else ollama_model)
+    router = None
+
+    if args.list_models or args.refresh_models:
+        try:
+            router = _router_for(provider, router_factory=router_factory)
+        except Exception as error:
+            stdout.write(
+                f"Model catalogue unavailable for {provider}: "
+                f"{_safe_error_code(error, 'catalogue_unavailable')}\n"
+            )
+            return 1
+        profiles = _print_model_catalogue(
+            router, stdout, refresh=args.refresh_models, provider=provider
+        )
+        if profiles is None:
+            return 1
+        if args.list_models:
+            return 0
+
+    if collection_opener is None:
+        collection_opener = _open_legacy_collection
+    collection = collection_opener(CHROMADB_PATH, collection_name)
+    conversation_history = [
+        {"role": "system", "content": "Welcome to Easy Local RAG."}
+    ]
+    dont_read_tts = False
+    just_query_file_search = False
+    if router is None:
+        try:
+            router = _router_for(provider, router_factory=router_factory)
+        except Exception as error:
+            stdout.write(f"Generation failed: {_safe_error_code(error)}\n")
+            return 1
+
+    system_message = (
+        "You are a helpful assistant. Give precise, concise answers from the "
+        "provided context."
+    )
+    while True:
+        try:
+            user_input = input_fn(
+                "Enter your message (or 'exit' to quit): "
+            )
+        except (EOFError, KeyboardInterrupt):
+            stdout.write("\n")
+            break
+        if user_input is None:
+            break
+        if user_input.strip().lower() in {"exit", "quit"}:
             break
 
-        # Strip out the extra "ssss" and "qqqq" from the user input
-        stripped_input = re.sub(r"s{4,}", "", user_input.lower())
-        stripped_input = re.sub(r"q{4,}", "", stripped_input)
-        stripped_input = stripped_input.strip()
+        stripped_input = re.sub(r"s{4,}", "", user_input, flags=re.IGNORECASE)
+        stripped_input = re.sub(r"q{4,}", "", stripped_input, flags=re.IGNORECASE).strip()
+        lowered_input = user_input.lower()
+        dont_read_tts = bool(re.search(r"s{4,}", lowered_input))
+        just_query_file_search = bool(re.search(r"q{4,}", lowered_input))
+        if not stripped_input:
+            continue
 
-        # Check and set flags
-        dont_read_tts = bool(re.search(r"s{4,}", user_input.lower()))
-        just_query_file_search = bool(re.search(r"q{4,}", user_input.lower()))
+        if just_query_file_search:
+            if searcher is None:
+                from offline_search import search_documents
 
-        # Interact with the Ollama model
-        if stripped_input:
-            chat_with_model(
+                searcher = search_documents
+            _write_offline_results(collection, stripped_input, searcher, stdout)
+            continue
+
+        try:
+            streamed = []
+
+            def emit_chunk(chunk):
+                streamed.append(str(chunk))
+                stdout.write(str(chunk))
+                stdout.flush()
+
+            result = generate_answer(
                 stripped_input,
                 system_message,
-                groq_model,
-                ollama_model,
-                conversation_history=conversation_history,
+                model_name,
+                conversation_history,
+                provider=provider,
+                router=router,
+                strict=args.strict_model,
+                on_chunk=emit_chunk,
             )
+            stdout.write(
+                "provider="
+                f"{provider} "
+                "preferred_model="
+                f"{_result_value(result, 'preferred_model', model_name)} "
+                "actual_model="
+                f"{_result_value(result, 'actual_model', model_name)} "
+                "reason="
+                f"{_result_value(result, 'reason', '') or 'none'}\n"
+            )
+            if streamed:
+                stdout.write("\n")
+            else:
+                stdout.write(f"{_result_value(result, 'text', '')}\n")
+        except KeyboardInterrupt:
+            stdout.write("\nGeneration cancelled.\n")
+            break
+        except Exception as error:
+            stdout.write(f"Generation failed: {_safe_error_code(error)}\n")
+    return 0
 
         # print("stripped_input :", stripped_input)
 

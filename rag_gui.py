@@ -222,7 +222,9 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         
         # Refresh models button
         refresh_models_btn = QPushButton("Refresh Groq Models")
-        refresh_models_btn.clicked.connect(self.load_groq_models)
+        refresh_models_btn.clicked.connect(
+            lambda _checked=False: self.load_groq_models(refresh=True)
+        )
         models_layout.addRow("", refresh_models_btn)
         
         self.ollama_model_combo = QComboBox()
@@ -231,8 +233,31 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         
         # Refresh Ollama models button
         refresh_ollama_btn = QPushButton("Refresh Ollama Models")
-        refresh_ollama_btn.clicked.connect(self.load_ollama_models)
+        refresh_ollama_btn.clicked.connect(
+            lambda _checked=False: self.load_ollama_models(refresh=True)
+        )
         models_layout.addRow("", refresh_ollama_btn)
+
+        # Generation provider is explicit: its model menu and router stay in
+        # the same provider scope, so a stale Groq preference cannot trigger a
+        # silent Ollama switch.
+        self.generation_provider_combo = QComboBox()
+        self.generation_provider_combo.addItems(["groq", "ollama"])
+        self.generation_provider_combo.setCurrentText(
+            self.settings.get("generation_provider", "groq")
+        )
+        self.generation_provider_combo.currentTextChanged.connect(
+            self.on_generation_provider_changed
+        )
+        models_layout.addRow("Generation Provider:", self.generation_provider_combo)
+
+        self.strict_generation_model_checkbox = QCheckBox(
+            "Strict model pin (disable same-provider fallback)"
+        )
+        self.strict_generation_model_checkbox.setChecked(
+            bool(self.settings.get("strict_generation_model", False))
+        )
+        models_layout.addRow("", self.strict_generation_model_checkbox)
         
         models_group.setLayout(models_layout)
         layout.addWidget(models_group)
@@ -552,6 +577,11 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         GUI_settings.load_settings(self, self.settings)
         self.enter_to_send_checkbox.setChecked(self.settings.get("enter_to_send", False))
         self.update_chat_input_placeholder()
+        # Discovery is scoped to the selected provider.  A failure leaves the
+        # saved id visible and is reported distinctly by ModelLoadingMixin.
+        self.load_generation_models(
+            provider=self.settings.get("generation_provider", "groq")
+        )
     
     
     # =========================================================================
@@ -626,8 +656,9 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
 
         # Stop and wait for chat worker
         if self.chat_worker and self.chat_worker.isRunning():
-            print("[closeEvent] Terminating ChatWorker")
-            self.chat_worker.terminate()
+            print("[closeEvent] Cancelling ChatWorker cooperatively")
+            if hasattr(self.chat_worker, "request_cancel"):
+                self.chat_worker.request_cancel()
             self.chat_worker.wait(2000)
         
         # Wait for TTS workers
@@ -643,7 +674,8 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         
     def stop_generation(self):
         if self.chat_worker and self.chat_worker.isRunning():
-            self.chat_worker.terminate()
+            if hasattr(self.chat_worker, "request_cancel"):
+                self.chat_worker.request_cancel()
             self.chat_worker.wait()
             self.on_response_complete("")
             self.append_message("System", "Generation stopped.", "#F39C12")
