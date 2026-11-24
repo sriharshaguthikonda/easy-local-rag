@@ -141,6 +141,30 @@ Operator artifacts:
 9. Remove Chroma from core dependencies and prove a clean clone/install.
 10. Record final repository size, tracked files and retained rollback artifacts.
 
+## 2026-11-25 execution record
+
+The owner approved #26B after completion of the inventory and hygiene gates.
+The [branch inventory](../plans/branch-inventory.md) is supplemented by a
+private ref-level manifest containing 39 public heads, 22 PR head refs, and
+43 local heads including the two hygiene worktree heads. It records exact
+tips, ancestry against both maintained branches, and dispositions.
+Its SHA-256 is
+`60e138a515ed73579ccb64dd3a0e601b21eeee652326b4a3a34e6515c8e42f44`.
+The local and public scans reported the same 12 revoked Groq key findings.
+GitHub listed zero open PRs and zero forks at the inventory snapshot.
+
+The #26A hygiene changes apply to both maintained branches. The tracked-file
+check caught generated artifacts before the change. Untracking preserves the
+on-disk copies, and the existing secret scan enforces the incoming history
+and tracked checkout. The two hygiene test suites passed after the changes.
+
+Refresh the ref manifest after both hygiene merges. Verify an access-controlled
+recovery bundle and the rewritten mirror before atomically replacing the
+affected public heads and tags with explicit leases. Operators must use fresh
+clones after the ref replacement and keep any unpublished work in their old
+clones offline. Record the resulting refs and any GitHub Support disposition
+here before closing #2.
+
 ## Verification
 
 ### Early phase verification
