@@ -1,0 +1,18 @@
+# Scan tracked files or an isolated checkout. Keep history reports outside the repository.
+title = "easy-local-rag secret scan"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "groq-api-key"
+description = "Groq API key"
+regex = '''gsk_[A-Za-z0-9_-]{20,}'''
+keywords = ["gsk_"]
+
+# Public method name in vis-network 9.1.2 triggers the generic rule.
+[[allowlists]]
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|[\\/])lib[\\/]vis-9\.1\.2[\\/]vis-network\.min\.js$''']
+regexes = ['''^_getDistanceToBezierEdge2$''']

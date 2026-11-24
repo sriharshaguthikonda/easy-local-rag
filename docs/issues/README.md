@@ -41,8 +41,8 @@ Each packet names one canonical issue/slice and its canonical plan links to it
 once created; this ledger tracks its state. The only states are `queued`,
 `planning`, `active`, `review`, `blocked-awaiting-user`, and `closed`. At most
 one issue may be `active`: an activated issue is the declared sole active
-issue, while stable between-issues/after-closure states may have zero. A
-blocked-awaiting-user #2 parks #2. #38 completed its independent P0 scope.
+issue, while stable between-issues/after-closure states may have zero.
+#38 completed its independent P0 scope. #2 remains open for #26B.
 On 2026-11-24 the owner approved #44 as the sole new P0 implementation
 exception, with network-free verification. Its separate activation merge
 precedes implementation. #2, credentialed testing, history remediation and
@@ -59,13 +59,13 @@ unresolved placeholder, implementer choice, or speculative dependency.
 
 | Issue | State | Packet / next gate |
 |---|---|---|
-| #2 | blocked-awaiting-user | Await user rotation evidence; no containment closure is inferred from docs. |
+| #2 | queued | Source containment and recurrence scanning are in place. The owner previously confirmed rotating the exposed keys. Shared-history remediation under #26B is pending. |
 | #9 | closed | Completed through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`; [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) is closed. |
 | #15 | closed | Completed through [PR #36](https://github.com/sriharshaguthikonda/easy-local-rag/pull/36), merged into the GUI branch as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205` from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`. |
 | #37 | closed | Completed through [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41), merged as `f87b4cf`; [Issue #37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) closed 2026-07-26. Validator ships at `scripts/validate_issue_ledger.py`. |
 | #38 | closed | Completed through [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42), merged with Create a merge commit as `068e0c8f986bf6e292d401d8d97b181815fc0593` from reviewed head `5e5e8941670f519e6447a770fe0f0d012b96cbcc`; [review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155438619), [verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42#issuecomment-5155439139), and [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38#issuecomment-5155449007). Focused 19 passed; full 175 passed / 4 accepted frozen GUI failures; compile/fallback grep/ledger/lineage/diff gates passed. #2 remains blocked and #38 does not advance #2/#18/#26. |
 | #44 | closed | Completed through [PR #48](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48) at merge `695cfe73554318717437f67bb77d3d3a91c056f1`. [Review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48#issuecomment-7133158071), [verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48#issuecomment-7133169363), and [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44#issuecomment-7133201382). The full offline suite passed 249 tests. |
-| Active issue | none | #44 is complete. #2 remains blocked. |
+| Active issue | none | #44 is complete. #2 awaits #26B. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
@@ -79,7 +79,7 @@ invariant, closure gate, approval, or rollback constraint.
 
 | Gate producer | Pinned SHA / schema | Required evidence | Consumer | State |
 |---|---|---|---|---|
-| #2A containment | Not yet produced | revocation, active-tree scan, missing-key behavior | #18 | Not passed; docs are not proof. |
+| #2A containment | Produced 2026-11-24 | Owner-reported rotation, clean tracked-tree scan and verified missing-key behavior | #18 | Passed for the maintained branch tips. #2 stays open for #26B. |
 | #18 inventory/proposed disposition | Not yet produced | immutable ref manifest, redacted scan, proposed dispositions | #26A/#26B, #19A | Not passed; docs are not proof. |
 | #26B separately approved rewrite | Not yet produced | all-ref post-rewrite evidence or documented, explicitly accepted immutable-ref residual outcome | #2 closure, #19A | Not passed; docs are not proof. |
 | #19A audit / #19B export | Not yet produced | frozen snapshot, manifest, checksums, read-only proof | #20A, #25 | Not passed; docs are not proof. |
@@ -139,7 +139,7 @@ approval, rollback, or scope means a separate packet.
 
 | Issue | Priority and type | Status | Canonical plan | Dependencies and sequence | GitHub |
 |---|---|---|---|---|---|
-| #2 | P0 security | Open — immediate containment blocker | [Rotate Groq keys](ISSUE-002-rotate-groq-keys.md) | Containment/rotation unlocks #18; early #26B alone rewrites history; #2 closes on its post-rewrite evidence before #19. | [Issue #2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2) |
+| #2 | P0 security | Open — awaiting #26B history remediation | [Rotate Groq keys](ISSUE-002-rotate-groq-keys.md) | Containment/rotation unlocks #18; early #26B alone rewrites history; #2 closes on its post-rewrite evidence before #19. | [Issue #2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2) |
 | #5 | P1 security | Open — partial implementation | [Prompt-injection defense](ISSUE-005-prompt-injection.md) | Retained safety requirement; its structured validation continues in #27. | [Issue #5](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5) |
 | #6 | P0 bug | **Closed — completed through PR #29 at GUI merge `daecce8a27f50da39284f5519d77b835905209f6`** | [MMR embedding fix](ISSUE-006-mmr-embedding-keyerror.md) | Fix commit `de7465902e00e363993f9ea9eb2190ce940e1bed`; preserve #11's embedding contract. | [Issue #6](https://github.com/sriharshaguthikonda/easy-local-rag/issues/6) |
 | #7 | P1 bug | Open — partial implementation | [Lazy Chroma initialization](ISSUE-007-lazy-chromadb-init.md) | Depends on #11 creation metadata; required only while the Chroma path remains supported. | [Issue #7](https://github.com/sriharshaguthikonda/easy-local-rag/issues/7) |
