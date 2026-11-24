@@ -2,7 +2,8 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** Open; early preservation/security gate.
+**Status:** REVIEW — Aug 2 inventory evidence is historical; public refs were
+reverified 2026-11-24; GitHub issue remains open pending current local-ref evidence and closure.
 **GitHub:** [#18](https://github.com/sriharshaguthikonda/easy-local-rag/issues/18)
 **Parent epic:** #17.
 **Labels / priority:** `priority:P0`, `type:security`.
@@ -89,6 +90,63 @@ affected PR numbers/refs are recorded for #26B's conditional GitHub Support
 handoff; PR #1 has a documented superseded disposition; and useful concepts
 plus proposed archives have explicit destination/26B handoffs. No archive ref
 is created.
+
+## 2026-08-02 evidence checkpoint
+
+- Public inventory/classification: `docs/plans/branch-inventory.md` at local
+  checkpoint `711480a` (Step 1 manifest checkpoint `12f1f9b`); these checkpoint
+  SHAs remain local provenance for the Aug 2 capture; they are not public refs.
+- Private exact-ref manifest and redacted report are outside the repository
+  under user-only ACLs. Public hashes: manifest
+  `fd7ca3b8dae52277d38d9c44a135ceebd15d5033d6f8891572208d4fe21e4862`;
+  report `fdb51ad92f27397327ac1d48160fc8760c38075338eb7695abcc6b2291a0f247`;
+  scanner config
+  `7d863dffa2d7d8520f76de1c8013eed10676b718a6c62a66616157c6c68abf86`.
+- Gitleaks `8.30.1` exited `3` with 13 redacted findings; exit/count agree.
+  Finding types, paths, historical commit IDs, and affected PR refs are public;
+  values are not.
+- All 31 non-default remote heads, the default remote head, four local-only
+  heads, six local/remote name
+  divergences, 15 PR heads, and zero tags have immutable recorded tips and
+  proposed dispositions. PR #1 is closed/unmerged and routes only to #24.
+- No archive, tag, branch, merge, force-push, PR close, deletion, or rewrite was
+  performed.
+
+## 2026-11-24 public-ref verification
+
+- This publication check used GitHub public branch, pull-request, PR-head, and
+  tag refs only.
+- All 32 documented remote heads and SHAs, all 15 documented PR heads and SHAs,
+  and the zero-tag count matched live public metadata; `main` remained
+  `f87b4cfcff4351c8f6e1e73ef43a7bf99e7fd5f9`.
+- The four local-only heads, six local/remote divergences, private manifest, and
+  redacted report remain the Aug 2 historical local capture; they were not
+  re-captured here.
+
+## Final verification (Aug 2 historical)
+
+- The Aug 2 historical gate checkpoint `6fd0516` and public
+  inventory/classification `711480a` are local provenance; the public refs below
+  are the live verification.
+- `python -m pytest tests -q --ignore=tests/test_gui_settings.py
+  --ignore=tests/test_rag_gui_comprehensive.py`: 145 passed.
+- `python -m py_compile streamlit_app.py rag_gui.py GUI_direct_search.py` and
+  `python scripts/validate_issue_ledger.py --repo
+  sriharshaguthikonda/easy-local-rag`: passed.
+- The unfiltered test command stops during collection because this environment
+  lacks `PyQt5`; only `tests/test_gui_settings.py` and
+  `tests/test_rag_gui_comprehensive.py` are affected.
+- Initial versus closeout ref evidence differs only at the advancing local work
+  branch. Remote heads, PR refs, tags, and all other local heads are unchanged;
+  no `archive/*` ref exists.
+- Independent public-only evidence-contract review returned PASS after receiving
+  the concrete hashes, counts, classification/register coverage, and no-mutation
+  evidence.
+
+The Aug 2 local evidence checkpoint passed its scoped inventory and verification
+checks. This publication candidate keeps #18 open pending docs-only integration
+and public closure evidence; it is not a readiness signal for #26A/#26B and does
+not authorize ref mutation.
 
 ## Rollback constraints
 
