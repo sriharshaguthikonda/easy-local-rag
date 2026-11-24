@@ -2,9 +2,7 @@
 
 [Roadmap ledger](README.md) · [implementation packet](../superpowers/plans/2026-07-27-issue-037-ledger-validator-implementation.md)
 
-**Status:** ACTIVE — this activation PR reconciles the known #8/#15,
-branch-inventory, and lifecycle drift. Implementation is gated by this
-activation PR's GitHub merge commit recorded in immutable PR evidence.
+**Status:** CLOSED — The ledger validator shipped in [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41).
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/37
 **Labels / priority:** `priority:P1`, `type:dx`
 **Dependencies:** #2 remains `blocked-awaiting-user`. #38 is the only approved
