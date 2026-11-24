@@ -1,8 +1,30 @@
-from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from test_generation_streamlit import load_streamlit_app
 
 
-def test_streamlit_uses_cached_tts_worker_resource():
-    source = Path("streamlit_app.py").read_text(encoding="utf-8")
-    assert "@st.cache_resource" in source
-    assert "def get_tts_worker_resource()" in source
-    assert "st.session_state.tts_queue.put(current_sentence.strip())" in source
+@pytest.mark.parametrize("provider, should_speak", [("groq", True), ("ollama", False)])
+def test_streamlit_queues_completed_answer_only_for_cloud_speech(
+    load_streamlit_app, monkeypatch, provider, should_speak
+):
+    app, display = load_streamlit_app
+    display.session_state.tts_enabled = True
+    spoken = []
+    monkeypatch.setattr(app, "ensure_tts_worker", lambda: {"queue": SimpleNamespace(put=spoken.append)})
+
+    def generate(**request):
+        request["on_chunk"]("Answer ")
+        assert spoken == []
+        request["on_chunk"]("[1].")
+        assert spoken == []
+        return SimpleNamespace(text="Answer [1].", actual_model="selected", reason=None)
+
+    _context, answer, _sources = app.chat_with_model(
+        "question", "system", provider=provider, router=SimpleNamespace(generate=generate),
+        retrieve=lambda *args, **options: ("evidence", [{"document": "evidence"}]),
+    )
+
+    assert answer == "Answer [1]."
+    assert spoken == (["Answer [1]."] if should_speak else [])

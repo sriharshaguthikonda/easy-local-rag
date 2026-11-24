@@ -7,7 +7,6 @@ import threading
 from PyQt5.QtCore import QThread, pyqtSignal
 
 import ollama
-from groq import Groq
 from gtts import gTTS
 from pydub import AudioSegment
 from pydub.playback import play
@@ -15,31 +14,133 @@ from pydub.playback import play
 from rag_prompting import CONTEXT_GUARD, build_guarded_context_block
 
 class ChatWorker(QThread):
-    """Worker thread for chat operations - only handles LLM calls, not ChromaDB"""
+    """Generate one answer through the selected provider router.
+
+    Retrieval happens before this thread starts.  The worker owns only the
+    prepared messages and generation stream, which keeps retries inside the
+    router and prevents duplicate evidence or assistant history entries.
+    """
+
     response_chunk = pyqtSignal(str)
     response_complete = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
     status_update = pyqtSignal(str)
+    generation_result = pyqtSignal(object)
 
-    def __init__(self, user_input, settings, context_results, conversation_history):
+    def __init__(
+        self,
+        user_input,
+        settings,
+        context_results,
+        conversation_history,
+        router=None,
+    ):
         super().__init__()
         self.user_input = user_input
         self.settings = settings
         self.context_results = context_results  # Pre-fetched context from main thread
         self.conversation_history = conversation_history
-        self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        self.router = router or settings.get(
+            f"generation_router_{settings.get('generation_provider', 'groq')}"
+        ) or settings.get("generation_router")
+        self._cancel_event = threading.Event()
+        self._streamed_text = ""
+        self.groq_client = settings.get("groq_client")
         print(
-            "[ChatWorker.__init__] created worker id=%s, thread=%s",
-            id(self),
-            threading.get_ident(),
+            "[ChatWorker.__init__] created worker id=%s, thread=%s"
+            % (id(self), threading.get_ident())
+        )
+
+    def request_cancel(self):
+        """Request cooperative cancellation at the next router boundary."""
+        self._cancel_event.set()
+        self.requestInterruption()
+
+    def is_cancelled(self):
+        return self._cancel_event.is_set() or self.isInterruptionRequested()
+
+    @staticmethod
+    def _safe_error(error):
+        code = getattr(error, "code", None) or "generation_failed"
+        message = getattr(error, "safe_message", None)
+        if not message:
+            # GenerationError implementations expose a safe ``message``;
+            # ordinary legacy exceptions get only their short class name.
+            message = getattr(error, "message", None) or error.__class__.__name__
+        return f"{code}: {message}"
+
+    def _router_from_settings(self):
+        if self.router is not None:
+            return self.router
+        provider = self.settings.get("generation_provider", "groq")
+        try:
+            import generation_models
+
+            if provider == "ollama":
+                self.router = generation_models.ollama_router(
+                    client=self.settings.get("ollama_client"),
+                    host=self.settings.get("ollama_host"),
+                )
+            else:
+                self.router = generation_models.groq_router(
+                    client=self.settings.get("groq_client")
+                )
+            return self.router
+        except ImportError:
+            return None
+
+    def _preferred_model(self):
+        provider = self.settings.get("generation_provider", "groq")
+        return self.settings.get(
+            "ollama_model" if provider == "ollama" else "groq_model"
+        )
+
+    def _router_generate(self, messages):
+        router = self._router_from_settings()
+        if router is None or not hasattr(router, "generate"):
+            raise RuntimeError("generation router is unavailable")
+
+        provider = self.settings.get("generation_provider", "groq")
+        preferred = self._preferred_model()
+        max_output = int(self.settings.get("generation_max_output_tokens", 1024))
+        options = dict(self.settings.get("generation_options", {}) or {})
+        options.setdefault("temperature", 1)
+        options.setdefault("top_p", 1)
+        if provider == "groq":
+            options.setdefault("service_tier", "on_demand")
+        else:
+            options.setdefault("keep_alive", -1)
+
+        def on_chunk(chunk):
+            if self.is_cancelled():
+                return
+            if isinstance(chunk, dict):
+                chunk = (chunk.get("message") or {}).get("content", chunk.get("content", ""))
+            elif hasattr(chunk, "choices"):
+                choices = getattr(chunk, "choices", None) or []
+                delta = getattr(choices[0], "delta", None) if choices else None
+                chunk = getattr(delta, "content", "") if delta else ""
+            chunk = str(chunk or "")
+            if chunk:
+                self._streamed_text += chunk
+                self.response_chunk.emit(chunk)
+
+        return router.generate(
+            preferred=preferred,
+            messages=messages,
+            strict=bool(self.settings.get("strict_generation_model", False)),
+            stream=True,
+            max_output_tokens=max_output,
+            cancelled=self.is_cancelled,
+            on_chunk=on_chunk,
+            **options,
         )
 
     def run(self):
         try:
             print(
-                "[ChatWorker.run] starting worker id=%s on thread=%s",
-                id(self),
-                threading.get_ident(),
+                "[ChatWorker.run] starting worker id=%s on thread=%s"
+                % (id(self), threading.get_ident())
             )
             self.status_update.emit("Generating response...")
 
@@ -47,23 +148,28 @@ class ChatWorker(QThread):
                 print("[ChatWorker.run] just_search=True, returning early")
                 self.response_complete.emit("")
                 return
+            if self.is_cancelled():
+                self.status_update.emit("Generation cancelled")
+                self.response_complete.emit("")
+                return
 
             guarded_sources = []
             for idx, result in enumerate(self.context_results or [], start=1):
-                source = {
-                    "citation_id": idx,
-                    "file_name": (
-                        result.get("meta", {}).get("file_name")
-                        if isinstance(result.get("meta"), dict)
-                        else "unknown"
-                    ),
-                    "document": result.get("document", ""),
-                }
-                guarded_sources.append(source)
+                meta = result.get("meta")
+                if not isinstance(meta, dict):
+                    meta = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+                guarded_sources.append(
+                    {
+                        "citation_id": result.get("id", idx),
+                        "file_name": meta.get("file_name", "unknown"),
+                        "document": result.get("document", ""),
+                    }
+                )
 
             relevant_context = build_guarded_context_block(guarded_sources)
             print(
-                f"[ChatWorker.run] Context docs: {len(self.context_results)}; length={len(relevant_context)}"
+                "[ChatWorker.run] Context docs: %s; length=%s"
+                % (len(self.context_results or []), len(relevant_context))
             )
 
             if relevant_context:
@@ -73,82 +179,64 @@ class ChatWorker(QThread):
             else:
                 user_input_with_context = self.user_input
 
-            self.conversation_history.append(
-                {"role": "user", "content": user_input_with_context}
-            )
-
+            request_history = [
+                *self.conversation_history,
+                {"role": "user", "content": user_input_with_context},
+            ]
             messages = [
                 {"role": "system", "content": self.settings["system_message"]},
-                *self.conversation_history,
+                *request_history,
             ]
 
-            print(f"[ChatWorker.run] Calling Groq with model={self.settings['groq_model']}")
-            response = self.groq_chat(messages)
-            print(f"[ChatWorker.run] Groq response length={len(response)}")
-            self.conversation_history.append({"role": "assistant", "content": response})
+            result = self._router_generate(messages)
+            if isinstance(result, str):
+                response = result
+                actual_model = self._preferred_model()
+                reason = ""
+            else:
+                response = str(getattr(result, "text", "") or "")
+                actual_model = getattr(result, "actual_model", None) or self._preferred_model()
+                reason = getattr(result, "reason", None) or ""
+
+            if self.is_cancelled():
+                self.status_update.emit("Generation cancelled")
+                self.response_complete.emit("")
+                return
+
+            # Commit conversation state only after a complete answer. This is
+            # what keeps a pre-output fallback from duplicating evidence/history.
+            self.conversation_history.extend(
+                [
+                    {"role": "user", "content": user_input_with_context},
+                    {"role": "assistant", "content": response},
+                ]
+            )
+            status = f"Answered with {actual_model}"
+            if reason:
+                status += f" ({reason})"
+            self.status_update.emit(status)
+            if not self._streamed_text and response:
+                self.response_chunk.emit(response)
+            self.generation_result.emit(result)
             self.response_complete.emit(response)
             print(
-                "[ChatWorker.run] finished worker id=%s on thread=%s",
-                id(self),
-                threading.get_ident(),
+                "[ChatWorker.run] finished worker id=%s on thread=%s"
+                % (id(self), threading.get_ident())
             )
 
-        except Exception as e:
-            print(f"[ChatWorker.run] ERROR: {e}")
-            import traceback as _tb
-            _tb.print_exc()
+        except Exception as error:
+            if getattr(error, "code", None) == "cancelled" or self.is_cancelled():
+                self.status_update.emit("Generation cancelled")
+                self.response_complete.emit("")
+                return
+            print(f"[ChatWorker.run] ERROR: {self._safe_error(error)}")
             self.status_update.emit("Error during generation")
-            self.error_occurred.emit(str(e))
+            self.error_occurred.emit(self._safe_error(error))
         finally:
             print(
-                "[ChatWorker.run] exiting run() worker id=%s, isRunning=%s, isFinished=%s",
-                id(self),
-                self.isRunning(),
-                self.isFinished(),
+                "[ChatWorker.run] exiting run() worker id=%s, isRunning=%s, isFinished=%s"
+                % (id(self), self.isRunning(), self.isFinished())
             )
-
-    def groq_chat(self, messages):
-        try:
-            print("[ChatWorker.groq_chat] starting streaming call")
-            stream = self.groq_client.chat.completions.create(
-                messages=messages,
-                model=self.settings["groq_model"],
-                temperature=1,
-                max_tokens=4096,
-                top_p=1,
-                stream=True,
-            )
-
-            response = ""
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    chunk_text = chunk.choices[0].delta.content
-                    response += chunk_text
-                    self.response_chunk.emit(chunk_text)
-
-            return response
-        except Exception as e:
-            print(f"[ChatWorker.groq_chat] error: {e}")
-            self.status_update.emit("Falling back to Ollama...")
-            return self.ollama_chat(messages)
-
-    def ollama_chat(self, messages):
-        print("[ChatWorker.ollama_chat] starting Ollama fallback")
-        stream = ollama.chat(
-            model=self.settings["ollama_model"],
-            messages=messages,
-            stream=True,
-            keep_alive=-1,
-        )
-
-        response = ""
-        for chunk in stream:
-            chunk_text = chunk["message"]["content"]
-            response += chunk_text
-            self.response_chunk.emit(chunk_text)
-
-        return response
-
 
 class TTSWorker(QThread):
     """Worker thread for TTS playback"""

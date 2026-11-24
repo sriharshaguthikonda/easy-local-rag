@@ -1,4 +1,5 @@
 import numpy as np
+import json
 
 import threading
 import ollama
@@ -106,97 +107,106 @@ load_dotenv()
 api_key = os.getenv("GROQ_API_KEY")
 
 # Initialize Groq client
-Groqclient = Groq(
-    api_key=api_key,
-)
+Groqclient = None
+_rewrite_router = None
 
 
 # Initialize ChromaDB client
-client = chromadb.PersistentClient(settings=Settings())
 collection_name = "html_chunks_temp"
-collection = client.get_or_create_collection(name=collection_name)
+collection = None
 
 # Define the model to use
 model = "mxbai-embed-large"
 
 
-def rewrite_input_and_generate_synonyms(original_input):
-    try:
-        # Single API call to get rewritten input, synonyms, and spelling variants
-        chat_completion = Groqclient.chat.completions.create(
-            model=groq_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful assistant working in medical context. Your task is threefold: "
-                        "1) Rewrite the given input to make it clearer and more precise in one sentence while preserving its original meaning. "
-                        "2) Provide a list of synonyms for each keyword in the rewritten input. "
-                        "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword. "
-                        "Respond with the rewritten sentence followed by the synonyms and spelling variants in the format: "
-                        "'Rewritten: [sentence]' and 'Keywords: [word1: synonym1, synonym2; spelling variant1, spelling variant2; "
-                        "word2: synonym1, synonym2; spelling variant1, spelling variant2]'"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"""Rewrite and generate synonyms and spelling variants for: "{original_input}".""",
-                },
-            ],
-            temperature=0.7,
-            stream=False,
+def _result_value(result, name, default=None):
+    if isinstance(result, dict):
+        return result.get(name, default)
+    return getattr(result, name, default)
+
+
+def _router_for_rewrite(router=None):
+    global _rewrite_router
+    if router is not None:
+        return router
+    if _rewrite_router is None:
+        from generation_models import groq_router
+
+        _rewrite_router = groq_router()
+    return _rewrite_router
+
+
+def _ensure_collection():
+    global collection
+    if collection is None:
+        local_client = chromadb.PersistentClient(
+            settings=Settings(anonymized_telemetry=False)
         )
+        collection = local_client.get_or_create_collection(
+            name=collection_name, embedding_function=None
+        )
+    return collection
 
-        # Parse the response
-        response_text = chat_completion["choices"][0]["message"]["content"].strip()
-        print(f"Full Response:\n{response_text}")
-
-        # Extract rewritten sentence and keywords
-        rewritten_input = None
-        synonym_and_variant_dict = {}
-
-        if "Rewritten:" in response_text and "Keywords:" in response_text:
-            parts = response_text.split("Keywords:")
-            rewritten_input = parts[0].replace("Rewritten:", "").strip()
-            keywords_raw = parts[1].strip()
-
-            # Parse the keywords into a dictionary
-            for entry in keywords_raw.split(";"):
-                if ":" in entry:
-                    try:
-                        keyword, details = entry.split(":", 1)
-                        keyword = keyword.strip()
-                        details_split = [d.strip() for d in details.split(";")]
-
-                        # Separate synonyms and variants
-                        synonyms = [
-                            d
-                            for d in details_split
-                            if not d.startswith("no variants")
-                            and not d.startswith("spelling variant")
-                        ]
-                        spelling_variants = [
-                            d.replace("spelling variant", "").strip()
-                            for d in details_split
-                            if "spelling variant" in d
-                        ]
-
-                        # Handle "no synonyms available"
-                        if "no synonyms available" in details_split:
-                            synonyms = []
-
-                        synonym_and_variant_dict[keyword] = {
-                            "synonyms": synonyms,
-                            "spelling_variants": spelling_variants,
-                        }
-                    except ValueError:
-                        print(f"Skipping malformed entry: {entry}")
-
-        return rewritten_input, synonym_and_variant_dict
-
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        return "", {}
+def rewrite_input_and_generate_synonyms(original_input, *, router=None):
+    """Use the shared Groq boundary and preserve the raw query on failure."""
+    system_prompt = (
+        "You are a helpful assistant working in a medical context. Your tasks are:\n"
+        "1) Rephrase the given input to make it clearer and more precise in one sentence while preserving its original meaning. It will be used for searching ChromaDB after conversion to embeddings.\n"
+        "2) Provide a list of synonyms for each keyword in the rephrased input.\n"
+        "3) Provide spelling variants (if applicable, such as American and British spellings) for each keyword.\n"
+        "4) Provide plural and singular forms for each keyword.\n"
+        "5) Provide other parts of speech forms for each keyword.\n"
+        "6) Provide closely related terms for each keyword.\n"
+        "Respond in the following JSON format:\n"
+        "{\n"
+        '  "rephrased": "[sentence]",\n'
+        '  "keywords": {\n'
+        '    "[word]": {\n'
+        '      "synonyms": ["synonym1", "synonym2"],\n'
+        '      "spelling_variants": ["variant1", "variant2"],\n'
+        '      "plural_singular": ["plural_form", "singular_form"],\n'
+        '      "parts_of_speech": ["noun form", "verb form"],\n'
+        '      "related_terms": ["related1", "related2"]\n'
+        "    }\n"
+        "  }\n"
+        "}"
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": (
+                "Rewrite and generate synonyms, spelling variants, "
+                "plural/singular forms, parts of speech, and related terms "
+                f'for: "{original_input}".'
+            ),
+        },
+    ]
+    try:
+        result = _router_for_rewrite(router).generate(
+            preferred=groq_model,
+            messages=messages,
+            strict=False,
+            stream=False,
+            max_output_tokens=512,
+            response_format={"type": "json_object"},
+        )
+        raw = _result_value(result, "text", "") or ""
+        if isinstance(raw, dict):
+            data = raw
+        else:
+            raw = str(raw).strip()
+            if raw.startswith(chr(96) * 3):
+                raw = raw.strip(chr(96))
+                if raw.startswith("json"):
+                    raw = raw[4:].strip()
+            data = json.loads(raw)
+        rewritten = data.get("rephrased") or data.get("rewritten") or original_input
+        keywords = data.get("keywords") or {}
+        return rewritten, keywords if isinstance(keywords, dict) else {}
+    except Exception as error:
+        print(f"Rewrite unavailable; using original query ({type(error).__name__}).")
+        return original_input, {}
 
 
 def print_relevant_context(results):
@@ -226,10 +236,25 @@ def get_relevant_context_hybrid(
     beta=0.3,  # Weight for keyword match
     gamma=0.2,  # Weight for BM25 score
     lambda_mmr=0.5,  # Balance parameter for MMR
+    *,
+    rewrite=True,
+    router=None,
 ):
     try:
         relevant_context = ""
-        rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(user_input)
+        if rewrite:
+            if router is None:
+                rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(
+                    user_input
+                )
+            else:
+                rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(
+                    user_input, router=router
+                )
+        else:
+            rewritten_input, synonym_dict = user_input, {}
+
+        local_collection = _ensure_collection()
 
         # Encode the rewritten input into an embedding
         input_embedding = ollama.embeddings(
@@ -239,7 +264,7 @@ def get_relevant_context_hybrid(
         )["embedding"]
 
         # Perform vector similarity search
-        search_result = collection.query(
+        search_result = local_collection.query(
             query_embeddings=[input_embedding],
             n_results=50,
             include=["documents", "metadatas", "distances"],

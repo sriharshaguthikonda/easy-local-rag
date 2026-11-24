@@ -61,7 +61,10 @@ unsuitable here. [Alternative implementations](../../Research/landscape.yaml).
   and model show for installed models, completion and other capabilities,
   and context metadata. Local routing permits local endpoints/models only.
   Reject remote/cloud manifest metadata including cloud aliases before
-  dispatch. Query extra model metadata only on catalogue refresh.
+  dispatch. Bulk model metadata follows the catalogue TTL. Recheck the
+  selected Ollama manifest before each dispatch, since a local tag can
+  change during that TTL. Use raw response metadata to preserve remote
+  fields dropped by older Ollama SDK response types.
 - Require app provider/mode, task class, quality and budget policy plus
   requested capabilities before deterministic rank by configured priority
   then ID. Missing policy fails closed. Plain answer and explicit reasoning

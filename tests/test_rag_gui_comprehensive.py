@@ -679,8 +679,9 @@ class TestChromaDBMixin:
         assert "No collection connected" in window.stats_display._text
     
     @patch("GUI_chromadb.chromadb.PersistentClient")
-    def test_connect_chromadb_creates_client(self, mock_client_class):
-        """Verify connect_chromadb creates ChromaDB client."""
+    def test_connect_chromadb_creates_client(self, mock_client_class, monkeypatch):
+        """Verify the GUI connection is safe to reuse for offline search."""
+        monkeypatch.setenv("ANONYMIZED_TELEMETRY", "True")
         mock_client = DummyChromaClient()
         mock_client_class.return_value = mock_client
         
@@ -690,6 +691,7 @@ class TestChromaDBMixin:
         window.connect_chromadb(show_errors=False)
         
         assert window.chromadb_client is mock_client
+        assert mock_client_class.call_args.kwargs["settings"].anonymized_telemetry is False
 
 
 # =============================================================================
@@ -752,12 +754,14 @@ class TestModelLoadingMixin:
         assert "whisper-large" not in window.groq_model_combo._items
         assert len(window.groq_model_combo._items) == 2
     
-    @patch("GUI_models.Groq")
-    def test_load_groq_models_handles_error(self, mock_groq_class):
+    def test_load_groq_models_handles_error(self):
         """Verify load_groq_models handles API errors gracefully."""
-        mock_groq_class.side_effect = Exception("API Error")
+        class FailingRouter:
+            def catalogue(self, refresh=False):
+                raise RuntimeError("API Error")
         
         window = MockModelLoadingWindow()
+        window.generation_router_groq = FailingRouter()
         # Should not raise
         window.load_groq_models()
         
@@ -781,12 +785,14 @@ class TestModelLoadingMixin:
         assert window.ollama_model_combo.count() == 3
         assert "phi-3" in window.ollama_model_combo._items
     
-    @patch("GUI_models.ollama.list")
-    def test_load_ollama_models_handles_empty_list(self, mock_ollama_list):
+    def test_load_ollama_models_handles_empty_list(self):
         """Verify load_ollama_models handles empty model list."""
-        mock_ollama_list.return_value = {"models": []}
+        class EmptyRouter:
+            def catalogue(self, refresh=False):
+                return []
         
         window = MockModelLoadingWindow()
+        window.generation_router_ollama = EmptyRouter()
         window.load_ollama_models()
         
         # Fallback models should be added
@@ -828,38 +834,38 @@ class TestGUITheme:
 class TestGUIContext:
     """Tests for GUI_context module."""
     
-    @patch("GUI_context.Groq")
-    def test_rewrite_input_handles_api_error(self, mock_groq_class):
+    def test_rewrite_input_handles_api_error(self):
         """Verify rewrite_input_and_generate_synonyms handles API errors."""
-        mock_groq_class.side_effect = Exception("API Error")
-        
-        settings = {"groq_rewrite_model": "test-model"}
+        class FailingRouter:
+            def generate(self, **kwargs):
+                raise RuntimeError("API Error")
+
+        settings = {
+            "groq_rewrite_model": "test-model",
+            "generation_router_groq": FailingRouter(),
+        }
         result, keywords = GUI_context.rewrite_input_and_generate_synonyms(settings, "test query")
         
         # Should return original input on error
         assert result == "test query"
         assert keywords == {}
     
-    @patch("GUI_context.Groq")
-    def test_rewrite_input_parses_json_response(self, mock_groq_class):
+    def test_rewrite_input_parses_json_response(self):
         """Verify rewrite_input_and_generate_synonyms parses JSON response."""
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = MagicMock(
-            choices=[
-                MagicMock(
-                    message=MagicMock(
-                        content='{"rephrased": "rewritten query", "keywords": {"test": {"synonyms": ["exam"]}}}'
-                    )
-                )
-            ]
+        fake_router = MagicMock()
+        fake_router.generate.return_value = MagicMock(
+            text='{"rephrased": "rewritten query", "keywords": {"test": {"synonyms": ["exam"]}}}'
         )
-        mock_groq_class.return_value = mock_client
         
-        settings = {"groq_rewrite_model": "test-model"}
+        settings = {
+            "groq_rewrite_model": "test-model",
+            "generation_router_groq": fake_router,
+        }
         result, keywords = GUI_context.rewrite_input_and_generate_synonyms(settings, "test query")
         
         assert result == "rewritten query"
         assert "test" in keywords
+        fake_router.generate.assert_called_once()
 
 
 # =============================================================================

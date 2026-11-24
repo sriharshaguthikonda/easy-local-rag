@@ -27,7 +27,7 @@ class ChromaDBMixin:
             print("[ChromaDBMixin.connect_chromadb] creating PersistentClient", flush=True)
             self.chromadb_client = chromadb.PersistentClient(
                 path=path,
-                settings=Settings(),
+                settings=Settings(anonymized_telemetry=False),
                 tenant=DEFAULT_TENANT,
                 database=DEFAULT_DATABASE,
             )
