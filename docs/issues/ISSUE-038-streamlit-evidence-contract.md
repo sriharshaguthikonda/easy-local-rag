@@ -2,7 +2,7 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** QUEUED — no JIT implementation packet exists until #37 closes.
+**Status:** CLOSED — The GUI implementation merged in [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42).
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/38
 **Labels / priority:** `priority:P0`, `type:bug`
 **Dependencies:** Explicit independent P0 exception after #37 only. #2 stays
