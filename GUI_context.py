@@ -9,7 +9,7 @@ from groq import Groq
 from rank_bm25 import BM25Okapi
 
 
-def rewrite_input_and_generate_synonyms(settings, user_input):
+def rewrite_input_and_generate_synonyms(settings, user_input, *, on_result=None):
     """Rewrite a query through the selected provider's shared router.
 
     Local generation intentionally keeps the user's exact query: a Groq
@@ -58,6 +58,8 @@ def rewrite_input_and_generate_synonyms(settings, user_input):
             )
             response_json = getattr(result, "text", result)
             response_data = json.loads(str(response_json).strip())
+            if on_result is not None:
+                on_result(result)
             return response_data.get("rephrased", user_input), response_data.get("keywords", {})
         except Exception as error:
             print(

@@ -85,7 +85,9 @@ def _safe_model_id(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
-    return text[:160] if text else None
+    if "://" in text or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,159}", text):
+        return None
+    return text
 
 
 @dataclass
@@ -182,7 +184,11 @@ def _is_local_host(host: str | None) -> bool:
     raw = str(host).strip()
     parsed = urlparse(raw if "://" in raw else f"http://{raw}")
     hostname = (parsed.hostname or "").lower().rstrip(".")
-    return hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+    return (
+        parsed.scheme in {"http", "https"}
+        and parsed.username is None
+        and hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+    )
 
 
 def _is_cloud_model(model: str) -> bool:
@@ -405,6 +411,12 @@ def _extract_error_body(exc: BaseException) -> Any:
     body = getattr(exc, "error", None)
     if body is not None:
         return body
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            return response.json()
+        except (ValueError, AttributeError):
+            pass
     return None
 
 
@@ -430,7 +442,6 @@ def _classify_provider_error(exc: BaseException, provider: str, model: str) -> s
     status = _extract_error_status(exc)
     body_code = _error_code(_extract_error_body(exc))
     name = type(exc).__name__.lower()
-    text = str(getattr(exc, "error", "") or "").lower()
     if status in {401, 403} or "authentication" in name or "invalid_api_key" in body_code:
         return "authentication"
     if provider == "groq":
@@ -439,17 +450,15 @@ def _classify_provider_error(exc: BaseException, provider: str, model: str) -> s
         if status == 404 and body_code in _MODEL_UNAVAILABLE_CODES:
             return "model_unavailable"
         return "provider_error"
-    # Ollama's typed response error has no structured error code in v0.5.3;
-    # require model-specific missing-model evidence before retrying.
-    model_hint = model.lower() in text or model.lower() in body_code
-    missing_hint = ("model" in text or "model" in body_code) and (
-        "not found" in text
-        or "not found" in body_code
-        or "pull" in text
-        or "pull" in body_code
-    )
-    if (status in {400, 404} or "responseerror" in name) and model_hint and missing_hint:
-        return "model_unavailable"
+    # Ollama returns a model-specific JSON error without a separate code.
+    if status in {400, 404}:
+        candidate_names = {model.lower()}
+        if ":" not in model.rsplit("/", 1)[-1]:
+            candidate_names.add(f"{model.lower()}:latest")
+        for candidate_name in candidate_names:
+            if any(body_code.startswith(f"model {quote}{candidate_name}{quote} not found")
+                   for quote in ("'", '"')):
+                return "model_unavailable"
     return "provider_error"
 
 
@@ -683,11 +692,11 @@ class _GenerationRouter:
             tier = str(tier)
         if self.provider == "groq" and tier in {"flex", "performance", "cloud"}:
             return []
-        input_tokens = _as_int(options.get("input_tokens"), 0)
-        if input_tokens <= 0:
-            input_tokens = _as_int(options.get("max_input_tokens"), 0)
-        if input_tokens <= 0:
-            input_tokens = _estimate_tokens(messages, options)
+        input_tokens = max(
+            _as_int(options.get("input_tokens")),
+            _as_int(options.get("max_input_tokens")),
+            _estimate_tokens(messages, options),
+        )
         explicit_context = _as_int(options.get("context_tokens"), 0)
         if self.provider == "ollama":
             ollama_context = _ollama_context(options)
@@ -867,10 +876,13 @@ class _GenerationRouter:
         if self.provider == "groq" and requested_service_tier not in (None, "on_demand"):
             raise GenerationError("tier_policy", "only the approved on-demand tier is permitted", provider=self.provider)
         preferred_id = _safe_model_id(preferred)
-        try:
-            profiles = self.catalogue()
-        except GenerationError:
-            raise
+        if preferred_id is None and (preferred or strict):
+            raise GenerationError(
+                "strict_pin" if strict else "invalid_request",
+                "a valid preferred generation model is required",
+                provider=self.provider,
+            )
+        profiles = self.catalogue()
         _raise_if_cancelled(cancelled)
         preferred_profile = next((row for row in profiles if row.id == preferred_id), None) if preferred_id else None
         policy_profiles = profiles
@@ -943,7 +955,10 @@ class _GenerationRouter:
 
         attempted: list[str] = []
         failed: set[str] = set()
-        fallback_reason = ""
+        fallback_reason = (
+            f"fallback from {preferred_id} to {candidate.id}: saved model unavailable"
+            if stale_preference else ""
+        )
         for _attempt in range(MAX_GENERATION_ATTEMPTS):
             _raise_if_cancelled(cancelled)
             if candidate.id in failed:
@@ -960,11 +975,15 @@ class _GenerationRouter:
                     on_chunk=on_chunk,
                 )
                 actual_id = _safe_model_id(actual_model) or candidate.id
+                reason = fallback_reason
+                if actual_id != candidate.id:
+                    alias = f"provider reported {actual_id} for {candidate.id}"
+                    reason = f"{reason}. {alias}" if reason else alias
                 return GenerationResult(
                     text=text,
                     preferred_model=preferred_id,
                     actual_model=actual_id,
-                    reason=fallback_reason,
+                    reason=reason,
                     provider=self.provider,
                     attempted_models=list(attempted),
                     usage=usage,
@@ -984,6 +1003,8 @@ class _GenerationRouter:
                         attempts=attempted,
                     ) from exc
                 failed.add(candidate.id)
+                with self._catalogue_lock:
+                    self._catalogue = None
                 if strict or len(attempted) >= MAX_GENERATION_ATTEMPTS:
                     raise GenerationError(
                         "model_unavailable",
@@ -1165,21 +1186,50 @@ class OllamaRouter(_GenerationRouter):
             endpoint = getattr(http_client, "base_url", None)
             if endpoint is not None and not _is_local_host(str(endpoint)):
                 raise GenerationError("remote_provider", "Ollama requires a local endpoint", provider=self.provider)
+            if getattr(http_client, "follow_redirects", False) or getattr(http_client, "trust_env", False):
+                raise GenerationError("remote_provider", "Ollama transport must disable redirects and environment proxies", provider=self.provider)
             return self._client
         try:
             import ollama
 
-            self._client = ollama.Client(host=self._host, timeout=DISCOVERY_TIMEOUT_SECONDS)
+            self._client = ollama.Client(
+                host=self._host,
+                timeout=DISCOVERY_TIMEOUT_SECONDS,
+                follow_redirects=False,
+                trust_env=False,
+            )
         except GenerationError:
             raise
         except Exception as exc:
             raise GenerationError("catalogue_error", "Ollama client is unavailable", provider=self.provider) from exc
         return self._client
 
+    @staticmethod
+    def _metadata(client, model=None):
+        # ollama-python's typed responses can discard cloud manifest fields.
+        # Use the same client transport and inspect the server JSON directly.
+        transport = getattr(client, "_client", None)
+        if transport is not None and getattr(transport, "base_url", None) is not None:
+            if model is None:
+                response = transport.get("/api/tags")
+            else:
+                response = transport.post("/api/show", json={"model": model})
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, Mapping):
+                raise ValueError("Invalid Ollama catalogue response")
+            return payload
+        return client.list() if model is None else client.show(model)
+
     def _request(self, profile, messages, stream, max_output_tokens, options):
         client = self._ensure_client()
         if not _is_local_host(self._host):
             raise GenerationError("remote_provider", "Ollama requires a local endpoint", provider=self.provider)
+        transport = getattr(client, "_client", None)
+        if transport is not None and getattr(transport, "base_url", None) is not None:
+            manifest = self._metadata(client, profile.id)
+            if not manifest or _contains_remote(manifest):
+                raise GenerationError("remote_provider", "Ollama model must be verified as local", provider=self.provider)
         chat = _value(client, "chat")
         if not callable(chat):
             raise GenerationError("provider_error", "Ollama generation is unavailable", provider=self.provider)
@@ -1221,10 +1271,7 @@ class OllamaRouter(_GenerationRouter):
         return chat(**kwargs)
 
     def _discover(self, client: Any) -> list[GenerationProfile]:
-        list_method = _value(client, "list")
-        if not callable(list_method):
-            raise GenerationError("catalogue_error", "Ollama model listing is unavailable", provider=self.provider)
-        response = list_method()
+        response = self._metadata(client)
         raw_rows = _value(response, "models", response if isinstance(response, Sequence) else [])
         rows = _as_sequence(raw_rows)
         profiles: list[GenerationProfile] = []
@@ -1235,15 +1282,12 @@ class OllamaRouter(_GenerationRouter):
             remote = _is_cloud_model(model) or _contains_remote(_mapping(row))
             show_data: Any = None
             show_verified = False
-            show_method = _value(client, "show")
-            if callable(show_method):
-                try:
-                    show_data = show_method(model)
-                    show_verified = bool(_mapping(show_data))
-                except Exception:
-                    # An installed model can still be shown in a menu when its
-                    # optional metadata endpoint is unavailable.
-                    show_data = None
+            try:
+                show_data = self._metadata(client, model)
+                show_verified = bool(_mapping(show_data))
+            except Exception:
+                # Unverified IDs are displayed but remain ineligible.
+                show_data = None
             remote = remote or _contains_remote(_mapping(show_data))
             show_caps = _normalise_caps(
                 _value(show_data, "capabilities", _value(row, "capabilities", []))

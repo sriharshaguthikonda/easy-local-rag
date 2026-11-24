@@ -7,16 +7,12 @@ import webbrowser
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import QListWidgetItem, QMessageBox, QTableWidgetItem
 
-try:
-    from offline_search import search_documents
-except ImportError:  # pragma: no cover - compatibility with pre-#44 checkouts
-    search_documents = None
+from GUI_context import rewrite_input_and_generate_synonyms
 
 # Static script — no user data interpolated.  All params arrive via the
 # _DS_ARGS env var (JSON), so there is no code-injection surface.
 _SEARCH_SCRIPT = """
 import json, os, chromadb, ollama, re, numpy as np, sys
-from groq import Groq
 from rank_bm25 import BM25Okapi
 from chromadb.config import Settings, DEFAULT_TENANT, DEFAULT_DATABASE
 
@@ -25,7 +21,6 @@ path            = _a["path"]
 col_name        = _a["col_name"]
 query           = _a["query"]
 embedding_model = _a["embedding_model"]
-rewrite_model   = _a["rewrite_model"]
 top_k           = int(_a["top_k"])
 alpha           = float(_a["alpha"])
 beta            = float(_a["beta"])
@@ -33,31 +28,6 @@ gamma           = float(_a["gamma"])
 delta           = float(_a["delta"])
 mode            = _a["mode"]
 include         = _a["include"]
-
-def rewrite_input_and_generate_synonyms(user_input):
-    try:
-        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        system_prompt = (
-            "You are a helpful assistant. Your tasks are:\\n"
-            "1) Rephrase the given input to make it clearer in one sentence.\\n"
-            "2) Provide synonyms, spelling variants, plural/singular forms for keywords.\\n"
-            'Respond in JSON format:\\n{"rephrased": "[sentence]", "keywords": {"[word]": {"synonyms": [], "spelling_variants": [], "plural_singular": [], "parts_of_speech": [], "related_terms": []}}}'
-        )
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f'Rewrite and generate synonyms for: "{user_input}"'},
-            ],
-            model=rewrite_model,
-            temperature=0.7,
-            stream=False,
-            response_format={"type": "json_object"},
-        )
-        response_json = chat_completion.choices[0].message.content.strip()
-        data = json.loads(response_json)
-        return data.get("rephrased", user_input), data.get("keywords", {})
-    except Exception:
-        return user_input, {}
 
 def build_keywords(rewritten, synonym_dict):
     non_keywords = {"is","a","an","and","the","of","in","on","at","by","with","for","to","from"}
@@ -115,7 +85,8 @@ if mode == "phrase":
     print(json.dumps({"results": formatted}))
     sys.exit(0)
 
-rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(query)
+rewritten_input = _a["rewritten_input"]
+synonym_dict = _a["synonym_dict"]
 emb = ollama.embeddings(model=embedding_model, prompt=rewritten_input, keep_alive=-1)["embedding"]
 res = col.query(query_embeddings=[emb], n_results=50, include=["documents","metadatas","distances"])
 
@@ -208,6 +179,7 @@ print(json.dumps({"results": formatted}))
 class DirectSearchSubprocessWorker(QThread):
     results_ready = pyqtSignal(list)
     error_occurred = pyqtSignal(str)
+    status_update = pyqtSignal(str)
 
     def __init__(
         self,
@@ -223,13 +195,15 @@ class DirectSearchSubprocessWorker(QThread):
         gamma=0.2,
         delta=0.2,
         mode="hybrid",
+        rewrite_settings=None,
     ):
         super().__init__()
         self.query = query
         self.chroma_path = chroma_path
         self.collection_name = collection_name
         self.embed_model = embed_model
-        self.rewrite_model = rewrite_model
+        self.rewrite_settings = dict(rewrite_settings or {})
+        self.rewrite_settings["groq_rewrite_model"] = rewrite_model
         self.n_results = n_results
         self.include = include
         self.alpha = alpha
@@ -238,7 +212,18 @@ class DirectSearchSubprocessWorker(QThread):
         self.delta = delta
         self.mode = (mode or "hybrid").lower()
 
+    def _report_rewrite_model(self, result):
+        status = f"Rewrite used {result.provider}: {result.actual_model}"
+        if result.reason:
+            status += f" ({result.reason})"
+        self.status_update.emit(status)
+
     def run(self):
+        rewritten_input, synonym_dict = self.query, {}
+        if self.mode == "hybrid":
+            rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(
+                self.rewrite_settings, self.query, on_result=self._report_rewrite_model,
+            )
         alpha = float(self.alpha)
         beta = float(self.beta)
         gamma = float(self.gamma)
@@ -249,7 +234,8 @@ class DirectSearchSubprocessWorker(QThread):
             "col_name": self.collection_name,
             "query": self.query,
             "embedding_model": self.embed_model,
-            "rewrite_model": self.rewrite_model,
+            "rewritten_input": rewritten_input,
+            "synonym_dict": synonym_dict,
             "top_k": int(self.n_results),
             "alpha": alpha,
             "beta": beta,
@@ -330,42 +316,6 @@ class DirectSearchMixin:
                 self._self_test_sync_active = False
             return
 
-        # The visible Search Only action is lexical and offline.  Keep the
-        # historical subprocess script below for the diagnostic self-test and
-        # older callers, but never run its provider/embedding path for normal
-        # user searches.
-        if search_documents is not None:
-            self.update_settings_from_ui()
-            top_k = int(self.settings.get("top_k", 5))
-            self.statusBar.showMessage("Searching offline documents...")
-            try:
-                sources = search_documents(self.collection, query, top_k)
-                formatted = []
-                for source in sources or []:
-                    metadata = source.get("metadata") or {}
-                    file_name = metadata.get("file_name") or source.get("id") or "Unknown"
-                    score = source.get("relevance_score")
-                    formatted.append(
-                        {
-                            "id": source.get("id"),
-                            "file_name": file_name,
-                            "file_path": metadata.get("file_path"),
-                            "document": source.get("document", ""),
-                            "distance": None,
-                            "similarity": score,
-                            "metadata": metadata,
-                            "final_score": score,
-                        }
-                    )
-                self._direct_results = formatted
-                self.apply_direct_search_view()
-                self.statusBar.showMessage(
-                    f"Offline search found {len(formatted)} results", 3000
-                )
-            except Exception as error:
-                self.on_error(f"Offline search failed: {error}")
-            return
-
         # Normal path: run search via subprocess to avoid native crash in worker
         # Sync top-k from direct control before saving settings
         if hasattr(self, "direct_topk_spin"):
@@ -398,6 +348,13 @@ class DirectSearchMixin:
         )
         self.statusBar.showMessage("Searching...")
         # Run subprocess query off the UI thread
+        provider = self.settings.get("generation_provider", "groq")
+        rewrite_settings = {
+            "generation_provider": provider,
+            "strict_generation_model": self.settings.get("strict_generation_model", False),
+        }
+        if provider == "groq":
+            rewrite_settings["generation_router_groq"] = self.get_generation_router(provider)
         self._direct_worker = DirectSearchSubprocessWorker(
             query=query,
             chroma_path=self.settings.get("chromadb_path"),
@@ -411,10 +368,12 @@ class DirectSearchMixin:
             gamma=gamma,
             delta=delta,
             mode=self.settings.get("direct_search_mode", "hybrid"),
+            rewrite_settings=rewrite_settings,
         )
         self._direct_worker.results_ready.connect(self._on_direct_worker_results)
         self._direct_worker.error_occurred.connect(self.on_error)
-        self._direct_worker.finished.connect(lambda: self.statusBar.showMessage("Search complete", 3000))
+        self._direct_worker.status_update.connect(self._on_direct_rewrite_status)
+        self._direct_rewrite_status = ""
         self._direct_worker.start()
 
     def apply_direct_search_view(self):
@@ -475,10 +434,18 @@ class DirectSearchMixin:
         self.statusBar.showMessage(f"Found {len(results)} results", 3000)
         print("[DirectSearchMixin.on_search_results] table updated", flush=True)
 
+    def _on_direct_rewrite_status(self, status):
+        self._direct_rewrite_status = status
+        self.statusBar.showMessage(status, 6000)
+
     def _on_direct_worker_results(self, results):
         # Store and render with sort/filter
         self._direct_results = results
         self.apply_direct_search_view()
+        status = f"Found {len(results)} results"
+        if self._direct_rewrite_status:
+            status += f" · {self._direct_rewrite_status}"
+        self.statusBar.showMessage(status, 6000)
 
     def update_search_result_detail(self, item):
         if not item:
