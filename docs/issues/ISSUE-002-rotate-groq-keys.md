@@ -2,7 +2,7 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** OPEN — source containment complete. The owner previously confirmed rotation. Final closure awaits one of the two #26B history remediation outcomes below.
+**Status:** OPEN — source containment and writable GitHub history rewrite complete. The owner previously confirmed rotation. The [#26B execution record](ISSUE-026-repo-cleanup.md#2026-11-25-execution-record) documents the 24 read-only PR refs pending GitHub Support disposition.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/2
 **Labels / priority:** `priority:P0`, `type:security`
 **Dependencies:** Owner access to the Groq console; #18's immutable ref inventory; early #26B as the sole executor of any separately approved shared-history rewrite.

@@ -158,12 +158,28 @@ check caught generated artifacts before the change. Untracking preserves the
 on-disk copies, and the existing secret scan enforces the incoming history
 and tracked checkout. The two hygiene test suites passed after the changes.
 
-Refresh the ref manifest after both hygiene merges. Verify an access-controlled
-recovery bundle and the rewritten mirror before atomically replacing the
-affected public heads and tags with explicit leases. Operators must use fresh
-clones after the ref replacement and keep any unpublished work in their old
-clones offline. Record the resulting refs and any GitHub Support disposition
-here before closing #2.
+Hygiene PRs [#52](https://github.com/sriharshaguthikonda/easy-local-rag/pull/52)
+and [#53](https://github.com/sriharshaguthikonda/easy-local-rag/pull/53) merged
+for both maintained branches. The final pre-rewrite inventory included 41
+branch heads, 24 PR head refs and zero tags. The recovery bundle was verified
+and stored with access controls.
+
+An atomic, lease-checked update replaced all 41 branch heads on GitHub.
+`main` was rewritten to `8e0cf3290459fd1d890efdff294629b7d032e78e` and the
+maintained GUI branch to `32f81f748f98e2009e1de97c6c140df37405fd94`.
+Both tip trees match the hygiene merges, and both post-update secret-scan
+workflows passed. Historical commit signatures were removed by the rewrite.
+
+Gitleaks 8.30.1 used the same config and full-history arguments on the original,
+rewritten and freshly fetched refs. The writable-ref scan from GitHub exited
+0. The all-ref scan exited 3 with 12 findings, all reachable from 24 read-only
+PR refs. The private residual reachability inventory has SHA-256
+`491351a02a0315966034fe655f0f31b7c3ffbb6e66f653710dc1df3efe66d7e9`.
+GitHub Support's written disposition is pending. #2 stays open and #19 remains
+gated until the final #26B outcome is recorded.
+
+Use a fresh clone for future work. Keep old clones with unpublished changes
+offline and review those changes before applying them to the fresh history.
 
 ## Verification
 
