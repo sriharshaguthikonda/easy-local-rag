@@ -1,6 +1,6 @@
 # Issue #44 — Model discovery and same-class fallback
 
-**Status:** Active — owner-approved independent P0 scope.
+**Status:** Closed — completed through [PR #48](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48).
 **GitHub:** [#44](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44).
 **Packet:** [Implementation and verification](../superpowers/plans/2026-11-24-issue-044-model-discovery-and-fallback-implementation.md).
 **Ledger:** [Required execution order](README.md#required-execution-order).
@@ -47,3 +47,11 @@ credential, history remediation, and migration gates still apply.
 
 [#22](ISSUE-022-provider-modes.md) consumes the verified routing/profile
 contract during consolidation. #44 does not change #22's dependencies.
+
+## Completion evidence
+
+- Reviewed head `3584bb1d119b92275e09f4f25bc860f4fa54ef18` and GUI merge `695cfe73554318717437f67bb77d3d3a91c056f1`. [Review](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48#issuecomment-7133158071) and [closure](https://github.com/sriharshaguthikonda/easy-local-rag/issues/44#issuecomment-7133201382).
+- The full suite passed 249 tests with Python socket egress blocked. Mocked provider transports covered the retired Groq ID and its recovery. [Verification](https://github.com/sriharshaguthikonda/easy-local-rag/pull/48#issuecomment-7133169363).
+- Catalogue caching, normalization, and ranking reuse patterns from Model Bridge commit `56519023e22f6f7a91f36a7074352c771bdc4176`. [Prior-art record](../Research/landscape.yaml).
+- The [#22 handoff](ISSUE-022-provider-modes.md#routing-handoff-from-44) pins the shared router and profile schema v1.
+- Roll back the implementation with `git revert -m 1 695cfe73554318717437f67bb77d3d3a91c056f1`. The change requires no data conversion. Live credentialed tests remain gated by #2.
