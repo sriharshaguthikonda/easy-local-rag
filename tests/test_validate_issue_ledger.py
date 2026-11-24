@@ -254,7 +254,7 @@ def test_zero_exit_malformed_gh_payloads_return_2_without_a_traceback(tmp_path, 
         assert "Traceback" not in capsys.readouterr().out
 
 
-def test_real_canonical_corpus_exposes_only_issue_009_lifecycle_drift():
+def test_real_canonical_corpus_matches_recorded_issue_states():
     root = Path(__file__).parents[1]
     issue_dir = root / "docs" / "issues"
     expected_states = {
@@ -262,7 +262,7 @@ def test_real_canonical_corpus_exposes_only_issue_009_lifecycle_drift():
         "10": "OPEN", "11": "OPEN", "12": "OPEN", "13": "OPEN", "14": "CLOSED", "15": "CLOSED",
         "16": "OPEN", "17": "OPEN", "18": "OPEN", "19": "OPEN", "20": "OPEN", "21": "OPEN",
         "22": "OPEN", "23": "OPEN", "24": "OPEN", "25": "OPEN", "26": "OPEN", "27": "OPEN",
-        "37": "OPEN", "38": "OPEN",
+        "37": "CLOSED", "38": "CLOSED",
     }
     errors = ledger_module().validate_ledger(
         roadmap_text=(issue_dir / "README.md").read_text(encoding="utf-8"),
