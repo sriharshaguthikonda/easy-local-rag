@@ -399,3 +399,129 @@ def test_unknown_models_are_visible_but_not_automatic_candidates() -> None:
     with pytest.raises(gm.GenerationError) as caught:
         router.generate(messages=[])
     assert caught.value.code == "no_candidate"
+
+
+def test_missing_local_preference_reports_why_it_fell_back():
+    class LocalOllama:
+        def list(self):
+            return {"models": [{"model": "llama3.2:3b"}]}
+
+        def show(self, model):
+            return {"capabilities": ["completion"], "model_info": {"context_length": 4096}}
+
+        def chat(self, *, model, **kwargs):
+            assert model == "llama3.2:3b"
+            return {"model": model, "message": {"content": "replacement"}}
+
+    router = gm.ollama_router(client=LocalOllama(), host="http://localhost:11434")
+    result = router.generate(preferred="phi-3", messages=[], stream=False)
+
+    assert result.preferred_model == "phi-3"
+    assert result.actual_model == "llama3.2:3b"
+    assert "phi-3" in result.reason and "unavailable" in result.reason
+
+
+
+def test_local_ollama_never_follows_an_off_host_redirect(monkeypatch):
+    import ollama
+
+    actual_client = ollama.Client
+    requests = []
+
+    def handle(request):
+        requests.append(request.url.host)
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"model": "phi-3"}]})
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={
+                "capabilities": ["completion"],
+                "model_info": {"context_length": 4096},
+            })
+        if request.url.host == "localhost":
+            return httpx.Response(307, headers={"Location": "https://external.invalid/chat"})
+        pytest.fail("The local provider followed an external redirect")
+
+    def make_client(**kwargs):
+        return actual_client(transport=httpx.MockTransport(handle), **kwargs)
+
+    monkeypatch.setattr(ollama, "Client", make_client)
+    router = gm.ollama_router(host="http://localhost:11434")
+    with pytest.raises(gm.GenerationError) as exc:
+        router.generate(preferred="phi-3", messages=[{"role": "user", "content": "private"}], stream=False)
+    assert exc.value.code == "provider_error"
+    assert requests == ["localhost"] * 4
+    assert router.client._client.trust_env is False
+
+
+def test_ollama_honors_remote_manifest_fields_omitted_by_installed_sdk(monkeypatch):
+    import ollama
+
+    actual_client = ollama.Client
+    requests = []
+
+    def handle(request):
+        requests.append(request.url.path)
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"model": "phi-3"}]})
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={
+                "capabilities": ["completion"], "remote_host": "https://ollama.com",
+                "remote_model": "alias:cloud",
+            })
+        pytest.fail("Generation was sent to a cloud alias")
+
+    def make_client(**kwargs):
+        return actual_client(transport=httpx.MockTransport(handle), **kwargs)
+
+    monkeypatch.setattr(ollama, "Client", make_client)
+    router = gm.ollama_router(host="http://localhost:11434")
+    assert router.catalogue()[0].remote is True
+    with pytest.raises(gm.GenerationError):
+        router.generate(preferred="phi-3", messages=[], stream=False)
+    assert requests == ["/api/tags", "/api/show"]
+
+
+
+@pytest.mark.parametrize("error_status, expected_models", [
+    (404, ["phi-3", "llama3.2:3b"]),
+    (429, ["phi-3"]),
+])
+def test_ollama_retries_only_a_model_specific_unavailability(error_status, expected_models):
+    import ollama
+
+    class LocalOllama:
+        def __init__(self):
+            self.calls = []
+
+        def list(self):
+            return {"models": [{"model": name} for name in ("phi-3", "llama3.2:3b")]}
+
+        def show(self, model):
+            return {"capabilities": ["completion"], "model_info": {"context_length": 4096}}
+
+        def chat(self, *, model, **kwargs):
+            self.calls.append(model)
+            if model == "phi-3":
+                raise ollama.ResponseError("model 'phi-3' not found", status_code=error_status)
+            return {"model": model, "message": {"content": "replacement"}}
+
+    client = LocalOllama()
+    router = gm.ollama_router(client=client, host="http://localhost:11434")
+    if error_status == 404:
+        result = router.generate(preferred="phi-3", messages=[], stream=False)
+        assert result.actual_model == "llama3.2:3b"
+        assert "model_unavailable" in result.reason
+    else:
+        with pytest.raises(gm.GenerationError) as caught:
+            router.generate(preferred="phi-3", messages=[], stream=False)
+        assert caught.value.code == "provider_error"
+    assert client.calls == expected_models
+
+
+def test_invalid_strict_pin_cannot_select_a_different_model():
+    client = FakeGroq(_groq_rows(True))
+    router = gm.groq_router(client=client)
+    with pytest.raises(gm.GenerationError) as caught:
+        router.generate(preferred="invalid model id", strict=True, messages=[])
+    assert caught.value.code == "strict_pin"
+    assert client.events == []

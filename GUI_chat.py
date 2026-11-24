@@ -1,4 +1,5 @@
 import re
+from html import escape
 
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtGui import QTextCursor
@@ -239,10 +240,12 @@ class ChatFunctionalityMixin:
         actual = getattr(result, "actual_model", None)
         reason = getattr(result, "reason", None)
         if actual:
-            message = f"Answered with {actual}"
+            provider = getattr(result, "provider", None)
+            model_label = f"{provider}: {actual}" if provider else actual
+            message = f"Answered with {model_label}"
             if reason:
                 message += f" ({reason})"
-            self.statusBar.showMessage(message, 5000)
+            self.append_message("Model", escape(message), "#9CA3AF")
 
     def _cleanup_tts_worker(self, worker):
         """Clean up finished TTS worker and start the next one if available"""

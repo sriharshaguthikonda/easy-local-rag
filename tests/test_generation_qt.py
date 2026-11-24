@@ -281,3 +281,61 @@ def test_search_only_uses_offline_documents_without_generation(qapp, monkeypatch
     assert calls == [(window.collection, "offline query", 5)]
     assert window.results[0]["document"] == "offline answer evidence"
     assert window.chat_worker is None
+
+
+@pytest.mark.parametrize("mode, provider, should_rewrite", [
+    ("hybrid", "groq", True),
+    ("hybrid", "ollama", False),
+    ("phrase", "groq", False),
+])
+def test_direct_search_retains_modes_and_scopes_optional_rewrite(
+    qapp, monkeypatch, mode, provider, should_rewrite,
+):
+    import json
+    import GUI_direct_search
+
+    calls = []
+    statuses = []
+    rows = []
+
+    class Router:
+        def generate(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                text='{"rephrased": "expanded", "keywords": {}}',
+                provider="groq",
+                actual_model="replacement",
+                reason="saved model unavailable",
+            )
+
+    def fake_subprocess(args, **kwargs):
+        payload = json.loads(kwargs["env"]["_DS_ARGS"])
+        assert payload["mode"] == mode
+        assert payload["query"] == "original"
+        assert payload["rewritten_input"] == ("expanded" if should_rewrite else "original")
+        assert payload["embedding_model"] == "index-embedding"
+        return SimpleNamespace(returncode=0, stdout='{"results": [{"file_name": "source"}]}')
+
+    monkeypatch.setattr(GUI_direct_search.subprocess, "run", fake_subprocess)
+    worker = GUI_direct_search.DirectSearchSubprocessWorker(
+        query="original", chroma_path="unused", collection_name="unused",
+        embed_model="index-embedding", rewrite_model="saved-model", n_results=5,
+        include=["documents"], mode=mode, rewrite_settings={
+            "generation_provider": provider,
+            "generation_router_groq": Router(),
+            "strict_generation_model": True,
+        },
+    )
+    worker.status_update.connect(statuses.append)
+    worker.results_ready.connect(rows.extend)
+
+    worker.run()
+
+    assert len(calls) == int(should_rewrite)
+    assert rows == [{"file_name": "source"}]
+    if should_rewrite:
+        assert calls[0]["preferred"] == "saved-model"
+        assert calls[0]["strict"] is True
+        assert statuses == ["Rewrite used groq: replacement (saved model unavailable)"]
+    else:
+        assert statuses == []
