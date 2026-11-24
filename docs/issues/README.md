@@ -36,11 +36,8 @@ Each packet names one canonical issue/slice and its canonical plan links to it
 once created; this ledger tracks its state. The only states are `queued`,
 `planning`, `active`, `review`, `blocked-awaiting-user`, and `closed`. At most
 one issue may be `active`: an activated issue is the declared sole active
-issue, while stable between-issues/after-closure states may have zero. A
-blocked-awaiting-user #2 parks #2. #38 is the one approved independent P0
-exception after #37; it does not advance or bypass the #2/#18/#26 security
-sequence. If #2 remains blocked after #38, only read-only evidence audits and
-draft recommendations may continue; do not activate further implementation.
+issue, while stable between-issues/after-closure states may have zero.
+#38 completed its independent P0 scope. #2 remains open for #26B.
 
 Each packet must contain issue/canonical/roadmap links; exact target branch and
 frozen base SHA; maintained-path or retirement mode chosen first; current
@@ -53,12 +50,12 @@ unresolved placeholder, implementer choice, or speculative dependency.
 
 | Issue | State | Packet / next gate |
 |---|---|---|
-| #2 | blocked-awaiting-user | Await user rotation evidence; no containment closure is inferred from docs. |
+| #2 | queued | Source containment and recurrence scanning are in place. The owner previously confirmed rotating the exposed keys. Shared-history remediation under #26B is pending. |
 | #9 | closed | Completed through [PR #33](https://github.com/sriharshaguthikonda/easy-local-rag/pull/33), merged as `619365224f6db3770d3369fd84a295589699e513`; [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) is closed. |
 | #15 | closed | Completed through [PR #36](https://github.com/sriharshaguthikonda/easy-local-rag/pull/36), merged into the GUI branch as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205` from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`. |
-| #37 | active | [Ledger synchronization](ISSUE-037-ledger-sync.md) · [implementation packet](../superpowers/plans/2026-07-27-issue-037-ledger-validator-implementation.md). Implementation is gated by this activation PR's GitHub merge commit recorded in immutable PR evidence. |
-| #38 | queued | [Streamlit evidence contract](ISSUE-038-streamlit-evidence-contract.md). Explicit independent P0 exception after #37 only; #2 remains blocked. |
-| Active issue | #37 | #37 is the sole active issue. |
+| #37 | closed | Ledger validator completed through [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41). |
+| #38 | closed | Streamlit evidence contract completed through [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42) on the GUI lineage. |
+| Active issue | none | #37 and #38 are complete. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
@@ -72,7 +69,7 @@ invariant, closure gate, approval, or rollback constraint.
 
 | Gate producer | Pinned SHA / schema | Required evidence | Consumer | State |
 |---|---|---|---|---|
-| #2A containment | Not yet produced | revocation, active-tree scan, missing-key behavior | #18 | Not passed; docs are not proof. |
+| #2A containment | Produced 2026-11-24 | Owner-reported rotation, clean tracked-tree scan and verified missing-key behavior | #18 | Passed for the maintained branch tips. #2 stays open for #26B. |
 | #18 inventory/proposed disposition | Historical Aug 2 inventory documented; current local-ref evidence pending | immutable ref manifest, redacted scan, proposed dispositions | #26A/#26B, #19A | Public-ref continuity reverified 2026-11-24; docs-only publication only; #18 remains open. |
 | #26B separately approved rewrite | Not yet produced | all-ref post-rewrite evidence or documented, explicitly accepted immutable-ref residual outcome | #2 closure, #19A | Not passed; docs are not proof. |
 | #19A audit / #19B export | Not yet produced | frozen snapshot, manifest, checksums, read-only proof | #20A, #25 | Not passed; docs are not proof. |
@@ -131,7 +128,7 @@ approval, rollback, or scope means a separate packet.
 
 | Issue | Priority and type | Status | Canonical plan | Dependencies and sequence | GitHub |
 |---|---|---|---|---|---|
-| #2 | P0 security | Open — immediate containment blocker | [Rotate Groq keys](ISSUE-002-rotate-groq-keys.md) | Containment/rotation unlocks #18; early #26B alone rewrites history; #2 closes on its post-rewrite evidence before #19. | [Issue #2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2) |
+| #2 | P0 security | Open — awaiting #26B history remediation | [Rotate Groq keys](ISSUE-002-rotate-groq-keys.md) | Containment/rotation unlocks #18; early #26B alone rewrites history; #2 closes on its post-rewrite evidence before #19. | [Issue #2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2) |
 | #5 | P1 security | Open — partial implementation | [Prompt-injection defense](ISSUE-005-prompt-injection.md) | Retained safety requirement; its structured validation continues in #27. | [Issue #5](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5) |
 | #6 | P0 bug | **Closed — completed through PR #29 at GUI merge `daecce8a27f50da39284f5519d77b835905209f6`** | [MMR embedding fix](ISSUE-006-mmr-embedding-keyerror.md) | Fix commit `de7465902e00e363993f9ea9eb2190ce940e1bed`; preserve #11's embedding contract. | [Issue #6](https://github.com/sriharshaguthikonda/easy-local-rag/issues/6) |
 | #7 | P1 bug | Open — partial implementation | [Lazy Chroma initialization](ISSUE-007-lazy-chromadb-init.md) | Depends on #11 creation metadata; required only while the Chroma path remains supported. | [Issue #7](https://github.com/sriharshaguthikonda/easy-local-rag/issues/7) |
@@ -155,8 +152,8 @@ approval, rollback, or scope means a separate packet.
 | #25 | P0 todo | Open — cutover/retirement gate | [Chroma retirement](ISSUE-025-chroma-retirement.md) | After #27 and all migration/client gates; final state creates the blocked GUI issue or records no-GUI, then unlocks late #26. | [Issue #25](https://github.com/sriharshaguthikonda/easy-local-rag/issues/25) |
 | #26 | P1 developer experience | Open — split early/late | [Repository cleanup](ISSUE-026-repo-cleanup.md) | 26A/26B follow #2 containment/#18 and close #2 before #19; 26C/26D consume #25's immutable GUI/no-GUI handoff. | [Issue #26](https://github.com/sriharshaguthikonda/easy-local-rag/issues/26) |
 | #27 | P0 security | Open — answer-safety gate | [Grounded answers](ISSUE-027-grounded-answers.md) | Extends #5/#13 and owns structured validation associated with closed duplicate #14; after #24 and #21B/#22B, before #25. | [Issue #27](https://github.com/sriharshaguthikonda/easy-local-rag/issues/27) |
-| #37 | P1 developer experience | Open — active | [Ledger synchronization](ISSUE-037-ledger-sync.md) | First: repairs the authoritative execution ledger. [Implementation packet](../superpowers/plans/2026-07-27-issue-037-ledger-validator-implementation.md) is activated by this PR's recorded GitHub merge evidence. | [Issue #37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) |
-| #38 | P0 bug | Open — queued independent exception | [Streamlit evidence contract](ISSUE-038-streamlit-evidence-contract.md) | After #37 only; it does not unlock or bypass #2 -> #18 -> #26. | [Issue #38](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38) |
+| #37 | P1 developer experience | Closed — completed | [Ledger synchronization](ISSUE-037-ledger-sync.md) | Validator shipped through [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41). | [Issue #37](https://github.com/sriharshaguthikonda/easy-local-rag/issues/37) |
+| #38 | P0 bug | Closed — completed | [Streamlit evidence contract](ISSUE-038-streamlit-evidence-contract.md) | GUI implementation merged through [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42). | [Issue #38](https://github.com/sriharshaguthikonda/easy-local-rag/issues/38) |
 
 ## Gate discipline
 

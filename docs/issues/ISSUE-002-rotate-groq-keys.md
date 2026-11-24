@@ -2,7 +2,7 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** OPEN — immediate containment blocker. Rotation/revocation and active-source cleanup unlock #18; the issue remains open until early #26B supplies one of the two explicit post-rewrite terminal outcomes in the final closure gate.
+**Status:** OPEN — source containment complete. The owner previously confirmed rotation. Final closure awaits one of the two #26B history remediation outcomes below.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/2
 **Labels / priority:** `priority:P0`, `type:security`
 **Dependencies:** Owner access to the Groq console; #18's immutable ref inventory; early #26B as the sole executor of any separately approved shared-history rewrite.
@@ -16,14 +16,14 @@
 ## Affected interfaces, files, and artifacts
 
 - Environment contract: `GROQ_API_KEY` only.
-- Runtime clients in `groq_lama_MIlvs_RAG_ETTS.py` and `Ollama_MIlvus_RAG_chat_TTS.py`.
+- The Milvus scripts and notebook use `GROQ_API_KEY`. The legacy Streamlit Milvus script on `main` follows the same environment-only setup.
 - `.env.example`, `.gitignore`, and `.gitleaks.toml`.
 - Private rotation receipt and affected-ref/finding-type inventory without values.
 - #26B's post-rewrite all-ref manifest, redacted report, scanner version, config hash, and exit status are consumed as closure evidence; #2 does not create rewritten refs.
 
 ## Concrete actions
 
-- Search tracked text without displaying values; replace only the two known active call sites and audit all callers of Groq construction.
+- Search every tracked file without displaying values. Remove the literals at each active call site and audit all callers of Groq construction.
 - Add a missing-key error path before API use; do not log the environment value.
 - Run the active-tree scan below. After rotation, record explicit rewrite approval and hand the #18 inventory to #26B.
 - Accept #26B's post-rewrite evidence only when its pinned command covers local
@@ -32,6 +32,10 @@
   outcome in the final closure gate.
 
 ## Verification
+
+The `Secret scan` workflow checks the tracked tree and incoming commits
+on pull requests and pushes to `main` and the maintained GUI branch.
+It runs Gitleaks with the Groq rule and redacts matched values.
 
 ```powershell
 python -m py_compile groq_lama_MIlvs_RAG_ETTS.py Ollama_MIlvus_RAG_chat_TTS.py
