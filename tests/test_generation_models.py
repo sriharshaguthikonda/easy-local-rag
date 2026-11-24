@@ -530,6 +530,8 @@ def test_invalid_strict_pin_cannot_select_a_different_model():
 @pytest.mark.parametrize("options, code", [
     ({"mode": "local-chat"}, "provider_policy"),
     ({"mode": "offline-search"}, "provider_policy"),
+    ({"mode": "offline-search-only"}, "provider_policy"),
+    ({"mode": ""}, "provider_policy"),
     ({"n": 2}, "invalid_request"),
 ])
 def test_groq_rejects_incompatible_mode_and_multiple_choices_before_discovery(options, code):
@@ -557,6 +559,23 @@ def test_discovery_limits_can_narrow_but_never_widen_configured_profile(provider
     assert (profile.context_tokens, profile.output_tokens) == expected
     with pytest.raises(gm.GenerationError):
         router.generate(preferred=preferred, messages=[], max_output_tokens=expected[1] + 1)
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("field, limit", [
+    ("context_length", 0),
+    ("context_window", -1),
+    ("max_output_tokens", 0),
+    ("max_completion_tokens", -1),
+])
+def test_explicit_nonpositive_provider_limits_prevent_dispatch(field, limit):
+    preferred = "llama-3.3-70b-versatile"
+    client = FakeGroq([{"id": preferred, "active": True, field: limit}])
+    router = gm.groq_router(client=client)
+
+    with pytest.raises(gm.GenerationError) as caught:
+        router.generate(preferred=preferred, messages=[])
+    assert caught.value.code == "no_candidate"
     assert client.calls == []
 
 
