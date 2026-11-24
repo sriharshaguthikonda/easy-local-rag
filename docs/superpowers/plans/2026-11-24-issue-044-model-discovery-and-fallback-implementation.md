@@ -39,7 +39,8 @@ unsuitable here. [Alternative implementations](../../Research/landscape.yaml).
 | `GUI_context.py`, `GUI_direct_search.py` | JSON-mode Groq rewrites and lexical-only offline search. Reuse existing lexical scoring and query text when rewrite is unavailable. |
 | `streamlit_app.py` | Explicit provider, discovered preference, refresh, strict pin, evidence and model status. Replace the broad catch-and-switch. Keep citation and return-shape contracts and expose available evidence on generation failure. |
 | `groq_lama_chromadb_RAG_ETTS.py`, `streamlit_groq_lama_chromadb_RAG_ETTS.py` | Streaming answer and JSON rewrites, existing provider args plus list/refresh/model/pin flags. Keep CLI cancellation and suppress startup generation probes. |
-| `context_retrieval.py`, ingestion and TTS | Existing embedding, retrieval, and speech contracts. Use local document reads for offline lexical results. No embedding changes. |
+| `context_retrieval.py` | Route its live legacy Groq rewrite through the shared fallback boundary and reuse raw query on failure. Preserve the existing embedding contract. |
+| Ingestion and TTS | Continue to use their existing embedding and speech contracts. |
 
 ## Shared boundary
 
@@ -168,8 +169,11 @@ server metadata for all candidates and cap local output through
    `config/generation-models.json` and `tests/test_generation_models.py`.
    Use fake client catalogue/stream objects and injected monotonic clock.
    Assert the ordered attempts `[llama-3.3-70b-versatile, openai/gpt-oss-120b]`
-   after a real SDK-shaped 404 body, unchanged message text and citations,
-   `on_demand` on both calls, and result status naming the replacement.
+   after a real SDK-shaped 404 body. Assert event order is initial call,
+   forced catalogue refresh through the same client, then fallback call.
+   Have the initial catalogue omit GPT-OSS and the refresh add it, and
+   assert exact message text/citations, `on_demand` on both calls, and
+   result status naming the replacement.
    Test two simultaneous account clients, forced refresh and TTL, and assert
    no retry after auth failure, other 404, cancellation or the first
    nonempty delta. Deny candidates on class, quality, remote manifest,
@@ -216,15 +220,21 @@ server metadata for all candidates and cap local output through
    provider clients with outbound sockets denied.
 5. **CLI and shared legacy backend.** Own
    `groq_lama_chromadb_RAG_ETTS.py`,
-   `streamlit_groq_lama_chromadb_RAG_ETTS.py` and
-   `tests/test_generation_cli.py`. Extend the existing provider option
-   with `--model`, `--list-models`, `--refresh-models`,
-   `--strict-model` and `--offline-search QUERY`. Parse before
+   `streamlit_groq_lama_chromadb_RAG_ETTS.py`, `context_retrieval.py` and
+   `tests/test_generation_cli.py`. Add `--provider {groq,ollama}` (default
+   Groq), `--list-models`, `--refresh-models`, `--strict-model` and
+   `--offline-search QUERY`. With explicit `--provider`, `--model`
+   sets the selected provider's preference. Without `--provider`, keep
+   the legacy Ollama-only meaning of `--model` and default to Groq with
+   no cross-provider retry. Parse before
    opening a collection or constructing provider clients. Lazy-init the
    Groq and Ollama SDK clients after the corresponding provider is
    selected and export their pure generation functions through the
    shared boundary. Use test transport injection and the real CLI
-   callable or a subprocess with synthetic dependencies. Keep the
+   callable or a subprocess with synthetic dependencies. Assert explicit
+   Ollama mode creates no Groq client, default mode creates no Ollama
+   generation client, and the `context_retrieval.py` legacy rewrite uses
+   the shared router under a fake 404. Keep the
    maintained-backend import restriction from AGENTS in test processes.
    Do not add source-string assertions. Assert preferred/actual/reason
    on the CLI and exact evidence across the fallback. Keep speech
@@ -235,7 +245,9 @@ server metadata for all candidates and cap local output through
 From the isolated checkout in PowerShell, set
 `$ragPython = (Resolve-Path ../easy-local-rag/easyrag/Scripts/python.exe).Path`
 and `$env:PYTHONDONTWRITEBYTECODE = '1'` to avoid touching tracked cache
-files. In tasks 1–5, run the focused test before production changes and
+files. This linked checkout has no venv. Use the existing repository
+venv read-only and set the subprocess working directory to the linked
+checkout. In tasks 1–5, run the focused test before production changes and
 record the assertions that failed. Run it again for green.
 
 ```powershell
@@ -244,7 +256,7 @@ record the assertions that failed. Run it again for green.
 & $ragPython -m pytest tests/test_generation_streamlit.py tests/test_streamlit_citations_config.py -q
 & $ragPython -m pytest tests/test_generation_cli.py -q
 & $ragPython -m pytest tests -q
-& $ragPython -m py_compile generation_models.py offline_search.py GUI_models.py GUI_settings.py rag_gui.py GUI_chat.py GUI_workers.py GUI_context.py GUI_direct_search.py streamlit_app.py groq_lama_chromadb_RAG_ETTS.py streamlit_groq_lama_chromadb_RAG_ETTS.py tests/test_generation_models.py tests/test_offline_search.py tests/test_generation_qt.py tests/test_generation_streamlit.py tests/test_generation_cli.py tests/test_streamlit_citations_config.py
+& $ragPython -m py_compile generation_models.py offline_search.py GUI_models.py GUI_settings.py rag_gui.py GUI_chat.py GUI_workers.py GUI_context.py GUI_direct_search.py streamlit_app.py groq_lama_chromadb_RAG_ETTS.py streamlit_groq_lama_chromadb_RAG_ETTS.py context_retrieval.py tests/test_generation_models.py tests/test_offline_search.py tests/test_generation_qt.py tests/test_generation_streamlit.py tests/test_generation_cli.py tests/test_streamlit_citations_config.py
 & $ragPython scripts/validate_issue_ledger.py --repo sriharshaguthikonda/easy-local-rag
 git diff --check "$activationSha..HEAD"
 gitleaks git --redact=100 --no-banner --log-opts="$activationSha..HEAD" .
