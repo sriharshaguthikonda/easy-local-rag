@@ -32,7 +32,9 @@ The [owner approved #11 alone](https://github.com/sriharshaguthikonda/easy-local
 maintained-Chroma exception while #2 remains open. The exception requires the
 #11 packet review and separate activation PR merge, limits verification to
 synthetic collections, and leaves #2, #19/#20, and migration gated. #11 has
-passed independent verification and closed. #10 retains its own scope and activation gates.
+passed independent verification and closed. The [owner separately approved #10](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10#issuecomment-7200914319)
+for maintained ChromaDB. Its packet and separate activation are required.
+#2 and the PostgreSQL migration retain their current gates.
 
 ## JIT packet policy
 
@@ -62,7 +64,8 @@ unresolved placeholder, implementer choice, or speculative dependency.
 | #37 | closed | Ledger validator completed through [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41). |
 | #38 | closed | Streamlit evidence contract completed through [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42) on the GUI lineage. |
 | #11 | closed | Completed through [PR #58](https://github.com/sriharshaguthikonda/easy-local-rag/pull/58) at GUI merge `0be9ebe688ffd795960b6761422087105d26e63d`. The verified head `6f878bfeff993ff9e78c23595d40943cf53eeaa7` passed 88 focused and 333 full offline tests. See the [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/11#issuecomment-7200752206). |
-| Active issue | none | The #11 exception is complete. #2 remains open and #10 has its own activation gate. |
+| #10 | planning | [Reviewed packet pending activation](../superpowers/plans/2026-11-27-issue-010-chroma-hybrid-retrieval-implementation.md). |
+| Active issue | none | #10 awaits its separate activation merge. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
@@ -125,7 +128,7 @@ approval, rollback, or scope means a separate packet.
 | #5 | #27 maintained request boundary | #25 retires unsafe legacy builders | guarded-context regression; #27 does not replace it |
 | #7 | after #22B freezes supported clients, create a dedicated packet only if Chroma UI remains supported | close from #25 retirement proof | fresh-path/import regression or verified retirement |
 | #8 | #26A early hygiene | #26C final supported-path proof | maintained-entry-point coverage or verified retirement |
-| #10 | `.memory` #5/#23 lexical replacement | dedicated legacy-cache packet only if legacy BM25 remains supported | full-corpus regression or verified replacement |
+| #10 | One-time maintained Chroma exception | verified retirement remains a later route | independent full-corpus, identity and concurrency verification |
 | #11 | one-time approved maintained Chroma guard and CSV provenance coverage | verified retirement remains an ordinary route outside this exception | independently verified maintained-path regressions |
 | #12 | decide at #22B; per-session worker packet only if speech remains supported | retirement | worker-lifecycle regression or verified retirement |
 | #13 | #22/#27 maintained request budgeting | #25 retires remaining regex builders | active-path budget regression or verified retirement |
@@ -141,7 +144,7 @@ approval, rollback, or scope means a separate packet.
 | #7 | P1 bug | Open — partial implementation | [Lazy Chroma initialization](ISSUE-007-lazy-chromadb-init.md) | Depends on #11 creation metadata; required only while the Chroma path remains supported. | [Issue #7](https://github.com/sriharshaguthikonda/easy-local-rag/issues/7) |
 | #8 | P1 bug | **Closed — completed** | [Config-driven paths](ISSUE-008-config-driven-paths.md) | Completed independently; #16 retains its documentation scope. | [Issue #8](https://github.com/sriharshaguthikonda/easy-local-rag/issues/8) |
 | #9 | P0 security | **Closed — completed through PR #33 at merge `619365224f6db3770d3369fd84a295589699e513`** | [Conversation import validation](ISSUE-009-validate-conversation-import.md) | Independent small closure completed; imported sessions never restore trusted retrieval state. | [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) |
-| #10 | P1 performance | Open — needs proof | [Full-corpus BM25](ISSUE-010-full-corpus-bm25.md) | Retained by `.memory` #5 and measured by #23; follows the embedding contract in #11. | [Issue #10](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10) |
+| #10 | P1 performance | Open — packet pending activation | [Full-corpus BM25](ISSUE-010-full-corpus-bm25.md) | One-time Chroma exception after verified #11. Migration and #2 retain their existing gates. | [Issue #10](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10) |
 | #11 | P1 bug | **Closed — independently verified through PR #58** | [Embedding-model contract](ISSUE-011-embedding-model-match.md) | The #11 prerequisite for #10 is satisfied. Migration provenance remains gated under #19/#20. | [Issue #11](https://github.com/sriharshaguthikonda/easy-local-rag/issues/11) |
 | #12 | P1 bug | Open — partial implementation | [Streamlit TTS worker](ISSUE-012-streamlit-tts-worker.md) | Legacy client closure only; future provider/UI behavior is governed by #22 and future GUI work. | [Issue #12](https://github.com/sriharshaguthikonda/easy-local-rag/issues/12) |
 | #13 | P1 bug | Open — partial implementation | [Tokenizer budgeting](ISSUE-013-tiktoken-counter.md) | #16 carries the dependency; #27 extends the requirement into structured answer validation. | [Issue #13](https://github.com/sriharshaguthikonda/easy-local-rag/issues/13) |
