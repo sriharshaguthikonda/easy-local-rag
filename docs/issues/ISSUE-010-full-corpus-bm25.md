@@ -2,7 +2,7 @@
 
 [Roadmap ledger](README.md) · [Implementation packet](../superpowers/plans/2026-11-27-issue-010-chroma-hybrid-retrieval-implementation.md)
 
-**Status:** OPEN — one-time maintained ChromaDB exception approved. Separate activation pending.
+**Status:** OPEN — one-time maintained ChromaDB exception approved. Activated by the separate ledger PR.
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/10
 **Labels / priority:** `priority:P1`, `type:perf`
 **Dependencies:** [Owner approval](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10#issuecomment-7200914319). The maintained GUI base includes independently verified #11. #2 remains open with its existing gate. PostgreSQL migration keeps its existing sequence.
