@@ -163,7 +163,9 @@ class ChatWorker(QThread):
                     meta = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
                 guarded_sources.append(
                     {
-                        "citation_id": result.get("id", idx),
+                        "citation_id": idx,
+                        "collection_id": result.get("collection_id"),
+                        "chunk_id": result.get("chunk_id"),
                         "file_name": meta.get("file_name", "unknown"),
                         "document": result.get("document", ""),
                     }

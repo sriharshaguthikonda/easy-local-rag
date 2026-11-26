@@ -462,7 +462,9 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         toolbar_layout.addWidget(QLabel("Filter:"))
         self.direct_filter_input = QLineEdit()
         self.direct_filter_input.setPlaceholderText("Filter by file/snippet...")
-        self.direct_filter_input.textChanged.connect(self.apply_direct_search_view)
+        self.direct_filter_input.textChanged.connect(self.invalidate_direct_results)
+        self.collection_combo.currentTextChanged.connect(self.invalidate_direct_results)
+        self.chromadb_path_edit.textChanged.connect(self.invalidate_direct_results)
         toolbar_layout.addWidget(self.direct_filter_input)
 
         toolbar_layout.addWidget(QLabel("Top K:"))

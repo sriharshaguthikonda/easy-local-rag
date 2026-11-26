@@ -3,7 +3,7 @@ import sys
 
 import ollama
 
-from embedding_contract import EmbeddingContractError, validate_embedding_compatibility
+from embedding_contract import EmbeddingContractError
 from groq import Groq
 
 import io
@@ -38,7 +38,6 @@ import nest_asyncio
 from dotenv import load_dotenv
 
 
-import numpy as np
 
 
 # Constants
@@ -705,8 +704,9 @@ def get_relevant_context_hybrid(
     strict=False,
     cancelled=None,
 ):
+    from chroma_hybrid_retrieval import RetrievalError, search_collection, search_keywords
+
     try:
-        relevant_context = ""
         if rewrite:
             rewrite_options = {}
             if router is not None:
@@ -724,198 +724,54 @@ def get_relevant_context_hybrid(
         if callable(cancelled) and cancelled():
             return "", []
 
-        local_collection = collection
-
         requested_model = model
-        if not validate_embedding_compatibility(local_collection, requested_model):
+        words = search_keywords(rewritten_input, synonym_dict) if keyword_match else []
+        results = search_collection(
+            collection, user_input, embedding_model=requested_model,
+            embed=lambda: ollama.embeddings(
+                model=requested_model, prompt=rewritten_input, keep_alive=-1,
+            )["embedding"],
+            top_k=top_k, additional=additional_unique_files, diversity=lambda_mmr,
+            vector_weight=alpha, lexical_weight=beta,
+            words=words, keyword_weight=beta if keyword_match else 0,
+        )
+        if callable(cancelled) and cancelled():
             return "", []
-
-        # Encode the rewritten input into an embedding
-        input_embedding = ollama.embeddings(
-            model=requested_model,
-            prompt=rewritten_input,
-            keep_alive=-1,
-        )["embedding"]
-
-        # Perform vector similarity search
-        search_result = local_collection.query(
-            query_embeddings=[input_embedding],
-            n_results=50,
-            include=["documents", "metadatas", "distances", "embeddings"],
-        )
-
-        # Extract results with distances
-        vector_results = [
+        sources = [
             {
-                "document": document,
-                "meta": meta,
-                "embedding": emb,
-                "vector_score": 1.0
-                - dist,  # Convert distance to similarity (assuming normalized)
+                **row["meta"],
+                "collection_id": row["collection_id"],
+                "chunk_id": row["chunk_id"],
+                "document": row["document"],
+                "score": row["final_score"],
             }
-            for document, meta, dist, emb in zip(
-                search_result["documents"][0],
-                search_result["metadatas"][0],
-                search_result["distances"][0],
-                search_result["embeddings"][0],
-            )
+            for row in results
         ]
 
-        # Perform keyword matching if enabled
-        keyword_results = []
-        if keyword_match:
-            # Extract keywords and synonyms
-            keywords = [
-                word
-                for word in rewritten_input.lower().split()
-                if word not in non_keywords
-            ]
+        if results:
+            threading.Thread(
+                target=print_relevant_context,
+                args=(results,),
+                daemon=True,
+            ).start()
+        context = "\n\n".join(row["document"] for row in results)
+        return context, sources
 
-            # Add synonyms to the keyword list
-            for key, synonyms in synonym_dict.items():
-                keywords.extend(synonyms)
-
-            # Use a set to remove duplicates
-            keywords = set(keywords)
-
-            for document, meta, emb in zip(
-                search_result["documents"][0],
-                search_result["metadatas"][0],
-                search_result["embeddings"][0],
-            ):
-                # Match against both original keywords and their synonyms
-                match_score = sum(
-                    document.lower().count(keyword)
-                    + meta["file_name"].lower().count(keyword)
-                    for keyword in keywords
-                )
-                if match_score > 0:
-                    keyword_results.append(
-                        {
-                            "document": document,
-                            "meta": meta,
-                            "embedding": emb,
-                            "keyword_score": match_score,
-                        }
-                    )
-
-        # Normalize scores for both vector and keyword results
-        max_vector_score = max(
-            [res["vector_score"] for res in vector_results], default=1
-        )
-        max_keyword_score = max(
-            [res["keyword_score"] for res in keyword_results], default=1
-        )
-
-        for res in vector_results:
-            res["vector_score"] /= max_vector_score
-
-        for res in keyword_results:
-            res["keyword_score"] /= max_keyword_score
-
-        # Combine results using weighted scoring
-        combined_results = {}
-        for res in vector_results:
-            file_name = res["meta"]["file_name"]
-            combined_results[file_name] = {
-                "document": res["document"],
-                "meta": res["meta"],
-                "embedding": res["embedding"],
-                "final_score": alpha * res["vector_score"],
-            }
-
-        for res in keyword_results:
-            file_name = res["meta"]["file_name"]
-            if file_name in combined_results:
-                combined_results[file_name]["final_score"] += (
-                    beta * res["keyword_score"]
-                )
-            else:
-                combined_results[file_name] = {
-                    "document": res["document"],
-                    "meta": res["meta"],
-                    "embedding": res.get("embedding"),
-                    "final_score": beta * res["keyword_score"],
-                }
-
-        # Sort by final_score
-        sorted_results = sorted(
-            combined_results.values(), key=lambda x: x["final_score"], reverse=True
-        )
-
-        # Seed MMR with the top-k results, then add one diverse result at a time.
-        selected_results = sorted_results[:top_k]
-        remaining_results = [res for res in sorted_results[top_k:]]
-        for _ in range(additional_unique_files):
-            if not remaining_results:
-                break
-
-            best_result = None
-            best_score = None
-            for res in remaining_results:
-                current_embedding = res.get("embedding")
-                max_similarity = max(
-                    [
-                        np.dot(current_embedding, selected["embedding"])
-                        for selected in selected_results
-                        if current_embedding is not None
-                        and selected.get("embedding") is not None
-                    ],
-                    default=0,
-                )
-                mmr_score = (
-                    res["final_score"]
-                    if current_embedding is None
-                    else lambda_mmr * res["final_score"]
-                    - (1 - lambda_mmr) * max_similarity
-                )
-                if best_score is None or mmr_score > best_score:
-                    best_result = res
-                    best_score = mmr_score
-
-            selected_results.append(best_result)
-            remaining_results.remove(best_result)
-
-        final_results = [
-            {
-                **res["meta"],
-                "document": res["document"],
-                "score": res["final_score"],
-            }
-            for res in selected_results
-        ]
-
-        # Prepare relevant context
-        relevant_context = "\n\n".join(
-            source["document"] for source in final_results
-        )
-
-        # Start a worker thread to print details of the results
-        worker_thread = threading.Thread(
-            target=print_relevant_context,
-            args=(selected_results,),
-            daemon=True,
-        )
-        worker_thread.start()
-
-        # Keep text and metadata together so callers cannot lose retrieved evidence.
-        return relevant_context, final_results
-
-    except Exception as e:
-        if isinstance(e, EmbeddingContractError):
-            raise RuntimeError(f"Retrieval failed: {e}") from e
-        raise RuntimeError("Retrieval failed; no model request was made") from e
+    except (EmbeddingContractError, RetrievalError) as error:
+        raise RuntimeError(f"Retrieval failed: {error}") from error
+    except Exception as error:
+        raise RuntimeError("Retrieval failed; no model request was made") from error
 
 
 def print_relevant_context(results):
     print("Context Pulled from Documents:\n")
     for result in results:
         meta = result["meta"]
-        file_name = meta["file_name"]
+        file_name = meta.get("file_path") or meta.get("file_name") or "Unknown"
         modification_time = meta.get("modification_time", "Unknown")
         text = result["document"]
 
-        clickable_file_path = urljoin("file:", Path(file_name).as_uri())
+        clickable_file_path = urljoin("file:", Path(file_name).absolute().as_uri())
 
         print(
             f"{YELLOW}Text:{RESET_COLOR} {text}\n"

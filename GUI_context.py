@@ -5,7 +5,7 @@ import json
 import subprocess
 
 from groq import Groq
-from rank_bm25 import BM25Okapi
+from chroma_hybrid_retrieval import CAPTURE_PROCESS_TIMEOUT
 
 
 def rewrite_input_and_generate_synonyms(settings, user_input, *, on_result=None):
@@ -71,137 +71,35 @@ def rewrite_input_and_generate_synonyms(settings, user_input, *, on_result=None)
 
 
 def get_relevant_context_hybrid(settings, user_input):
-    """Get relevant context using hybrid search - runs in main thread"""
-    print("[Context] Getting rewritten input...")
+    """Retrieve evidence in the isolated Chroma process used by Qt."""
     if settings.get("generation_provider") == "ollama":
-        # Do not perform a paid Groq rewrite for a local generation request.
-        rewritten_input, synonym_dict = user_input, {}
+        rewritten, synonyms = user_input, {}
     else:
-        rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(settings, user_input)
+        rewritten, synonyms = rewrite_input_and_generate_synonyms(settings, user_input)
 
-    print("[Context] Querying ChromaDB via subprocess...")
-    helper_script = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        'GUI_chromadb_helper.py',
-    )
-    python_exe = sys.executable
-
-    input_data = json.dumps({
-        'chromadb_path': settings['chromadb_path'],
-        'collection_name': settings['collection_name'],
-        'query': rewritten_input,
-        'embedding_model': settings['embedding_model'],
-        'n_results': 20,
-    })
-
-    result = subprocess.run(
-        [python_exe, helper_script],
-        input=input_data,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-
-    if result.returncode != 0:
-        raise Exception(f"ChromaDB helper failed: {result.stderr}")
-
-    output = json.loads(result.stdout)
-    if not output.get('success'):
-        raise Exception(f"ChromaDB query failed: {output.get('error')}")
-
-    if not output['documents']:
-        return []
-
-    search_result = {
-        'documents': [output['documents']],
-        'metadatas': [output['metadatas']],
-        'distances': [output['distances']],
+    request = {
+        "chromadb_path": settings["chromadb_path"],
+        "collection_name": settings["collection_name"],
+        "collection_id": settings.get("collection_id"),
+        "embedding_model": settings["embedding_model"],
+        "query": user_input,
+        "rewritten": rewritten,
+        "synonyms": synonyms,
+        "n_results": int(settings["top_k"]),
+        "vector_weight": float(settings["alpha"]),
+        "keyword_weight": float(settings["beta"]),
+        "lexical_weight": float(settings["gamma"]),
+        "hybrid": True,
     }
-    print(f"[Context] Got {len(output['documents'])} results")
-
-    # Vector results
-    vector_results = [
-        {"meta": meta, "document": doc, "vector_score": 1.0 - dist}
-        for meta, doc, dist in zip(
-            search_result["metadatas"][0],
-            search_result["documents"][0],
-            search_result["distances"][0],
-        )
-    ]
-
-    # Keyword matching
-    non_keywords = {"is", "a", "an", "and", "the", "of", "in", "on", "at", "by", "with", "for", "to", "from"}
-    keywords = [word for word in rewritten_input.lower().split() if word not in non_keywords]
-
-    for key, details in synonym_dict.items():
-        keywords.append(key)
-        for field in ['synonyms', 'spelling_variants', 'plural_singular', 'parts_of_speech', 'related_terms']:
-            if details.get(field):
-                keywords.extend(details[field])
-
-    keywords = list(set(keywords))
-
-    keyword_results = []
-    for meta, doc in zip(search_result["metadatas"][0], search_result["documents"][0]):
-        normalized_doc = re.sub(r"(?<=\w)-\s*(?=\w)", "", doc.lower())
-        match_score = sum(len(re.findall(rf"\b{re.escape(kw)}\b", normalized_doc)) for kw in keywords)
-        if match_score > 0:
-            keyword_results.append({"meta": meta, "document": doc, "keyword_score": match_score})
-
-    # BM25
-    bm25_corpus = search_result["documents"][0]
-    bm25 = BM25Okapi([doc.split() for doc in bm25_corpus])
-    bm25_scores = bm25.get_scores(rewritten_input.split())
-
-    bm25_results = [
-        {"meta": meta, "document": doc, "bm25_score": score}
-        for meta, doc, score in zip(
-            search_result["metadatas"][0],
-            search_result["documents"][0],
-            bm25_scores,
-        )
-    ]
-
-    # Normalize and combine
-    alpha, beta, gamma = settings['alpha'], settings['beta'], settings['gamma']
-    max_vector = max([r["vector_score"] for r in vector_results], default=1)
-    max_keyword = max([r["keyword_score"] for r in keyword_results], default=1)
-    max_bm25 = max([r["bm25_score"] for r in bm25_results], default=1)
-
-    combined = {}
-    for res in vector_results:
-        fn = res["meta"].get("file_name", "unknown")
-        combined[fn] = {
-            "meta": res["meta"],
-            "document": res["document"],
-            "final_score": alpha * (res["vector_score"] / max_vector),
-            "keywords": keywords,
-        }
-
-    for res in keyword_results:
-        fn = res["meta"].get("file_name", "unknown")
-        if fn in combined:
-            combined[fn]["final_score"] += beta * (res["keyword_score"] / max_keyword)
-        else:
-            combined[fn] = {
-                "meta": res["meta"],
-                "document": res["document"],
-                "final_score": beta * (res["keyword_score"] / max_keyword),
-                "keywords": keywords,
-            }
-
-    for res in bm25_results:
-        fn = res["meta"].get("file_name", "unknown")
-        if fn in combined:
-            combined[fn]["final_score"] += gamma * (res["bm25_score"] / max_bm25)
-        else:
-            combined[fn] = {
-                "meta": res["meta"],
-                "document": res["document"],
-                "final_score": gamma * (res["bm25_score"] / max_bm25),
-                "keywords": keywords,
-            }
-
-    sorted_results = sorted(combined.values(), key=lambda x: x["final_score"], reverse=True)
-    print(f"[Context] Returning top {settings['top_k']} results")
-    return sorted_results[:settings['top_k']]
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "GUI_chromadb_helper.py")
+    result = subprocess.run(
+        [sys.executable, helper], input=json.dumps(request), capture_output=True,
+        encoding="utf-8", env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        timeout=CAPTURE_PROCESS_TIMEOUT,
+    )
+    if result.returncode:
+        raise RuntimeError(f"ChromaDB helper failed with status {result.returncode}")
+    output = json.loads(result.stdout)
+    if not output["success"]:
+        raise RuntimeError(f"ChromaDB query failed: {output['error']}")
+    return output["results"]

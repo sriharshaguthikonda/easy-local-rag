@@ -302,7 +302,7 @@ class DummyChromaClient:
     def list_collections(self):
         return self._collections
     
-    def get_collection(self, name):
+    def get_collection(self, name, *, embedding_function=None):
         return DummyCollection(name=name)
 
 

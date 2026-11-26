@@ -576,6 +576,8 @@ def _offline_sources(query):
         {
             **record["metadata"],
             "file_name": record["metadata"].get("file_name") or "unknown",
+            "collection_id": record["collection_id"],
+            "chunk_id": record["chunk_id"],
             "document": record["document"],
             "relevance_score": record["relevance_score"],
         }
@@ -641,7 +643,7 @@ def render_source_documents(metadata, cited_ids):
             meta = source_map.get(citation_id)
             if not meta:
                 continue
-            file_path = Path(meta["file_name"])
+            file_path = Path(meta.get("file_path") or meta["file_name"])
             st.markdown(f"### [{citation_id}] {file_path.name}")
 
             col1, col2 = st.columns([1, 1])
@@ -743,7 +745,10 @@ def main():
                     # ... existing source display ...
                     with st.expander("Source Actions"):
                         # Add tags
-                        tags = st.text_input(f"Tags for {source['file_name']}")
+                        tags = st.text_input(
+                            f"Tags for {source['file_name']}",
+                            key=f"source_tags_{source.get('collection_id')}_{source.get('chunk_id')}_{source['citation_id']}",
+                        )
                         if st.button("Save Tags"):
                             st.session_state.tags[source["file_name"]] = tags.split(",")
 

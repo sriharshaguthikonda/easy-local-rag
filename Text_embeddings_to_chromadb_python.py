@@ -22,6 +22,8 @@ import json
 import math
 import os
 import re
+import subprocess
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -30,8 +32,10 @@ import chromadb
 from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 import winsound
 
+from chroma_hybrid_retrieval import canonical_store_path, open_client, persistent_selection, store_lock
 from embedding_contract import (
     DEFAULT_EMBEDDING_MODEL,
+    EmbeddingContractError,
     open_collection_for_embedding_write,
     validate_embedding_compatibility,
 )
@@ -42,11 +46,12 @@ from embedding_contract import (
 
 csv_path = "processed_data.csv"
 collection_name = "html_chunks_text_in_documents"
+STORE_PATH = canonical_store_path("./chroma")
 
 
 def init_chromadb():
     client = chromadb.PersistentClient(
-        settings=Settings(),
+        path=STORE_PATH, settings=Settings(),
         tenant=DEFAULT_TENANT,
         database=DEFAULT_DATABASE,
     )
@@ -158,9 +163,45 @@ def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
         raise ValueError("CSV batch size must be a positive integer.")
     with _validated_csv_snapshot(csv_path) as (snapshot, model):
         if collection is None:
-            collection = init_chromadb()
-        validate_embedding_compatibility(collection, model, for_write=True)
-        _write_csv_batches(collection, snapshot, batch_size)
+            with store_lock(STORE_PATH):
+                collection = init_chromadb()
+                validate_embedding_compatibility(collection, model, for_write=True)
+                _write_csv_batches(collection, snapshot, batch_size)
+        elif (selection := persistent_selection(collection)) is not None:
+            # A writer that was given a warm client must reopen the native index.
+            result = subprocess.run(
+                [sys.executable, "-c", "from Text_embeddings_to_chromadb_python import _write_selected_csv; _write_selected_csv()"],
+                cwd=Path(__file__).resolve().parent,
+                input=json.dumps([selection, str(snapshot), model, batch_size]),
+                stdout=subprocess.PIPE, encoding="utf-8",
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            )
+            if result.returncode:
+                kind, message = json.loads(result.stdout) if result.stdout else (
+                    "RuntimeError", f"CSV writer exited with status {result.returncode}",
+                )
+                error_class = EmbeddingContractError if kind == "EmbeddingContractError" else RuntimeError
+                raise error_class(message)
+        else:
+            validate_embedding_compatibility(collection, model, for_write=True)
+            _write_csv_batches(collection, snapshot, batch_size)
+
+
+def _write_selected_csv():
+    selection, snapshot, model, batch_size = json.load(sys.stdin)
+    try:
+        with store_lock(selection["path"]):
+            client = open_client(
+                selection["path"], tenant=selection["tenant"], database=selection["database"],
+            )
+            collection = client.get_collection(selection["name"], embedding_function=None)
+            validate_embedding_compatibility(collection, model, for_write=True)
+            if str(collection.id) != selection["expected_id"]:
+                raise RuntimeError("The selected Chroma collection changed during CSV preflight.")
+            _write_csv_batches(collection, snapshot, batch_size)
+    except Exception as error:
+        print(json.dumps([type(error).__name__, str(error)]))
+        sys.exit(1)
 
 
 def _write_csv_batches(collection, csv_path, batch_size):
@@ -174,7 +215,7 @@ def _write_csv_batches(collection, csv_path, batch_size):
         for row in batch:
             chunk_id = row[0]
             if chunk_id in unique_ids:
-                print(f"Duplicate ID found: {chunk_id}, skipping this entry.")
+                print(f"Duplicate ID found: {chunk_id}, skipping this entry.", file=sys.stderr)
                 continue
 
             unique_ids.add(chunk_id)
@@ -194,13 +235,10 @@ def _write_csv_batches(collection, csv_path, batch_size):
             )
             embeddings.append(embedding)
 
-        try:
-            collection.add(
-                embeddings=embeddings, metadatas=metadatas, ids=ids, documents=documents
-            )
-            print(f"Inserted {len(ids)} records to ChromaDB")
-        except Exception as e:
-            print(f"An error occurred while adding documents: {e}")
+        collection.add(
+            embeddings=embeddings, metadatas=metadatas, ids=ids, documents=documents
+        )
+        print(f"Inserted {len(ids)} records to ChromaDB", file=sys.stderr)
 
 
 def main():

@@ -71,6 +71,8 @@ class ChatFunctionalityMixin:
                     context_results.append(
                         {
                             "id": source.get("id"),
+                            "collection_id": source.get("collection_id"),
+                            "chunk_id": source.get("chunk_id"),
                             "meta": metadata,
                             "metadata": metadata,
                             "document": source.get("document", ""),
