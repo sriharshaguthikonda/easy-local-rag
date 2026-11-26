@@ -2,10 +2,10 @@
 
 [Roadmap ledger](README.md)
 
-**Status:** OPEN — active under the one-time maintained Chroma implementation exception after the separate activation merge. Shared coverage and CSV provenance are required.
+**Status:** CLOSED — independently verified on synthetic Chroma and merged through [PR #58](https://github.com/sriharshaguthikonda/easy-local-rag/pull/58).
 **GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/11
 **Labels / priority:** `priority:P1`, `type:bug`
-**Dependencies:** The [owner approved the #11-only exception](https://github.com/sriharshaguthikonda/easy-local-rag/issues/11#issuecomment-7191003443) while #2 remains open. After the separate activation merge, implement and independently verify the maintained Chroma readers and writers, including imported CSV provenance. #10 stays blocked until independent verification passes. #19/#20 migration provenance and all #2 closure criteria stay gated.
+**Dependencies:** The [owner approved the #11-only exception](https://github.com/sriharshaguthikonda/easy-local-rag/issues/11#issuecomment-7191003443) while #2 remains open. [PR #57](https://github.com/sriharshaguthikonda/easy-local-rag/pull/57) separately activated #11. The verified Chroma guard satisfies the #11 prerequisite for #10. #19/#20 migration provenance and all #2 closure criteria stay gated.
 
 [Implementation packet](../superpowers/plans/2026-11-26-issue-011-chroma-embedding-contract-implementation.md)
 
@@ -25,6 +25,11 @@
 - Preserve all existing collection labels. Required recovery for an unlabelled destination is a separately authorized rebuild or a new correctly labelled collection.
 - Audit every caller generating embeddings, not only GUI direct search.
 - Keep the default model in one shared location where practical.
+
+## Closure evidence
+
+- Implemented at merge `0be9ebe688ffd795960b6761422087105d26e63d` on the maintained GUI branch from reviewed head `6f878bfeff993ff9e78c23595d40943cf53eeaa7`. [Implementation PR](https://github.com/sriharshaguthikonda/easy-local-rag/pull/58) · [verification and closure](https://github.com/sriharshaguthikonda/easy-local-rag/issues/11#issuecomment-7200752206).
+- 88 focused tests and 333 full-suite tests passed in a clean checkout using Python 3.12, ChromaDB 1.0.16, temporary collections and stubbed embedding calls.
 
 ## Verification
 
