@@ -3,6 +3,8 @@ import json
 
 import threading
 import ollama
+
+from embedding_contract import EmbeddingContractError, validate_embedding_compatibility
 import chromadb
 import os
 
@@ -142,7 +144,7 @@ def _ensure_collection():
         local_client = chromadb.PersistentClient(
             settings=Settings(anonymized_telemetry=False)
         )
-        collection = local_client.get_or_create_collection(
+        collection = local_client.get_collection(
             name=collection_name, embedding_function=None
         )
     return collection
@@ -256,9 +258,13 @@ def get_relevant_context_hybrid(
 
         local_collection = _ensure_collection()
 
+        requested_model = model
+        if not validate_embedding_compatibility(local_collection, requested_model):
+            return ""
+
         # Encode the rewritten input into an embedding
         input_embedding = ollama.embeddings(
-            model=model,
+            model=requested_model,
             prompt=rewritten_input,
             keep_alive=-1,
         )["embedding"]
@@ -420,4 +426,6 @@ def get_relevant_context_hybrid(
         return relevant_context
 
     except Exception as e:
+        if isinstance(e, EmbeddingContractError):
+            raise RuntimeError(f"Retrieval failed: {e}") from e
         raise RuntimeError("Retrieval failed; no model request was made") from e

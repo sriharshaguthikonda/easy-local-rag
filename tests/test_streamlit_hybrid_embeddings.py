@@ -4,8 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from embedding_contract import EmbeddingContractError, validate_embedding_compatibility
+
 
 class _FakeCollection:
+    metadata = {"embedding_model": "test-model"}
+
     def __init__(self, result):
         self.result = result
         self.calls = []
@@ -24,6 +28,8 @@ class _NoopThread:
 
 
 class _FailingCollection:
+    metadata = {"embedding_model": "test-model"}
+
     def query(self, **_kwargs):
         raise KeyError("missing retrieval field")
 
@@ -59,6 +65,8 @@ def test_hybrid_context_uses_documents_and_greedy_mmr_without_metadata_text():
             embeddings=lambda **_kwargs: {"embedding": [1, 0]}
         ),
         "model": "test-model",
+        "validate_embedding_compatibility": validate_embedding_compatibility,
+        "EmbeddingContractError": EmbeddingContractError,
         "collection": collection,
         "non_keywords": set(),
         "np": SimpleNamespace(dot=lambda left, right: sum(a * b for a, b in zip(left, right))),
@@ -107,6 +115,8 @@ def test_hybrid_retrieval_failure_raises_instead_of_returning_an_answer():
             embeddings=lambda **_kwargs: {"embedding": [1, 0]}
         ),
         "model": "test-model",
+        "validate_embedding_compatibility": validate_embedding_compatibility,
+        "EmbeddingContractError": EmbeddingContractError,
         "collection": _FailingCollection(),
         "non_keywords": set(),
     }

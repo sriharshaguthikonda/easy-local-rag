@@ -16,9 +16,15 @@ Here are some general steps if you choose to use WSL:
 Alternatively, you can continue using Docker on Windows as a workaround until native support becomes available.
 """
 
-import os
 import csv
+import hashlib
 import json
+import math
+import os
+import re
+from contextlib import contextmanager
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from tqdm import tqdm
 import chromadb
 from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
@@ -26,7 +32,8 @@ import winsound
 
 from embedding_contract import (
     DEFAULT_EMBEDDING_MODEL,
-    ensure_collection_embedding_model,
+    open_collection_for_embedding_write,
+    validate_embedding_compatibility,
 )
 """TODO 1: Update the `csv_path` variable to point to the location of your processed data CSV file."""
 """TODO 1: Update the `csv_path` variable to point to the location of your processed data CSV file."""
@@ -43,37 +50,120 @@ def init_chromadb():
         tenant=DEFAULT_TENANT,
         database=DEFAULT_DATABASE,
     )
-    # delete a particular collection
-    #     client.delete_collection(collection_name)
+    return open_collection_for_embedding_write(client, collection_name, DEFAULT_EMBEDDING_MODEL)
 
+
+def _load_provenance(path):
+    manifest_path = path.with_name(path.name + ".provenance.json")
     try:
-        collection = client.get_or_create_collection(name=collection_name)
-        ensure_collection_embedding_model(collection, DEFAULT_EMBEDDING_MODEL)
+        with manifest_path.open(encoding="utf-8") as manifest:
+            provenance = json.load(manifest)
+    except (OSError, ValueError) as error:
+        raise ValueError(f"Cannot read CSV provenance: {manifest_path.name}.") from error
 
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        collection = None
+    version = provenance.get("schema_version") if isinstance(provenance, dict) else None
+    if type(version) is not int or version != 1:
+        raise ValueError("CSV provenance must have schema_version 1.")
+    if provenance.get("embedding_model") != DEFAULT_EMBEDDING_MODEL:
+        raise ValueError("CSV provenance embedding_model does not match the configured writer.")
+    dimensions = provenance.get("dimensions")
+    if type(dimensions) is not int or dimensions <= 0:
+        raise ValueError("CSV provenance dimensions must be a positive integer.")
+    digest = provenance.get("csv_sha256")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("CSV provenance requires a lowercase SHA-256 digest.")
+    return provenance
 
-    return collection
+
+def _read_csv_rows(path):
+    with path.open(encoding="utf-8", newline="") as csvfile:
+        reader = csv.reader(csvfile, strict=True)
+        header = next(reader, None)
+        if header != ["id", "text", "file_name", "modification_time", "embedding"]:
+            raise ValueError("CSV header must match the five-column vector export format.")
+        yield from reader
+
+
+def _finite_vector_value(value):
+    # Chroma stores vectors as float32.
+    return type(value) in (int, float) and abs(value) <= 3.4028234663852886e38
+
+
+def _validate_csv_rows(snapshot, dimensions):
+    for row_number, row in enumerate(_read_csv_rows(snapshot), start=2):
+        try:
+            if len(row) != 5 or not row[0].strip():
+                raise ValueError
+            timestamp = float(row[3])
+            vector = json.loads(row[4])
+            if (
+                not math.isfinite(timestamp)
+                or not isinstance(vector, list)
+                or len(vector) != dimensions
+                or not all(_finite_vector_value(value) for value in vector)
+            ):
+                raise ValueError
+        except ValueError as error:
+            raise ValueError(f"CSV row {row_number} has invalid fields or embedding.") from error
+
+
+@contextmanager
+def _validated_csv_snapshot(csv_path):
+    path = Path(csv_path)
+    provenance = _load_provenance(path)
+    with TemporaryDirectory(prefix="rag-csv-") as directory:
+        snapshot = Path(directory) / "input.csv"
+        digest = hashlib.sha256()
+        try:
+            with path.open("rb") as source, snapshot.open("wb") as copy:
+                remaining = os.fstat(source.fileno()).st_size
+                while block := source.read(1024 * 1024):
+                    remaining -= len(block)
+                    if remaining < 0:
+                        break
+                    copy.write(block)
+                    digest.update(block)
+                if remaining != 0:
+                    raise ValueError("CSV size changed while taking its snapshot.")
+        except OSError as error:
+            raise ValueError("Could not snapshot the CSV.") from error
+        if digest.hexdigest() != provenance["csv_sha256"]:
+            raise ValueError("CSV snapshot does not match the provenance SHA-256 digest.")
+
+        try:
+            _validate_csv_rows(snapshot, provenance["dimensions"])
+        except (csv.Error, OSError) as error:
+            raise ValueError("Could not read the CSV snapshot.") from error
+        yield snapshot, provenance["embedding_model"]
 
 
 def read_csv_in_batches(csv_path, batch_size=5460):
-    with open(csv_path, "r", encoding="utf-8") as csvfile:
-        csvreader = csv.reader(csvfile)
-        header = next(csvreader)
-
-        batch = []
-        for row in tqdm(csvreader, desc="Reading CSV"):
-            batch.append(row)
-            if len(batch) == batch_size:
-                yield batch
-                batch = []
-
-        if batch:
+    batch = []
+    for row in tqdm(_read_csv_rows(Path(csv_path)), desc="Reading CSV"):
+        batch.append(row)
+        if len(batch) == batch_size:
             yield batch
+            batch = []
+
+    if batch:
+        yield batch
 
 
 def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
+    """Import only CSVs accompanied by a verified producer provenance sidecar.
+
+    Passing None opens the configured destination after complete preflight.
+    """
+    if type(batch_size) is not int or batch_size <= 0:
+        raise ValueError("CSV batch size must be a positive integer.")
+    with _validated_csv_snapshot(csv_path) as (snapshot, model):
+        if collection is None:
+            collection = init_chromadb()
+        validate_embedding_compatibility(collection, model, for_write=True)
+        _write_csv_batches(collection, snapshot, batch_size)
+
+
+def _write_csv_batches(collection, csv_path, batch_size):
     for batch in read_csv_in_batches(csv_path, batch_size):
         ids = []
         metadatas = []
@@ -114,11 +204,8 @@ def insert_batches_to_chromadb(collection, csv_path, batch_size=5460):
 
 
 def main():
-    collection = init_chromadb()
-
-    if collection:
-        insert_batches_to_chromadb(collection, csv_path)
-        winsound.Beep(1000, 500)  # Frequency: 1000 Hz, Duration: 500 ms
+    insert_batches_to_chromadb(None, csv_path)
+    winsound.Beep(1000, 500)
 
 
 if __name__ == "__main__":

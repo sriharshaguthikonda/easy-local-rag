@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -45,11 +46,21 @@ def isolate_async_loop_setup(monkeypatch):
     monkeypatch.setattr(nest_asyncio, "apply", lambda: None)
 
 
-@pytest.fixture
-def temp_chroma(tmp_path):
-    return chromadb.PersistentClient(
-        path=str(tmp_path / "chroma"), settings=Settings(anonymized_telemetry=False)
+def run_persistent_case(tmp_path, case):
+    # The Windows Rust backend and native libraries imported by the Qt suite
+    # can conflict in one process. The subprocess owns only a synthetic store.
+    test_file = Path(__file__).resolve()
+    runner = "import runpy, sys; sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')"
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.endswith(("_API_KEY", "_TOKEN", "_AUTH_TOKEN"))
+    }
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", runner, str(test_file), case, str(tmp_path)],
+        cwd=test_file.parents[1], env=env, capture_output=True, encoding="utf-8",
+        errors="replace", timeout=60,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("module_name", [
@@ -67,7 +78,8 @@ def test_maintained_backend_checks_before_embedding(monkeypatch, module_name, st
         target.count.side_effect = RuntimeError("count unavailable")
     embed = stub_embeddings(monkeypatch, dimensions=3 if state == "different-dimension" else 2)
     monkeypatch.setattr(backend, "model", MODEL)
-    monkeypatch.setattr(backend, "collection", target)
+    # The legacy CLI binds its collection global inside main().
+    monkeypatch.setattr(backend, "collection", target, raising=False)
 
     def retrieve():
         return backend.get_relevant_context_hybrid("needle", rewrite=False)
@@ -89,7 +101,12 @@ def test_maintained_backend_checks_before_embedding(monkeypatch, module_name, st
         target.query.assert_not_called()
 
 
-def test_real_chroma_refuses_different_model_with_equal_dimensions(monkeypatch, temp_chroma):
+def test_real_chroma_refuses_different_model_with_equal_dimensions(tmp_path):
+    run_persistent_case(tmp_path, "streamlit-model-mismatch")
+
+
+def check_real_chroma_model_mismatch(monkeypatch, temp_chroma):
+    """Test a model mismatch that Chroma itself would accept."""
     import streamlit_groq_lama_chromadb_RAG_ETTS as backend
 
     target = temp_chroma.create_collection(
@@ -108,7 +125,11 @@ def test_real_chroma_refuses_different_model_with_equal_dimensions(monkeypatch, 
     assert search_documents(target, "needle")[0]["id"] == "test-id"
 
 
-def test_reader_does_not_create_missing_collection(monkeypatch, temp_chroma):
+def test_reader_does_not_create_missing_collection(tmp_path):
+    run_persistent_case(tmp_path, "reader-missing-collection")
+
+
+def check_missing_reader_collection(monkeypatch, temp_chroma):
     import context_retrieval as backend
 
     monkeypatch.setattr(backend, "collection", None)
@@ -276,7 +297,8 @@ def watcher_import(monkeypatch):
     ))
     monkeypatch.setitem(sys.modules, "Generate_embeddings", SimpleNamespace(check_gpu_temperature=lambda: None))
     monkeypatch.delitem(sys.modules, "monitor_file_changes_update_chromaDB", raising=False)
-    return lambda: importlib.import_module("monitor_file_changes_update_chromaDB")
+    yield lambda: importlib.import_module("monitor_file_changes_update_chromaDB")
+    sys.modules.pop("monitor_file_changes_update_chromaDB", None)
 
 
 @pytest.mark.parametrize("count_fails", [False, True])
@@ -367,7 +389,11 @@ def test_csv_cannot_relabel_existing_destination(monkeypatch, tmp_path, count_fa
 
 
 @pytest.mark.parametrize("existing", [True, False])
-def test_csv_matching_provenance_imports_into_synthetic_collection(monkeypatch, tmp_path, temp_chroma, existing):
+def test_csv_matching_provenance_imports_into_synthetic_collection(tmp_path, existing):
+    run_persistent_case(tmp_path, "csv-existing" if existing else "csv-new")
+
+
+def check_valid_csv(monkeypatch, tmp_path, temp_chroma, existing):
     import Text_embeddings_to_chromadb_python as importer
 
     path = tmp_path / "fixture.csv"
@@ -397,3 +423,89 @@ def test_csv_never_writes_to_incompatible_destination(tmp_path):
     with pytest.raises(ValueError, match="other-model"):
         importer.insert_batches_to_chromadb(target, path, batch_size=1)
     target.add.assert_not_called()
+
+
+def test_csv_import_uses_the_validated_snapshot(monkeypatch, tmp_path):
+    import Text_embeddings_to_chromadb_python as importer
+
+    path = tmp_path / "fixture.csv"
+    csv_fixture(path, [("original-id", "needle", "a.txt", 1, "[1, 0]")])
+    target = synthetic_collection({"embedding_model": MODEL})
+
+    def open_destination():
+        path.write_text("different source after preflight", encoding="utf-8")
+        return target
+
+    monkeypatch.setattr(importer, "init_chromadb", open_destination)
+    importer.insert_batches_to_chromadb(None, path)
+    assert target.add.call_args.kwargs["ids"] == ["original-id"]
+
+
+def test_direct_gui_launcher_sends_selected_model_and_keeps_working_directory(monkeypatch):
+    import GUI_direct_search as direct
+
+    settings = qt_selected_model("selected-model")
+    worker = direct.DirectSearchSubprocessWorker(
+        "needle", "relative/chroma", "synthetic_test", settings["embedding_model"],
+        None, 5, ["documents"], mode="phrase",
+    )
+    results = []
+    worker.results_ready.connect(results.append)
+
+    def run(args, **kwargs):
+        assert args[2] == direct._SEARCH_SCRIPT
+        assert "cwd" not in kwargs
+        payload = json.loads(kwargs["env"]["_DS_ARGS"])
+        assert payload["module_path"] == str(Path(direct.__file__).resolve().parent)
+        assert payload["path"] == "relative/chroma"
+        assert payload["embedding_model"] == "selected-model"
+        return SimpleNamespace(returncode=0, stdout='{"results": []}', stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    worker.run()
+    assert results == [[]]
+
+
+def test_gui_helper_rejects_legacy_unlabelled_vector_request(monkeypatch, capsys):
+    from io import StringIO
+
+    import GUI_chromadb_helper as helper
+
+    client = Mock()
+    monkeypatch.setattr(chromadb, "PersistentClient", client)
+    monkeypatch.setattr(sys, "stdin", StringIO(json.dumps({
+        "chromadb_path": "synthetic-only", "collection_name": "synthetic_test",
+        "embedding": [1, 0],
+    })))
+    helper.main()
+    assert json.loads(capsys.readouterr().out)["success"] is False
+    client.assert_not_called()
+
+
+if __name__ == "__main__":
+    import socket
+    import nest_asyncio
+
+    def deny_network(*args, **kwargs):
+        raise AssertionError("Network access is disabled for synthetic Chroma checks")
+
+    socket.socket.connect = deny_network
+    socket.socket.connect_ex = deny_network
+    socket.socket.sendto = deny_network
+    socket.create_connection = deny_network
+    nest_asyncio.apply = lambda: None
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    case, fixture_directory = sys.argv[1:]
+    tmp_path = Path(fixture_directory)
+    client = chromadb.PersistentClient(
+        path=str(tmp_path / "chroma"), settings=Settings(anonymized_telemetry=False)
+    )
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.chdir(tmp_path)
+        if case == "streamlit-model-mismatch":
+            check_real_chroma_model_mismatch(monkeypatch, client)
+        elif case == "reader-missing-collection":
+            check_missing_reader_collection(monkeypatch, client)
+        else:
+            assert case in {"csv-existing", "csv-new"}
+            check_valid_csv(monkeypatch, tmp_path, client, existing=case == "csv-existing")

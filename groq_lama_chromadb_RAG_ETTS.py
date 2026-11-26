@@ -2,6 +2,8 @@ import argparse
 import sys
 
 import ollama
+
+from embedding_contract import EmbeddingContractError, validate_embedding_compatibility
 from groq import Groq
 
 import io
@@ -752,15 +754,21 @@ def get_relevant_context_hybrid(
         else:
             rewritten_input, synonym_and_variant_dict = user_input, {}
 
+        local_collection = collection
+
+        requested_model = model
+        if not validate_embedding_compatibility(local_collection, requested_model):
+            return ""
+
         # Encode the rewritten input into an embedding
         input_embedding = ollama.embeddings(
-            model=model,
+            model=requested_model,
             prompt=rewritten_input,
             keep_alive=-1,
         )["embedding"]
 
         # Perform vector similarity search
-        search_result = collection.query(
+        search_result = local_collection.query(
             query_embeddings=[input_embedding],
             n_results=50,
             include=["documents", "metadatas", "distances"],
@@ -967,6 +975,8 @@ def get_relevant_context_hybrid(
         return relevant_context
 
     except Exception as e:
+        if isinstance(e, EmbeddingContractError):
+            raise RuntimeError(f"Retrieval failed: {e}") from e
         raise RuntimeError("Retrieval failed; no model request was made") from e
 
 

@@ -5,17 +5,24 @@ import sys
 import json
 
 import chromadb
+import ollama
 from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 
+from embedding_contract import validate_embedding_compatibility
 
-def query_chromadb(chromadb_path, collection_name, embedding, n_results=20):
+
+def query_chromadb(chromadb_path, collection_name, query, embedding_model, n_results=20):
     client = chromadb.PersistentClient(
         path=chromadb_path,
         settings=Settings(),
         tenant=DEFAULT_TENANT,
         database=DEFAULT_DATABASE,
     )
-    collection = client.get_collection(collection_name)
+    collection = client.get_collection(collection_name, embedding_function=None)
+    if not validate_embedding_compatibility(collection, embedding_model):
+        return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+    embedding = ollama.embeddings(model=embedding_model, prompt=query, keep_alive=-1)["embedding"]
 
     result = collection.query(
         query_embeddings=[embedding],
@@ -28,13 +35,11 @@ def query_chromadb(chromadb_path, collection_name, embedding, n_results=20):
 def main():
     data = json.loads(sys.stdin.read())
 
-    chromadb_path = data["chromadb_path"]
-    collection_name = data["collection_name"]
-    embedding = data["embedding"]
-    n_results = data.get("n_results", 20)
-
     try:
-        result = query_chromadb(chromadb_path, collection_name, embedding, n_results)
+        result = query_chromadb(
+            data["chromadb_path"], data["collection_name"], data["query"],
+            data["embedding_model"], data.get("n_results", 20),
+        )
 
         output = {
             "success": True,
