@@ -22,6 +22,9 @@ import json
 import chromadb
 from chromadb.config import Settings
 
+from chroma_hybrid_retrieval import (
+    canonical_store_path, persistent_selection, store_lock, watcher_chunks,
+)
 from rag_config import get_optional_path, get_path
 from embedding_contract import (
     DEFAULT_EMBEDDING_MODEL,
@@ -57,8 +60,6 @@ logging.basicConfig(
 # Dictionary to store the last modification time of files
 file_mod_times = {}
 
-# Initialize ChromaDB client
-client = chromadb.PersistentClient(settings=Settings())
 
 
 """TODO :  the file links are not working. it will switch to new chat when i click on the link of the file or open path."""
@@ -67,7 +68,10 @@ client = chromadb.PersistentClient(settings=Settings())
 
 
 collection_name = "html_chunks_text_in_documents"  # Ensure the collection name matches
-collection = open_collection_for_embedding_write(client, collection_name, DEFAULT_EMBEDDING_MODEL)
+STORE_PATH = canonical_store_path("./chroma")
+with store_lock(STORE_PATH):
+    client = chromadb.PersistentClient(path=STORE_PATH, settings=Settings())
+    collection = open_collection_for_embedding_write(client, collection_name, DEFAULT_EMBEDDING_MODEL)
 
 
 def is_file_in_chromadb(file_path, modification_time):
@@ -171,7 +175,15 @@ class FileChangeHandler(FileSystemEventHandler):
             chunk_ids = list(seen_ids.keys())
 
             # Check which chunks are missing from the database
-            missing_chunk_ids = check_existing_chunks(collection, chunk_ids)
+            if not chunk_ids:
+                return
+            selection = persistent_selection(collection)
+            if selection:
+                missing_chunk_ids = watcher_chunks(selection, DEFAULT_EMBEDDING_MODEL, chunk_ids)
+            else:
+                validate_embedding_compatibility(collection, DEFAULT_EMBEDDING_MODEL, for_write=True)
+                missing_chunk_ids = check_existing_chunks(collection, chunk_ids)
+            missing_chunk_ids = set(missing_chunk_ids)
 
             if not missing_chunk_ids:
                 logging.info(
@@ -189,7 +201,6 @@ class FileChangeHandler(FileSystemEventHandler):
             # Generate embeddings only for new chunks
             embeddings = []
             processed_chunks = []
-            validate_embedding_compatibility(collection, DEFAULT_EMBEDDING_MODEL, for_write=True)
 
             for chunk in new_chunks:
                 response = ollama.embeddings(
@@ -223,13 +234,23 @@ class FileChangeHandler(FileSystemEventHandler):
                     }
                     for chunk in processed_chunks
                 ]
-                collection.add(
-                    embeddings=embeddings,
-                    documents=documents,
-                    metadatas=metadatas,
-                    ids=ids,
-                )
-                logging.info(f"Added {len(ids)} new chunks to ChromaDB")
+                if selection:
+                    added = set(watcher_chunks(
+                        selection, DEFAULT_EMBEDDING_MODEL, ids,
+                        dict(embeddings=embeddings, documents=documents, metadatas=metadatas),
+                    ))
+                    processed_chunks = [
+                        chunk for key, chunk in zip(ids, processed_chunks) if key in added
+                    ]
+                    if not added:
+                        return
+                else:
+                    validate_embedding_compatibility(collection, DEFAULT_EMBEDDING_MODEL, for_write=True)
+                    collection.add(
+                        embeddings=embeddings, documents=documents, metadatas=metadatas, ids=ids,
+                    )
+                    added = ids
+                logging.info(f"Added {len(added)} new chunks to ChromaDB")
 
                 # Update vault.json
                 new_entry = {

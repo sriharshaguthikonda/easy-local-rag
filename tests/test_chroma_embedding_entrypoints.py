@@ -26,6 +26,7 @@ class VectorQueryReached(BaseException):
 def synthetic_collection(metadata=None, count=1):
     target = Mock(metadata=metadata)
     target.name = "synthetic_test"
+    target.id = "synthetic-collection-id"
     target.count.return_value = count
     target.query.side_effect = VectorQueryReached
     return target
@@ -162,10 +163,12 @@ def qt_selected_model(label):
 
 @pytest.mark.parametrize("mode", ["phrase", "hybrid", "self_test"])
 @pytest.mark.parametrize("state", ["match", "unreadable", "unlabelled", "same-dimension", "different-dimension", "empty"])
-def test_direct_gui_checks_selected_model(monkeypatch, capsys, mode, state):
+def test_direct_gui_checks_selected_model(monkeypatch, capsys, tmp_path, mode, state):
     import GUI_direct_search as direct
 
     settings = qt_selected_model("other-model" if "dimension" in state else MODEL)
+    (tmp_path / "chroma.sqlite3").touch()
+    settings["chromadb_path"] = str(tmp_path)
     metadata = {"embedding_model": MODEL} if state == "match" or "dimension" in state else {}
     target = synthetic_collection(metadata, 0 if state == "empty" else 1)
     if state == "unreadable":
@@ -175,7 +178,7 @@ def test_direct_gui_checks_selected_model(monkeypatch, capsys, mode, state):
     client.get_collection.return_value = target
     monkeypatch.setattr(chromadb, "PersistentClient", lambda **_: client)
     args = dict(
-        path="synthetic-only", col_name=target.name, query="needle", rewritten_input="needle",
+        path=str(tmp_path), col_name=target.name, query="needle", rewritten_input="needle",
         synonym_dict={}, embedding_model=settings["embedding_model"], top_k=5, alpha=.5,
         beta=.2, gamma=.2, delta=.1, mode=mode, include=["documents", "metadatas", "distances"],
         module_path=os.path.dirname(direct.__file__),
@@ -220,18 +223,23 @@ def test_direct_gui_checks_selected_model(monkeypatch, capsys, mode, state):
 
 
 @pytest.mark.parametrize("state", ["same-dimension", "different-dimension", "unlabelled", "unreadable", "empty", "match"])
-def test_gui_chat_and_helper_reject_incompatible_model(monkeypatch, capsys, state):
+def test_gui_chat_and_helper_reject_incompatible_model(monkeypatch, capsys, tmp_path, state):
     import GUI_chromadb_helper as helper
     import GUI_context as gui
 
     settings = qt_selected_model(MODEL if state in {"match", "empty"} else "other-model")
+    (tmp_path / "chroma.sqlite3").touch()
+    settings["chromadb_path"] = str(tmp_path)
     metadata = {} if state in {"unlabelled", "unreadable", "empty"} else {"embedding_model": MODEL}
     target = synthetic_collection(metadata, 0 if state == "empty" else 1)
     if state == "unreadable":
         target.count.side_effect = RuntimeError("count unavailable")
     if state == "match":
         target.query.side_effect = None
-        target.query.return_value = {"documents": [["needle"]], "metadatas": [[{"file_name": "a"}]], "distances": [[0.0]]}
+        target.query.return_value = {"ids": [["chunk-id"]], "distances": [[0.0]]}
+        target.get.return_value = {
+            "ids": ["chunk-id"], "documents": ["needle"], "metadatas": [{"file_name": "a"}],
+        }
     embed = stub_embeddings(monkeypatch, dimensions=3 if state == "different-dimension" else 2)
     client = Mock()
     client.get_collection.return_value = target
@@ -357,6 +365,7 @@ def test_csv_preflight_precedes_destination_writes(monkeypatch, tmp_path, defect
     init = Mock(return_value=target)
     monkeypatch.setattr(importer, "init_chromadb", init)
     monkeypatch.setattr(importer, "csv_path", str(path))
+    monkeypatch.setattr(importer, "STORE_PATH", str(tmp_path / "chroma"))
     monkeypatch.setattr(importer.winsound, "Beep", Mock())
 
     with pytest.raises(ValueError):
@@ -381,6 +390,7 @@ def test_csv_cannot_relabel_existing_destination(monkeypatch, tmp_path, count_fa
     client.get_collection.return_value = client.get_or_create_collection.return_value = target
     monkeypatch.setattr(chromadb, "PersistentClient", lambda **_: client)
     monkeypatch.setattr(importer, "csv_path", str(path))
+    monkeypatch.setattr(importer, "STORE_PATH", str(tmp_path / "chroma"))
     monkeypatch.setattr(importer.winsound, "Beep", Mock())
     with pytest.raises(ValueError, match="embedding_model"):
         importer.main()
@@ -405,6 +415,7 @@ def check_valid_csv(monkeypatch, tmp_path, temp_chroma, existing):
         )
     monkeypatch.setattr(chromadb, "PersistentClient", lambda **_: temp_chroma)
     monkeypatch.setattr(importer, "csv_path", str(path))
+    monkeypatch.setattr(importer, "STORE_PATH", str(tmp_path / "chroma"))
     monkeypatch.setattr(importer.winsound, "Beep", Mock())
     importer.main()
     collection = temp_chroma.get_collection(importer.collection_name, embedding_function=None)
@@ -427,6 +438,8 @@ def test_csv_never_writes_to_incompatible_destination(tmp_path):
 
 def test_csv_import_uses_the_validated_snapshot(monkeypatch, tmp_path):
     import Text_embeddings_to_chromadb_python as importer
+
+    monkeypatch.setattr(importer, "STORE_PATH", str(tmp_path))
 
     path = tmp_path / "fixture.csv"
     csv_fixture(path, [("original-id", "needle", "a.txt", 1, "[1, 0]")])

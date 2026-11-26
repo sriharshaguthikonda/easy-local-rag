@@ -382,7 +382,7 @@ def test_streamlit_offline_entry_runs_local_search_without_provider_or_speech(
 ):
     app, display = load_streamlit_app
     evidence = "Synthetic pseudoferrite record."
-    collection = SimpleNamespace(get=lambda **options: {
+    collection = SimpleNamespace(id="synthetic-collection-id", count=lambda: 1, get=lambda **options: {
         "ids": ["one"], "documents": [evidence], "metadatas": [{}],
     })
     monkeypatch.setattr(app, "open_local_collection", lambda *args: collection)
@@ -403,5 +403,7 @@ def test_streamlit_offline_entry_runs_local_search_without_provider_or_speech(
 
     assert evidence in display.markdowns
     assert display.session_state.current_sources[0]["document"] == evidence
+    assert display.session_state.current_sources[0]["collection_id"] == "synthetic-collection-id"
+    assert display.session_state.current_sources[0]["chunk_id"] == "one"
     assert display.session_state.conversation_history == []
     assert not display.errors

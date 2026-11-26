@@ -1,155 +1,118 @@
-import importlib
-import json
-from pathlib import Path
 import subprocess
 import sys
+import time
+from contextlib import nullcontext
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
-import chromadb
-import ollama
 import pytest
-from chromadb.config import Settings
 
-from embedding_contract import DEFAULT_EMBEDDING_MODEL
-from rag_prompting import build_numbered_sources
+from embedding_contract import EmbeddingContractError
+from hybrid_rank_fusion import fuse_candidates
 
 
-@pytest.fixture
-def store(tmp_path, monkeypatch):
-    monkeypatch.setenv("ANONYMIZED_TELEMETRY", "FALSE")
-    client = chromadb.PersistentClient(
-        path=str(tmp_path), settings=Settings(anonymized_telemetry=False)
+def test_native_chroma_retrieval_cases():
+    # Keep Chroma's Rust writer outside the process that imports Qt and SDK fakes.
+    suite = Path(__file__).with_name("chroma_hybrid_native_cases.py")
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", str(suite), "-q", "-s", "--tb=short", "-p", "no:cacheprovider"],
+        cwd=suite.parents[1], capture_output=True, encoding="utf-8", errors="replace", timeout=180,
     )
-    target = client.create_collection(
-        "synthetic_hybrid", embedding_function=None,
-        metadata={"embedding_model": DEFAULT_EMBEDDING_MODEL},
-    )
-    monkeypatch.setattr(ollama, "embeddings", lambda **_: {"embedding": [1.0, 0.0]})
-    import nest_asyncio
-    monkeypatch.setattr(nest_asyncio, "apply", lambda: None)
-    return target
+    assert result.returncode == 0, result.stdout + result.stderr
+    print(result.stdout.strip())
 
 
-def _add(target, ids, documents, vectors, names=None):
-    target.add(
-        ids=ids, documents=documents, embeddings=vectors,
-        metadatas=[
-            {"file_name": name, "text": text, "category": "fixture"}
-            for name, text in zip(names or [f"{key}.txt" for key in ids], documents)
-        ],
-    )
-
-
-def _direct(target, monkeypatch, capsys, **options):
-    import GUI_direct_search as direct
-
-    args = dict(
-        module_path=str(Path(direct.__file__).parent),
-        path=target._client.get_settings().persist_directory,
-        col_name=target.name, embedding_model=DEFAULT_EMBEDDING_MODEL,
-        query="uniquelexeme", rewritten_input="uniquelexeme", synonym_dict={},
-        top_k=2, alpha=1, beta=0, gamma=0, delta=0, mode="hybrid",
-        include=["documents", "metadatas", "distances"],
-    )
-    monkeypatch.setenv("_DS_ARGS", json.dumps({**args, **options}))
-    capsys.readouterr()
-    exec(compile(direct._SEARCH_SCRIPT, "direct-search-subprocess", "exec"), {})
-    return json.loads(capsys.readouterr().out)["results"]
-
-
-def _backend(monkeypatch, target, name):
-    module = importlib.import_module(name)
-    monkeypatch.setattr(module, "model", DEFAULT_EMBEDDING_MODEL)
-    monkeypatch.setattr(module, "collection", target, raising=False)
-    monkeypatch.setattr(module, "print_relevant_context", lambda _results: None)
-    return module
-
-
-def test_same_basename_preserves_both_chunks(store, monkeypatch, capsys):
-    _add(store, ["first", "second"], ["first text", "second text"],
-         [[1.0, 0.0], [0.5, 0.5]], ["same.txt", "same.txt"])
-    rows = _direct(store, monkeypatch, capsys)
-    assert [row["document"] for row in rows] == ["first text", "second text"]
-    assert [(row["collection_id"], row["chunk_id"]) for row in rows] == [
-        (str(store.id), "first"), (str(store.id), "second"),
-    ]
-    citations = build_numbered_sources(rows)
-    assert [(citation["citation_id"], citation["chunk_id"]) for citation in citations] == [
-        (1, "first"), (2, "second"),
-    ]
-
-
-def test_gui_view_filter_applies_before_top_k(store, monkeypatch, capsys):
-    _add(store, ["near", "eligible"], ["near text", "other text"],
-         [[1.0, 0.0], [0.0, 1.0]], ["near.txt", "Selected.TXT"])
-    rows = _direct(store, monkeypatch, capsys, filter_text="sELECTed", top_k=1)
-    assert [row["document"] for row in rows] == ["other text"]
-
-
-@pytest.mark.parametrize("name", [
-    "streamlit_groq_lama_chromadb_RAG_ETTS",
-    "groq_lama_chromadb_RAG_ETTS",
-    "context_retrieval",
-])
-def test_backend_recovers_lexical_only_hit(store, monkeypatch, name):
-    vector_ids = [f"vector-{index:03}" for index in range(51)]
-    _add(store, vector_ids + ["lexical-target"],
-         ["common decoy passage"] * 51 + ["uniquelexeme evidence"],
-         [[1.0, 0.0]] * 51 + [[0.0, 1.0]])
-    assert "lexical-target" not in store.query(
-        query_embeddings=[[1.0, 0.0]], n_results=50
-    )["ids"][0]
-
-    module = _backend(monkeypatch, store, name)
-    weights = {"alpha": 0, "beta": 1} if name.startswith("streamlit") else {
-        "alpha": 0, "beta": 0, "gamma": 1
+def test_fusion_is_deterministic_and_preserves_both_id_components():
+    vector = {
+        "collection_id": "a", "chunk_id": "same", "distance": 0.2,
+        "embedding": [1.0, 0.0], "document": "same filename one",
     }
-    context = module.get_relevant_context_hybrid(
-        "uniquelexeme", top_k=1, additional_unique_files=0, rewrite=False, **weights
+    shared = {"collection_id": "a", "chunk_id": "same", "bm25_score": 2.0, "distance": None}
+    lexical = {"collection_id": "b", "chunk_id": "same", "distance": None, "bm25_score": 3.0}
+    vector_only = {"collection_id": "a", "chunk_id": "tail", "distance": 0.3}
+    rows = fuse_candidates(
+        [vector, vector, vector_only], [lexical, shared, shared],
+        vector_weight=1, lexical_weight=1,
     )
-    if name.startswith("streamlit"):
-        context, sources = context
-        assert [source["document"] for source in sources] == ["uniquelexeme evidence"]
-        assert sources[0]["chunk_id"] == "lexical-target"
-        assert sources[0]["collection_id"] == str(store.id)
-    assert context == "uniquelexeme evidence"
+    assert [(item["collection_id"], item["chunk_id"]) for item in rows] == [
+        ("a", "same"), ("b", "same"), ("a", "tail"),
+    ]
+    assert rows[0]["distance"] == 0.2 and rows[0]["embedding"] == [1.0, 0.0]
+    assert rows[0]["bm25_score"] == 2.0
+    assert [row["final_score"] for row in rows] == [1 / 61 + 1 / 62, 1 / 61, 1 / 62]
+    assert "final_score" not in vector
+    assert fuse_candidates(
+        [vector], [lexical], vector_weight=1, lexical_weight=0,
+    ) == [dict(vector, final_score=1 / 61)]
+    assert fuse_candidates(
+        [lexical], [vector], vector_weight=1, lexical_weight=1,
+    )[0]["collection_id"] == "a"
 
 
-def test_same_count_ingestion_refreshes_native_vector_candidates(store, monkeypatch):
-    _add(store, ["first", "second"], ["first old", "second old"],
-         [[1.0, 0.0], [0.0, 1.0]])
-    backend = _backend(monkeypatch, store, "streamlit_groq_lama_chromadb_RAG_ETTS")
-    def vector_search():
-        return backend.get_relevant_context_hybrid(
-            "query", top_k=1, additional_unique_files=0,
-            keyword_match=False, alpha=1, beta=0, rewrite=False,
+@pytest.mark.parametrize("change", ["uuid", "model"])
+def test_change_between_preflight_and_capture_blocks_vector_query(monkeypatch, tmp_path, change):
+    import chroma_hybrid_retrieval as hybrid
+
+    first = SimpleNamespace(id="original", metadata={"embedding_model": "fixture"}, count=lambda: 1)
+    second = SimpleNamespace(
+        id="replacement" if change == "uuid" else first.id,
+        metadata={"embedding_model": "other"} if change == "model" else first.metadata,
+        query=Mock(), count=lambda: 1,
+    )
+    opener = Mock(side_effect=[first, second])
+    monkeypatch.setattr(hybrid, "_open_selection", opener)
+    monkeypatch.setattr(hybrid, "store_lock", lambda _path: nullcontext())
+    embed = Mock(return_value=[1, 0])
+    expected = hybrid.RetrievalError if change == "uuid" else EmbeddingContractError
+    with pytest.raises(expected, match="collection changed|indexed with"):
+        hybrid.search_path_in_worker(
+            tmp_path, "synthetic", "needle", embedding_model="fixture",
+            embed=embed, vector_weight=1, lexical_weight=0,
         )
-    assert vector_search()[0] == "first old"
-    path = store._client.get_settings().persist_directory
-    writer = """
-import sys
-import chromadb
-from chromadb.config import Settings
-client = chromadb.PersistentClient(path=sys.argv[1], settings=Settings(anonymized_telemetry=False))
-collection = client.get_collection("synthetic_hybrid", embedding_function=None)
-collection.update(ids=["second"], documents=["second new"], embeddings=[[1.0, 0.0]])
-collection.update(ids=["first"], documents=["first new"], embeddings=[[0.0, 1.0]])
-"""
-    subprocess.run([sys.executable, "-c", writer, path], check=True, timeout=30)
-    assert store.count() == 2
-    context, sources = vector_search()
-    assert context == "second new"
-    assert sources[0]["chunk_id"] == "second"
+    embed.assert_called_once_with()
+    second.query.assert_not_called()
 
 
-def test_lexical_read_tracks_same_count_edits_delete_and_insert(store):
-    from offline_search import search_documents
+def test_duplicate_ids_fail_instead_of_returning_partial_lexical_results():
+    import chroma_hybrid_retrieval as hybrid
 
-    _add(store, ["one"], ["oldlexeme survives"], [[1.0, 0.0]])
-    assert [row["id"] for row in search_documents(store, "oldlexeme")] == ["one"]
-    store.update(ids=["one"], documents=["newlexeme survives"], embeddings=[[1.0, 0.0]])
-    assert store.count() == 1
-    assert search_documents(store, "oldlexeme") == []
-    assert [row["id"] for row in search_documents(store, "newlexeme")] == ["one"]
-    store.delete(ids=["one"])
-    _add(store, ["two"], ["newlexeme reappears"], [[1.0, 0.0]])
-    assert [row["id"] for row in search_documents(store, "newlexeme")] == ["two"]
+    target = SimpleNamespace(
+        id="synthetic",
+        get=lambda **_: {
+            "ids": ["same", "same"], "documents": ["needle", "needle"], "metadatas": [{}, {}],
+        },
+    )
+    with pytest.raises(hybrid.RetrievalError, match="UNIQUE constraint failed"):
+        hybrid.capture(target, "needle")
+
+
+@pytest.mark.parametrize("space, expected", [
+    ("l2", {"a": 1.0, "b": 5.0}),
+    ("cosine", {"a": 0.0, "b": 1.0}),
+    ("ip", {"a": -1.0, "b": 1.0}),
+])
+def test_filtered_distances_follow_collection_metric(space, expected):
+    import chroma_hybrid_retrieval as hybrid
+
+    target = SimpleNamespace(
+        configuration={"hnsw": {"space": space}}, metadata={},
+        get=lambda **_: {"ids": ["b", "a"], "embeddings": [[0, 2], [2, 0]]},
+    )
+    assert hybrid._filtered_vector_hits(
+        target, [1, 0], ["a", "b"], time.monotonic() + 5,
+    ) == pytest.approx(expected)
+
+
+def test_store_lock_releases_and_distinct_paths_do_not_contend(tmp_path, monkeypatch):
+    import chroma_hybrid_retrieval as hybrid
+
+    monkeypatch.setattr(hybrid, "LOCK_SECONDS", 0.1)
+    with hybrid.store_lock(tmp_path):
+        with pytest.raises(hybrid.RetrievalError, match="Timed out"):
+            with hybrid.store_lock(tmp_path / "child" / ".."):
+                pytest.fail("the same store path was acquired twice")
+        with hybrid.store_lock(tmp_path / "other"):
+            pass
+    with hybrid.store_lock(tmp_path):
+        pass

@@ -1,10 +1,10 @@
-import numpy as np
 import json
 
 import threading
 import ollama
 
-from embedding_contract import EmbeddingContractError, validate_embedding_compatibility
+from chroma_hybrid_retrieval import RetrievalError, search_collection, search_keywords
+from embedding_contract import EmbeddingContractError
 import chromadb
 import os
 
@@ -12,7 +12,6 @@ import os
 from groq import Groq
 from chromadb.config import Settings
 
-from rank_bm25 import BM25Okapi
 from urllib.parse import urljoin
 from pathlib import Path
 
@@ -214,11 +213,11 @@ def rewrite_input_and_generate_synonyms(original_input, *, router=None):
 def print_relevant_context(results):
     print("Context Pulled from Documents:\n")
     for meta in results:
-        file_name = meta["file_name"]
+        file_name = meta.get("file_path") or meta.get("file_name") or "Unknown"
         modification_time = meta.get("modification_time", "Unknown")
         text = meta["text"]
 
-        clickable_file_path = urljoin("file:", Path(file_name).as_uri())
+        clickable_file_path = urljoin("file:", Path(file_name).absolute().as_uri())
 
         print(
             f"Text: {text}\n"
@@ -243,7 +242,6 @@ def get_relevant_context_hybrid(
     router=None,
 ):
     try:
-        relevant_context = ""
         if rewrite:
             if router is None:
                 rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(
@@ -256,176 +254,35 @@ def get_relevant_context_hybrid(
         else:
             rewritten_input, synonym_dict = user_input, {}
 
-        local_collection = _ensure_collection()
-
         requested_model = model
-        if not validate_embedding_compatibility(local_collection, requested_model):
-            return ""
-
-        # Encode the rewritten input into an embedding
-        input_embedding = ollama.embeddings(
-            model=requested_model,
-            prompt=rewritten_input,
-            keep_alive=-1,
-        )["embedding"]
-
-        # Perform vector similarity search
-        search_result = local_collection.query(
-            query_embeddings=[input_embedding],
-            n_results=50,
-            include=["documents", "metadatas", "distances"],
+        words = search_keywords(rewritten_input, synonym_dict) if keyword_match else []
+        results = search_collection(
+            _ensure_collection(), user_input, embedding_model=requested_model,
+            embed=lambda: ollama.embeddings(
+                model=requested_model, prompt=rewritten_input, keep_alive=-1,
+            )["embedding"],
+            top_k=top_k, additional=additional_unique_files, diversity=lambda_mmr,
+            vector_weight=alpha, lexical_weight=gamma,
+            words=words, keyword_weight=beta if keyword_match else 0,
         )
-
-        if not search_result["metadatas"]:
-            return "No relevant context found."
-
-        # Extract results with distances
-        vector_results = [
+        sources = [
             {
-                "meta": meta,
-                "vector_score": 1.0
-                - dist,  # Convert distance to similarity (assuming normalized)
+                **row["meta"], "text": row["document"],
+                "collection_id": row["collection_id"], "chunk_id": row["chunk_id"],
             }
-            for meta, dist in zip(
-                search_result["metadatas"][0], search_result["distances"][0]
-            )
+            for row in results
         ]
 
-        # Perform keyword matching if enabled
-        keyword_results = []
-        if keyword_match:
-            # Extract keywords and synonyms
-            keywords = [
-                word
-                for word in rewritten_input.lower().split()
-                if word not in non_keywords
-            ]
+        if results:
+            threading.Thread(
+                target=print_relevant_context,
+                args=(sources,),
+                daemon=True,
+            ).start()
+        context = "\n\n".join(row["document"] for row in results)
+        return context
 
-            # Add synonyms to the keyword list
-            for key, synonyms in synonym_dict.items():
-                keywords.extend(synonyms)
-
-            # Use a set to remove duplicates
-            keywords = set(keywords)
-
-            for meta in search_result["metadatas"][0]:
-                # Match against both original keywords and their synonyms
-                match_score = sum(
-                    meta["text"].lower().count(keyword)
-                    + meta["file_name"].lower().count(keyword)
-                    for keyword in keywords
-                )
-                if match_score > 0:
-                    keyword_results.append({"meta": meta, "keyword_score": match_score})
-
-        # Perform BM25 search
-        bm25_corpus = [meta["text"] for meta in search_result["metadatas"][0]]
-        bm25 = BM25Okapi([doc.split() for doc in bm25_corpus])
-        bm25_scores = bm25.get_scores(rewritten_input.split())
-
-        bm25_results = [
-            {"meta": meta, "bm25_score": score}
-            for meta, score in zip(search_result["metadatas"][0], bm25_scores)
-        ]
-
-        # Normalize scores for vector, keyword, and BM25 results
-        max_vector_score = max(
-            [res["vector_score"] for res in vector_results], default=1
-        )
-        max_keyword_score = max(
-            [res["keyword_score"] for res in keyword_results], default=1
-        )
-        max_bm25_score = max([res["bm25_score"] for res in bm25_results], default=1)
-
-        for res in vector_results:
-            res["vector_score"] /= max_vector_score
-
-        for res in keyword_results:
-            res["keyword_score"] /= max_keyword_score
-
-        for res in bm25_results:
-            res["bm25_score"] /= max_bm25_score
-
-        # Combine results using weighted scoring
-        combined_results = {}
-        for res in vector_results:
-            file_name = res["meta"]["file_name"]
-            combined_results[file_name] = {
-                "meta": res["meta"],
-                "final_score": alpha * res["vector_score"],
-            }
-
-        for res in keyword_results:
-            file_name = res["meta"]["file_name"]
-            if file_name in combined_results:
-                combined_results[file_name]["final_score"] += (
-                    beta * res["keyword_score"]
-                )
-            else:
-                combined_results[file_name] = {
-                    "meta": res["meta"],
-                    "final_score": beta * res["keyword_score"],
-                }
-
-        for res in bm25_results:
-            file_name = res["meta"]["file_name"]
-            if file_name in combined_results:
-                combined_results[file_name]["final_score"] += gamma * res["bm25_score"]
-            else:
-                combined_results[file_name] = {
-                    "meta": res["meta"],
-                    "final_score": gamma * res["bm25_score"],
-                }
-
-        # Sort by final_score
-        sorted_results = sorted(
-            combined_results.values(), key=lambda x: x["final_score"], reverse=True
-        )
-
-        # Limit results to top_k
-        final_results = [res["meta"] for res in sorted_results[:top_k]]
-
-        # Use MMR to select additional_unique_files
-        remaining_results = [res for res in sorted_results[top_k:]]
-        selected_additional_files = []
-
-        for res in remaining_results:
-            max_similarity = max(
-                [
-                    np.dot(res["meta"]["embedding"], selected["meta"]["embedding"])
-                    for selected in selected_additional_files
-                ],
-                default=0,
-            )
-            mmr_score = (
-                lambda_mmr * res["final_score"] - (1 - lambda_mmr) * max_similarity
-            )
-            res["mmr_score"] = mmr_score
-
-        # Sort by MMR score to get the most relevant and diverse results
-        sorted_additional_files = sorted(
-            remaining_results, key=lambda x: x["mmr_score"], reverse=True
-        )
-
-        selected_additional_files = sorted_additional_files[:additional_unique_files]
-
-        # Combine the top_k and the selected additional unique files
-        final_results.extend([res["meta"] for res in selected_additional_files])
-
-        # Prepare relevant context
-        relevant_context = "\n\n".join([res["text"] for res in final_results])
-
-        # Start a worker thread to print details of the results
-        worker_thread = threading.Thread(
-            target=print_relevant_context,
-            args=(final_results,),
-            daemon=True,
-        )
-        worker_thread.start()
-
-        return relevant_context
-
-    except Exception as e:
-        if isinstance(e, EmbeddingContractError):
-            raise RuntimeError(f"Retrieval failed: {e}") from e
-        raise RuntimeError("Retrieval failed; no model request was made") from e
+    except (EmbeddingContractError, RetrievalError) as error:
+        raise RuntimeError(f"Retrieval failed: {error}") from error
+    except Exception as error:
+        raise RuntimeError("Retrieval failed; no model request was made") from error

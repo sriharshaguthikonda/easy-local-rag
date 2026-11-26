@@ -2,11 +2,13 @@ import json
 import os
 import subprocess
 import sys
-import webbrowser
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import QListWidgetItem, QMessageBox, QTableWidgetItem
 
+from chroma_hybrid_retrieval import (
+    CAPTURE_PROCESS_TIMEOUT, canonical_store_path, distance_key, persistent_selection,
+)
 from GUI_context import rewrite_input_and_generate_synonyms
 
 
@@ -15,178 +17,55 @@ _MODULE_PATH = os.path.dirname(os.path.abspath(__file__))
 # Static script — no user data interpolated.  All params arrive via the
 # _DS_ARGS env var (JSON), so there is no code-injection surface.
 _SEARCH_SCRIPT = """
-import json, os, chromadb, ollama, re, numpy as np, sys
-from rank_bm25 import BM25Okapi
-from chromadb.config import Settings, DEFAULT_TENANT, DEFAULT_DATABASE
+import json
+import os
+import sys
 
-_a = json.loads(os.environ["_DS_ARGS"])
-sys.path.insert(0, _a["module_path"])
-from embedding_contract import validate_embedding_compatibility
+import ollama
 
-path            = _a["path"]
-col_name        = _a["col_name"]
-query           = _a["query"]
-embedding_model = _a["embedding_model"]
-top_k           = int(_a["top_k"])
-mode            = _a["mode"]
-include         = _a["include"]
+args = json.loads(os.environ["_DS_ARGS"])
+sys.path.insert(0, args["module_path"])
+from chroma_hybrid_retrieval import search_keywords, search_path_in_worker, self_test_query
 
-def build_keywords(rewritten, synonym_dict):
-    non_keywords = {"is","a","an","and","the","of","in","on","at","by","with","for","to","from"}
-    kws = [w for w in rewritten.lower().split() if w not in non_keywords]
-    for key, details in synonym_dict.items():
-        kws.append(key)
-        for field in ["synonyms","spelling_variants","plural_singular","parts_of_speech","related_terms"]:
-            vals = details.get(field) or []
-            kws.extend(vals)
-    return list(set(kws))
+path = args["path"]
+name = args["col_name"]
+query = args["query"]
+model = args["embedding_model"]
+mode = args["mode"]
+top_k = int(args["top_k"])
+expected_id = args.get("collection_id")
+rewritten = args.get("rewritten_input", query) if mode == "hybrid" else query
 
-def normalize_scores(items, key):
-    max_v = max([x.get(key,0) for x in items], default=1) or 1
-    for x in items:
-        x[key] = x.get(key,0) / max_v
 
-def phrase_boost(document, rewritten):
-    if not rewritten:
-        return 0.0
-    phrase = rewritten.lower()
-    doc = (document or "").lower()
-    return doc.count(phrase)
+def embed():
+    return ollama.embeddings(model=model, prompt=rewritten, keep_alive=-1)["embedding"]
 
-client = chromadb.PersistentClient(path=path, settings=Settings(anonymized_telemetry=False), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
-col = client.get_collection(col_name, embedding_function=None)
-if not validate_embedding_compatibility(col, embedding_model):
-    if mode == "self_test":
-        empty = dict.fromkeys(
-            ["documents", "metadatas", "distances", "embeddings", "uris", "data"],
-        )
-        empty.update({field: [[]] for field in include if field in empty})
-        empty.update(ids=[[]], included=include)
-        print(json.dumps(empty))
-    else:
-        print(json.dumps({"results": []}))
-    sys.exit(0)
 
 if mode == "self_test":
-    emb = ollama.embeddings(model=embedding_model, prompt=query, keep_alive=-1)["embedding"]
-    res = col.query(query_embeddings=[emb], n_results=top_k, include=include)
-    print(json.dumps(res))
-    sys.exit(0)
-
-if mode == "phrase":
-    emb = ollama.embeddings(model=embedding_model, prompt=query, keep_alive=-1)["embedding"]
-    res = col.query(query_embeddings=[emb], n_results=top_k, include=include)
-    formatted = []
-    docs = res.get("documents",[[]])[0]
-    metas = res.get("metadatas",[[]])[0]
-    dists = res.get("distances",[[]])[0]
-    for meta, doc, dist in zip(metas, docs, dists):
-        similarity = 1.0 - dist if isinstance(dist,(int,float)) else None
-        formatted.append({
-            "file_name": meta.get("file_name","Unknown") if isinstance(meta, dict) else "Unknown",
-            "file_path": meta.get("file_path") if isinstance(meta, dict) else None,
-            "document": doc,
-            "distance": dist,
-            "similarity": similarity,
-            "metadata": meta,
-            "final_score": similarity if similarity is not None else None,
-        })
-    print(json.dumps({"results": formatted}))
-    sys.exit(0)
-
-alpha           = float(_a["alpha"])
-beta            = float(_a["beta"])
-gamma           = float(_a["gamma"])
-delta           = float(_a["delta"])
-
-rewritten_input = _a["rewritten_input"]
-synonym_dict = _a["synonym_dict"]
-emb = ollama.embeddings(model=embedding_model, prompt=rewritten_input, keep_alive=-1)["embedding"]
-res = col.query(query_embeddings=[emb], n_results=50, include=["documents","metadatas","distances"])
-
-vector_results = [
-    {"meta": meta, "document": doc, "vector_score": 1.0 - dist, "distance": dist}
-    for meta, doc, dist in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0], res.get("distances",[[]])[0])
-]
-
-keywords = build_keywords(rewritten_input, synonym_dict)
-keyword_results = []
-phrase_results = []
-for meta, doc in zip(res.get("metadatas",[[]])[0], res.get("documents",[[]])[0]):
-    normalized_doc = re.sub(r"(?<=\\w)-\\s*(?=\\w)", "", (doc or "").lower())
-    match_score = sum(len(re.findall(rf"\\b{re.escape(kw)}\\b", normalized_doc)) + len(re.findall(rf"\\b{re.escape(kw)}\\b", str(meta.get("file_name","")).lower())) for kw in keywords)
-    if match_score > 0:
-        keyword_results.append({"meta": meta, "document": doc, "keyword_score": match_score})
-    phrase_score = phrase_boost(doc, rewritten_input)
-    if phrase_score > 0:
-        phrase_results.append({"meta": meta, "document": doc, "phrase_score": phrase_score})
-
-full = col.get(include=["documents","metadatas"])
-full_docs = full.get("documents", []) or []
-full_metas = full.get("metadatas", []) or []
-
-bm25_results = []
-if full_docs:
-    bm25 = BM25Okapi([(doc or "").split() for doc in full_docs])
-    bm25_scores = bm25.get_scores(rewritten_input.split())
-    ranked = sorted(
-        enumerate(bm25_scores),
-        key=lambda pair: pair[1],
-        reverse=True,
-    )[: max(top_k * 10, 50)]
-    for idx, score in ranked:
-        if score <= 0:
-            continue
-        bm25_results.append(
-            {
-                "meta": full_metas[idx] if idx < len(full_metas) else {},
-                "document": full_docs[idx],
-                "bm25_score": score,
-            }
+    result = self_test_query(path, name, model, expected_id, embed, top_k, args["include"])
+    print(json.dumps(result, default=lambda value: value.tolist()))
+else:
+    hybrid = mode == "hybrid"
+    rows = search_path_in_worker(
+        path, name, query, embedding_model=model, embed=embed, expected_id=expected_id,
+        top_k=top_k, filter_text=args.get("filter_text", ""),
+        vector_weight=float(args["alpha"]) if hybrid else 1.0,
+        lexical_weight=float(args["gamma"]) if hybrid else 0.0,
+        keyword_weight=float(args["beta"]) if hybrid else 0.0,
+        phrase_weight=float(args["delta"]) if hybrid else 0.0,
+        words=search_keywords(rewritten, args.get("synonym_dict", {})),
+        phrase=rewritten, exact_window=not hybrid,
+    )
+    for row in rows:
+        meta, distance = row["meta"], row["distance"]
+        similarity = None if distance is None else 1.0 - distance
+        row.update(
+            metadata=meta, file_name=str(meta.get("file_name") or "Unknown"),
+            file_path=meta.get("file_path"), similarity=similarity,
         )
-
-normalize_scores(vector_results, "vector_score")
-normalize_scores(keyword_results, "keyword_score")
-normalize_scores(bm25_results, "bm25_score")
-normalize_scores(phrase_results, "phrase_score")
-
-combined = {}
-for item in vector_results:
-    name = item.get("meta",{}).get("file_name","Unknown")
-    combined[name] = {"meta": item.get("meta",{}), "document": item.get("document",""), "final_score": alpha*item.get("vector_score",0), "distance": item.get("distance")}
-
-for item in keyword_results:
-    name = item.get("meta",{}).get("file_name","Unknown")
-    combined.setdefault(name, {"meta": item.get("meta",{}), "document": item.get("document",""), "final_score": 0})["final_score"] += beta*item.get("keyword_score",0)
-
-for item in bm25_results:
-    name = item.get("meta",{}).get("file_name","Unknown")
-    combined.setdefault(name, {"meta": item.get("meta",{}), "document": item.get("document",""), "final_score": 0})["final_score"] += gamma*item.get("bm25_score",0)
-
-for item in phrase_results:
-    name = item.get("meta",{}).get("file_name","Unknown")
-    combined.setdefault(name, {"meta": item.get("meta",{}), "document": item.get("document",""), "final_score": 0})["final_score"] += delta*item.get("phrase_score",0)
-
-sorted_results = sorted(combined.values(), key=lambda x: x.get("final_score",0), reverse=True)[:top_k]
-formatted = []
-for item in sorted_results:
-    meta = item.get("meta") or {}
-    doc = item.get("document") or ""
-    dist = item.get("distance")
-    similarity = None
-    if dist is not None and isinstance(dist,(int,float)):
-        similarity = 1.0 - dist
-    formatted.append({
-        "file_name": meta.get("file_name","Unknown") if isinstance(meta, dict) else "Unknown",
-        "file_path": meta.get("file_path") if isinstance(meta, dict) else None,
-        "document": doc,
-        "distance": dist,
-        "similarity": similarity,
-        "metadata": meta,
-        "final_score": item.get("final_score"),
-    })
-
-print(json.dumps({"results": formatted}))
+        if not hybrid:
+            row["final_score"] = similarity
+    print(json.dumps({"results": rows}))
 """
 
 
@@ -210,11 +89,15 @@ class DirectSearchSubprocessWorker(QThread):
         delta=0.2,
         mode="hybrid",
         rewrite_settings=None,
+        filter_text="",
+        collection_id=None,
     ):
         super().__init__()
         self.query = query
         self.chroma_path = chroma_path
         self.collection_name = collection_name
+        self.collection_id = collection_id
+        self.filter_text = filter_text
         self.embed_model = embed_model
         self.rewrite_settings = dict(rewrite_settings or {})
         self.rewrite_settings["groq_rewrite_model"] = rewrite_model
@@ -247,6 +130,8 @@ class DirectSearchSubprocessWorker(QThread):
             "module_path": _MODULE_PATH,
             "path": self.chroma_path,
             "col_name": self.collection_name,
+            "collection_id": self.collection_id,
+            "filter_text": self.filter_text,
             "query": self.query,
             "embedding_model": self.embed_model,
             "rewritten_input": rewritten_input,
@@ -260,12 +145,12 @@ class DirectSearchSubprocessWorker(QThread):
             "include": self.include,
         })
         try:
-            env = {**os.environ, "_DS_ARGS": ds_args}
+            env = {**os.environ, "_DS_ARGS": ds_args, "PYTHONIOENCODING": "utf-8"}
             result = subprocess.run(
                 [sys.executable, "-c", _SEARCH_SCRIPT],
                 capture_output=True,
-                text=True,
-                timeout=30,
+                encoding="utf-8",
+                timeout=CAPTURE_PROCESS_TIMEOUT,
                 env=env,
             )
             if result.returncode != 0:
@@ -344,9 +229,9 @@ class DirectSearchMixin:
         total = alpha_raw + beta_raw + gamma_raw + delta_raw
         if total <= 0:
             alpha = beta = gamma = 0.0
-            delta = 1.0  # fallback to phrase if all zero/negative
+            gamma, delta = 0.5, 0.5
             if hasattr(self, "statusBar"):
-                self.statusBar.showMessage("Hybrid weights invalid; using delta=1.0 fallback", 4000)
+                self.statusBar.showMessage("Hybrid weights invalid; using lexical and phrase search", 4000)
         else:
             alpha = alpha_raw / total
             beta = beta_raw / total
@@ -359,6 +244,7 @@ class DirectSearchMixin:
             % (self.settings.get("embedding_model"), top_k, alpha, beta, gamma, delta),
             flush=True,
         )
+        self.invalidate_direct_results()
         self.statusBar.showMessage("Searching...")
         # Run subprocess query off the UI thread
         provider = self.settings.get("generation_provider", "groq")
@@ -368,10 +254,14 @@ class DirectSearchMixin:
         }
         if provider == "groq":
             rewrite_settings["generation_router_groq"] = self.get_generation_router(provider)
-        self._direct_worker = DirectSearchSubprocessWorker(
+        self._direct_request_scope = self._direct_scope()
+        path, name, collection_id, filter_text = self._direct_request_scope
+        worker = DirectSearchSubprocessWorker(
             query=query,
-            chroma_path=self.settings.get("chromadb_path"),
-            collection_name=getattr(self.collection, "name", self.settings.get("collection_name")),
+            chroma_path=path,
+            collection_name=name,
+            collection_id=collection_id,
+            filter_text=filter_text,
             embed_model=self.settings.get("embedding_model"),
             rewrite_model=self.settings.get("groq_rewrite_model", self.settings.get("model_name", "")),
             n_results=top_k,
@@ -383,32 +273,54 @@ class DirectSearchMixin:
             mode=self.settings.get("direct_search_mode", "hybrid"),
             rewrite_settings=rewrite_settings,
         )
-        self._direct_worker.results_ready.connect(self._on_direct_worker_results)
-        self._direct_worker.error_occurred.connect(self.on_error)
-        self._direct_worker.status_update.connect(self._on_direct_rewrite_status)
+        worker.setParent(self)
+        worker.results_ready.connect(self._on_direct_worker_results)
+        worker.error_occurred.connect(self._on_direct_worker_error)
+        worker.status_update.connect(self._on_direct_rewrite_status)
+        worker.finished.connect(worker.deleteLater)
+        self._direct_worker = worker
         self._direct_rewrite_status = ""
-        self._direct_worker.start()
+        worker.start()
+
+    def _direct_scope(self):
+        filt = getattr(self, "direct_filter_input", None)
+        path_widget = getattr(self, "chromadb_path_edit", None)
+        name_widget = getattr(self, "collection_combo", None)
+        path = path_widget.text() if path_widget else self.settings.get("chromadb_path")
+        name = name_widget.currentText() if name_widget else self.settings.get("collection_name")
+        path = canonical_store_path(path) if path else ""
+        selection = persistent_selection(self.collection)
+        collection_id = (
+            selection["expected_id"] if selection and (path, name) == (selection["path"], selection["name"])
+            else None
+        )
+        return (path, name, collection_id, filt.text().strip().casefold() if filt else "")
+
+    def invalidate_direct_results(self, *_):
+        self._direct_request_scope = None
+        self._direct_results = []
+        detail = getattr(self, "search_result_detail", None)
+        if detail is not None:
+            detail.clear()
+        self.apply_direct_search_view()
+
+    def _direct_request_is_current(self):
+        if self.sender() is not getattr(self, "_direct_worker", None):
+            return False
+        return (
+            self._direct_request_scope is not None
+            and self._direct_request_scope == self._direct_scope()
+        )
 
     def apply_direct_search_view(self):
-        results = getattr(self, "_direct_results", []) or []
-        filt = getattr(self, "direct_filter_input", None)
+        view = list(getattr(self, "_direct_results", []) or [])
         sort_combo = getattr(self, "direct_sort_combo", None)
-        filter_text = filt.text().strip().lower() if filt else ""
-        view = []
-        for r in results:
-            hay = (r.get("file_name", "") + " " + (r.get("document", "") or "")).lower()
-            if filter_text and filter_text not in hay:
-                continue
-            view.append(r)
         if sort_combo:
             mode = sort_combo.currentText()
-            if mode == "Distance ↑":
-                view.sort(key=lambda x: x.get("distance", 0))
-            elif mode == "Distance ↓":
-                view.sort(key=lambda x: x.get("distance", 0), reverse=True)
+            if mode in {"Distance ↑", "Distance ↓"}:
+                view.sort(key=lambda row: distance_key(row.get("distance"), descending=mode == "Distance ↓"))
             elif mode == "File A→Z":
-                view.sort(key=lambda x: x.get("file_name", ""))
-        print("[DirectSearchMixin.apply_direct_search_view] rendering %s items" % len(view), flush=True)
+                view.sort(key=lambda row: row.get("file_name", ""))
         self.on_search_results(view)
 
     def on_search_results(self, results):
@@ -447,12 +359,19 @@ class DirectSearchMixin:
         self.statusBar.showMessage(f"Found {len(results)} results", 3000)
         print("[DirectSearchMixin.on_search_results] table updated", flush=True)
 
+    def _on_direct_worker_error(self, message):
+        if self._direct_request_is_current():
+            self.on_error(message)
+
     def _on_direct_rewrite_status(self, status):
+        if not self._direct_request_is_current():
+            return
         self._direct_rewrite_status = status
         self.statusBar.showMessage(status, 6000)
 
     def _on_direct_worker_results(self, results):
-        # Store and render with sort/filter
+        if not DirectSearchMixin._direct_request_is_current(self):
+            return
         self._direct_results = results
         self.apply_direct_search_view()
         status = f"Found {len(results)} results"
@@ -537,6 +456,7 @@ class DirectSearchMixin:
             "module_path": _MODULE_PATH,
             "path": self.settings.get("chromadb_path"),
             "col_name": getattr(self.collection, "name", self.settings.get("collection_name")),
+            "collection_id": str(self.collection.id) if hasattr(self.collection, "id") else None,
             "query": query,
             "embedding_model": self.settings.get("embedding_model"),
             "top_k": int(n_results),

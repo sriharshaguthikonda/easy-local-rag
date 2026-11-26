@@ -9,6 +9,7 @@ from embedding_contract import EmbeddingContractError, validate_embedding_compat
 
 class _FakeCollection:
     metadata = {"embedding_model": "test-model"}
+    id = "synthetic-collection-id"
 
     def __init__(self, result):
         self.result = result
@@ -16,7 +17,17 @@ class _FakeCollection:
 
     def query(self, **kwargs):
         self.calls.append(kwargs)
-        return self.result
+        return {name: self.result[name] for name in ["ids", *kwargs["include"]]}
+
+    def count(self):
+        return len(self.result["ids"][0])
+
+    def get(self, *, include, ids=None, limit=None, offset=0):
+        keys = self.result["ids"][0]
+        indices = [keys.index(key) for key in ids] if ids is not None else range(
+            offset, min(len(keys), offset + limit),
+        )
+        return {name: [self.result[name][0][index] for index in indices] for name in ["ids", *include]}
 
 
 class _NoopThread:
@@ -29,6 +40,10 @@ class _NoopThread:
 
 class _FailingCollection:
     metadata = {"embedding_model": "test-model"}
+    id = "synthetic-collection-id"
+
+    def count(self):
+        return 1
 
     def query(self, **_kwargs):
         raise KeyError("missing retrieval field")
@@ -53,6 +68,7 @@ def test_hybrid_context_uses_documents_and_greedy_mmr_without_metadata_text():
     ]
     collection = _FakeCollection(
         {
+            "ids": [["a", "b", "c", "d"]],
             "documents": [["needle alpha", "needle beta", "needle gamma", "needle delta"]],
             "metadatas": [metadata],
             "distances": [[0.0, 0.1, 0.2, 0.3]],
@@ -83,7 +99,7 @@ def test_hybrid_context_uses_documents_and_greedy_mmr_without_metadata_text():
         {
             "query_embeddings": [[1, 0]],
             "n_results": 50,
-            "include": ["documents", "metadatas", "distances", "embeddings"],
+            "include": ["distances"],
         }
     ]
     context, returned_sources = result
@@ -97,6 +113,9 @@ def test_hybrid_context_uses_documents_and_greedy_mmr_without_metadata_text():
         ("b.txt", "needle beta"),
     ]
     assert all(isinstance(source["score"], float) for source in returned_sources)
+    assert [(source["collection_id"], source["chunk_id"]) for source in returned_sources] == [
+        ("synthetic-collection-id", key) for key in ("a", "c", "b")
+    ]
 
 
 def test_hybrid_retrieval_failure_raises_instead_of_returning_an_answer():

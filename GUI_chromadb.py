@@ -42,7 +42,9 @@ class ChromaDBMixin:
             if count > 0:
                 collection_name = self.collection_combo.currentText()
                 print(f"[ChromaDBMixin.connect_chromadb] current collection name={collection_name}", flush=True)
-                self.collection = self.chromadb_client.get_collection(collection_name)
+                self.collection = self.chromadb_client.get_collection(collection_name, embedding_function=None)
+                if hasattr(self, "invalidate_direct_results"):
+                    self.invalidate_direct_results()
                 print("[ChromaDBMixin.connect_chromadb] collection object acquired", flush=True)
                 self.statusBar.showMessage(f"Connected to collection: {collection_name}", 5000)
                 if hasattr(self, "update_connection_status"):

@@ -25,6 +25,8 @@ def test_apply_direct_search_view_sorts_finite_then_missing(mode, expected_finit
         {"file_name": "b", "distance": 0.9},
         {"file_name": "c"},                # missing distance key
         {"file_name": "d", "distance": None},
+        {"file_name": "e", "distance": float("inf")},
+        {"file_name": "f", "distance": float("nan")},
     ]
     captured = {}
 
@@ -38,11 +40,11 @@ def test_apply_direct_search_view_sorts_finite_then_missing(mode, expected_finit
     GUI_direct_search.DirectSearchMixin.apply_direct_search_view(obj)
 
     view = captured["view"]
-    assert len(view) == 4
+    assert len(view) == 6
     finite_distances = [r.get("distance") for r in view[:2]]
     assert finite_distances == expected_finite
     missing = view[2:]
-    assert all(r.get("distance") is None for r in missing)
+    assert [row["file_name"] for row in missing] == ["c", "d", "e", "f"]
 
 
 def test_stale_direct_completion_cannot_replace_current_results():
