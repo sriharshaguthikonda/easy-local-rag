@@ -1,0 +1,40 @@
+# Issue #10 retained-Chroma lexical and hybrid search
+# Public sources returned HTTP 200 on 2026-11-27. Discarded sources: 0.
+# Discovery terms: embedded sparse search, BM25 memory, disk-backed inverted
+# index, hybrid rank fusion, local vector process safety, query-time snapshots.
+# Decision: reuse SQLite FTS5 BM25 and Chroma's ID-constrained vector query.
+# A synthetic 220,000-row FTS5 probe recovered a unique term using a 4 MiB
+# SQLite page cache. A synthetic Chroma 1.0.16 probe confirmed query(ids=...)
+# and showed that a warmed reader could return stale vectors after an outside
+# update while a newly started reader returned the new ranking.
+issue_010:
+  - name: SQLite FTS5
+    url: https://www.sqlite.org/fts5.html
+    verified: live
+    recheck_after: 2027-05-27
+    decision: Reuse disk-backed full-corpus BM25 per capture.
+  - name: rank_bm25
+    url: https://raw.githubusercontent.com/dorianbrown/rank_bm25/master/rank_bm25.py
+    verified: source
+    recheck_after: 2027-05-27
+    decision: Source keeps one in-memory frequency map per row. Retain for legacy paths while routing maintained hybrid search through FTS5.
+  - name: Apache Lucene BM25Similarity
+    url: https://raw.githubusercontent.com/apache/lucene/main/lucene/core/src/java/org/apache/lucene/search/similarities/BM25Similarity.java
+    verified: source
+    recheck_after: 2027-05-27
+    decision: Source uses collection-length statistics and per-term IDF. Using the JVM engine would add a new runtime for a feature already available in SQLite.
+  - name: Qdrant Hybrid Query
+    url: https://qdrant.tech/documentation/hybrid-queries/
+    verified: documentation
+    recheck_after: 2027-05-27
+    decision: Reuse the independent-prefetch and RRF pattern. The Qdrant backend requires another datastore.
+  - name: Weaviate Hybrid Search
+    url: https://docs.weaviate.io/weaviate/concepts/search/hybrid-search
+    verified: documentation
+    recheck_after: 2027-05-27
+    decision: Comparable rank-fusion implementation on a different datastore.
+  - name: OpenSearch Hybrid Search
+    url: https://docs.opensearch.org/latest/vector-search/ai-search/hybrid-search/index/
+    verified: documentation
+    recheck_after: 2027-05-27
+    decision: Search-pipeline fusion would require another service and index.
