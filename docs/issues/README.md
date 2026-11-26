@@ -61,8 +61,8 @@ unresolved placeholder, implementer choice, or speculative dependency.
 | #15 | closed | Completed through [PR #36](https://github.com/sriharshaguthikonda/easy-local-rag/pull/36), merged into the GUI branch as `88d0758ce1ffe6d61dd3ed99c0c5558e1bb8f205` from reviewed code head `3ced61bcb9957907cc568e2e2560edd6f3c53b83`. |
 | #37 | closed | Ledger validator completed through [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41). |
 | #38 | closed | Streamlit evidence contract completed through [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42) on the GUI lineage. |
-| #11 | planning | [Reviewed packet pending activation](../superpowers/plans/2026-11-26-issue-011-chroma-embedding-contract-implementation.md). Only #11 may proceed after its separate activation merge. |
-| Active issue | none | #11 awaits a separate activation PR merge. |
+| #11 | active | [Locked packet](../superpowers/plans/2026-11-26-issue-011-chroma-embedding-contract-implementation.md), reviewed and merged in [PR #56](https://github.com/sriharshaguthikonda/easy-local-rag/pull/56). Implementation is authorized by this separate activation merge. |
+| Active issue | #11 | One-time maintained Chroma exception. #2 remains blocked and #10 awaits independent verification of #11. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
