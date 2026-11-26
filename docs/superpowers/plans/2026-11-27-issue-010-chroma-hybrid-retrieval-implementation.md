@@ -1,6 +1,6 @@
 # Issue #10 Chroma hybrid retrieval implementation packet
 
-**State** Reviewed plan pending separate activation.
+**State** Closed after implementation, verification, and issue closure.
 **Mode** Maintained ChromaDB.
 **Target** `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`.
 **Frozen base** `0be9ebe688ffd795960b6761422087105d26e63d`.
@@ -36,3 +36,30 @@ python -m py_compile chroma_hybrid_retrieval.py GUI_direct_search.py GUI_chromad
 ## Rollback
 
 Revert the #10 merge on the maintained GUI lineage in a reviewed PR, then verify the embedding guard and explicit lexical mode on temporary collections. No collection or evidence IDs are rewritten by this change. Existing operator processes and the live corpus are outside this implementation and test run.
+
+## Implementation evidence
+
+The [locked packet PR #60](https://github.com/sriharshaguthikonda/easy-local-rag/pull/60)
+and [activation PR #61](https://github.com/sriharshaguthikonda/easy-local-rag/pull/61)
+merged before the tests-only RED commit `393309b` reproduced nine defects.
+[Implementation PR #62](https://github.com/sriharshaguthikonda/easy-local-rag/pull/62)
+merged as `89514bf502a39776b2261ff1657146f530364765`. Its tree matches the
+independently reviewed head `55a915433e44f5cf0be66453d57a4e9670784021`.
+
+The clean-checkout run with provider access denied passed 344 tests. The
+focused #10 repeat passed 13 tests, including 11 isolated native Chroma
+scenarios. The focused #11 run passed 90 tests. Touched Python compiled.
+The separate writer and native watcher probes verified consistent managed
+ingestion and retrieval. [Closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10#issuecomment-7201734064)
+
+The lexical benchmark captured 25,601 synthetic rows in 51 pages with at
+most 512 rows per page. It used a 4 MiB SQLite cache and measured a 1.49 MiB
+traced Python peak and a 13.81 MiB scratch SQLite file. The figures describe
+the measured lexical scan.
+
+Chroma 1.0.16's native filtered ANN could omit eligible IDs in the synthetic
+fixture, including with explicit `ids`. To keep the filter eligibility
+guarantee, the filtered vector leg ranks bounded pages of eligible stored
+embeddings using the collection's configured distance. The unfiltered leg
+uses Chroma's native vector query. The #11 guard is applied before embedding
+and checked again when the collection is reopened for capture.

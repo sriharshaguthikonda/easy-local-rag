@@ -33,7 +33,8 @@ maintained-Chroma exception while #2 remains open. The exception requires the
 #11 packet review and separate activation PR merge, limits verification to
 synthetic collections, and leaves #2, #19/#20, and migration gated. #11 has
 passed independent verification and closed. The [owner separately approved #10](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10#issuecomment-7200914319)
-for maintained ChromaDB. Its packet and separate activation are required.
+for maintained ChromaDB. The packet and separate activation merged, and #10
+closed after independent verification of the maintained GUI implementation.
 #2 and the PostgreSQL migration retain their current gates.
 
 ## JIT packet policy
@@ -64,8 +65,8 @@ unresolved placeholder, implementer choice, or speculative dependency.
 | #37 | closed | Ledger validator completed through [PR #41](https://github.com/sriharshaguthikonda/easy-local-rag/pull/41). |
 | #38 | closed | Streamlit evidence contract completed through [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42) on the GUI lineage. |
 | #11 | closed | Completed through [PR #58](https://github.com/sriharshaguthikonda/easy-local-rag/pull/58) at GUI merge `0be9ebe688ffd795960b6761422087105d26e63d`. The verified head `6f878bfeff993ff9e78c23595d40943cf53eeaa7` passed 88 focused and 333 full offline tests. See the [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/11#issuecomment-7200752206). |
-| #10 | active | [Locked packet](../superpowers/plans/2026-11-27-issue-010-chroma-hybrid-retrieval-implementation.md), reviewed in [PR #60](https://github.com/sriharshaguthikonda/easy-local-rag/pull/60). |
-| Active issue | #10 | One-time maintained Chroma exception. #2 remains open under its existing gate. |
+| #10 | closed | Completed through [PR #62](https://github.com/sriharshaguthikonda/easy-local-rag/pull/62) at GUI merge `89514bf502a39776b2261ff1657146f530364765`. The reviewed head `55a915433e44f5cf0be66453d57a4e9670784021` passed 344 full-suite tests. See the [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10#issuecomment-7201734064). |
+| Active issue | none | The one-time #10 exception is complete. #2 remains open under its existing gate. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
@@ -144,7 +145,7 @@ approval, rollback, or scope means a separate packet.
 | #7 | P1 bug | Open — partial implementation | [Lazy Chroma initialization](ISSUE-007-lazy-chromadb-init.md) | Depends on #11 creation metadata; required only while the Chroma path remains supported. | [Issue #7](https://github.com/sriharshaguthikonda/easy-local-rag/issues/7) |
 | #8 | P1 bug | **Closed — completed** | [Config-driven paths](ISSUE-008-config-driven-paths.md) | Completed independently; #16 retains its documentation scope. | [Issue #8](https://github.com/sriharshaguthikonda/easy-local-rag/issues/8) |
 | #9 | P0 security | **Closed — completed through PR #33 at merge `619365224f6db3770d3369fd84a295589699e513`** | [Conversation import validation](ISSUE-009-validate-conversation-import.md) | Independent small closure completed; imported sessions never restore trusted retrieval state. | [Issue #9](https://github.com/sriharshaguthikonda/easy-local-rag/issues/9) |
-| #10 | P1 performance | Open — active under approved exception | [Full-corpus BM25](ISSUE-010-full-corpus-bm25.md) | One-time Chroma exception after verified #11. Migration and #2 retain their existing gates. | [Issue #10](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10) |
+| #10 | P1 performance | **Closed — independently verified through PR #62** | [Full-corpus BM25](ISSUE-010-full-corpus-bm25.md) | One-time Chroma exception after verified #11. Migration and #2 retain their existing gates. | [Issue #10](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10) |
 | #11 | P1 bug | **Closed — independently verified through PR #58** | [Embedding-model contract](ISSUE-011-embedding-model-match.md) | The #11 prerequisite for #10 is satisfied. Migration provenance remains gated under #19/#20. | [Issue #11](https://github.com/sriharshaguthikonda/easy-local-rag/issues/11) |
 | #12 | P1 bug | Open — partial implementation | [Streamlit TTS worker](ISSUE-012-streamlit-tts-worker.md) | Legacy client closure only; future provider/UI behavior is governed by #22 and future GUI work. | [Issue #12](https://github.com/sriharshaguthikonda/easy-local-rag/issues/12) |
 | #13 | P1 bug | Open — partial implementation | [Tokenizer budgeting](ISSUE-013-tiktoken-counter.md) | #16 carries the dependency; #27 extends the requirement into structured answer validation. | [Issue #13](https://github.com/sriharshaguthikonda/easy-local-rag/issues/13) |
