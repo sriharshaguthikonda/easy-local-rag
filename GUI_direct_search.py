@@ -9,6 +9,9 @@ from PyQt5.QtWidgets import QListWidgetItem, QMessageBox, QTableWidgetItem
 
 from GUI_context import rewrite_input_and_generate_synonyms
 
+
+_MODULE_PATH = os.path.dirname(os.path.abspath(__file__))
+
 # Static script — no user data interpolated.  All params arrive via the
 # _DS_ARGS env var (JSON), so there is no code-injection surface.
 _SEARCH_SCRIPT = """
@@ -17,15 +20,14 @@ from rank_bm25 import BM25Okapi
 from chromadb.config import Settings, DEFAULT_TENANT, DEFAULT_DATABASE
 
 _a = json.loads(os.environ["_DS_ARGS"])
+sys.path.insert(0, _a["module_path"])
+from embedding_contract import validate_embedding_compatibility
+
 path            = _a["path"]
 col_name        = _a["col_name"]
 query           = _a["query"]
 embedding_model = _a["embedding_model"]
 top_k           = int(_a["top_k"])
-alpha           = float(_a["alpha"])
-beta            = float(_a["beta"])
-gamma           = float(_a["gamma"])
-delta           = float(_a["delta"])
 mode            = _a["mode"]
 include         = _a["include"]
 
@@ -52,17 +54,24 @@ def phrase_boost(document, rewritten):
     return doc.count(phrase)
 
 client = chromadb.PersistentClient(path=path, settings=Settings(anonymized_telemetry=False), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
-col = client.get_collection(col_name)
-collection_meta = getattr(col, "metadata", {}) or {}
-stored_model = collection_meta.get("embedding_model")
-if not stored_model:
-    try:
-        if int(col.count()) > 0:
-            raise RuntimeError("Collection missing embedding_model metadata; re-index or set metadata before querying.")
-    except Exception:
-        raise RuntimeError("Collection missing embedding_model metadata; re-index or set metadata before querying.")
-elif stored_model != embedding_model:
-    raise RuntimeError(f"Collection was indexed with {stored_model}, but query uses {embedding_model}.")
+col = client.get_collection(col_name, embedding_function=None)
+if not validate_embedding_compatibility(col, embedding_model):
+    if mode == "self_test":
+        empty = dict.fromkeys(
+            ["documents", "metadatas", "distances", "embeddings", "uris", "data"],
+        )
+        empty.update({field: [[]] for field in include if field in empty})
+        empty.update(ids=[[]], included=include)
+        print(json.dumps(empty))
+    else:
+        print(json.dumps({"results": []}))
+    sys.exit(0)
+
+if mode == "self_test":
+    emb = ollama.embeddings(model=embedding_model, prompt=query, keep_alive=-1)["embedding"]
+    res = col.query(query_embeddings=[emb], n_results=top_k, include=include)
+    print(json.dumps(res))
+    sys.exit(0)
 
 if mode == "phrase":
     emb = ollama.embeddings(model=embedding_model, prompt=query, keep_alive=-1)["embedding"]
@@ -84,6 +93,11 @@ if mode == "phrase":
         })
     print(json.dumps({"results": formatted}))
     sys.exit(0)
+
+alpha           = float(_a["alpha"])
+beta            = float(_a["beta"])
+gamma           = float(_a["gamma"])
+delta           = float(_a["delta"])
 
 rewritten_input = _a["rewritten_input"]
 synonym_dict = _a["synonym_dict"]
@@ -230,6 +244,7 @@ class DirectSearchSubprocessWorker(QThread):
         delta = float(self.delta)
         mode = self.mode
         ds_args = json.dumps({
+            "module_path": _MODULE_PATH,
             "path": self.chroma_path,
             "col_name": self.collection_name,
             "query": self.query,
@@ -259,8 +274,6 @@ class DirectSearchSubprocessWorker(QThread):
                 )
             payload = json.loads(result.stdout)
             formatted = payload.get("results") or []
-            if not formatted:
-                raise RuntimeError("No results returned from hybrid search")
             self.results_ready.emit(formatted)
         except Exception as e:
             import traceback as _tb
@@ -520,25 +533,20 @@ class DirectSearchMixin:
     def _query_via_subprocess(self, query, n_results=5, include=None):
         """Run a minimal Chroma query in a subprocess and return parsed results."""
         include = include or ["documents", "metadatas", "distances"]
-        chroma_path = self.settings.get("chromadb_path")
-        col_name = getattr(self.collection, "name", self.settings.get("collection_name"))
-        embed_model = self.settings.get("embedding_model")
-        include_literal = "[" + ",".join(repr(x) for x in include) + "]"
-        script = f"""
-import json, chromadb, ollama
-from chromadb.config import Settings, DEFAULT_TENANT, DEFAULT_DATABASE
-path = {repr(chroma_path)}
-col_name = {repr(col_name)}
-query = {repr(query)}
-emb = ollama.embeddings(model={repr(embed_model)}, prompt=query, keep_alive=-1)["embedding"]
-client = chromadb.PersistentClient(path=path, settings=Settings(anonymized_telemetry=False), tenant=DEFAULT_TENANT, database=DEFAULT_DATABASE)
-col = client.get_collection(col_name)
-res = col.query(query_embeddings=[emb], n_results={int(n_results)}, include={include_literal})
-print(json.dumps(res))
-"""
+        ds_args = json.dumps({
+            "module_path": _MODULE_PATH,
+            "path": self.settings.get("chromadb_path"),
+            "col_name": getattr(self.collection, "name", self.settings.get("collection_name")),
+            "query": query,
+            "embedding_model": self.settings.get("embedding_model"),
+            "top_k": int(n_results),
+            "mode": "self_test",
+            "include": include,
+        })
         try:
             result = subprocess.run(
-                [sys.executable, "-c", script],
+                [sys.executable, "-c", _SEARCH_SCRIPT],
+                env={**os.environ, "_DS_ARGS": ds_args},
                 capture_output=True,
                 text=True,
                 timeout=30,

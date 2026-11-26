@@ -4,7 +4,6 @@ import re
 import json
 import subprocess
 
-import ollama
 from groq import Groq
 from rank_bm25 import BM25Okapi
 
@@ -80,17 +79,9 @@ def get_relevant_context_hybrid(settings, user_input):
     else:
         rewritten_input, synonym_dict = rewrite_input_and_generate_synonyms(settings, user_input)
 
-    print(f"[Context] Getting embeddings with model: {settings['embedding_model']}")
-    input_embedding = ollama.embeddings(
-        model=settings['embedding_model'],
-        prompt=rewritten_input,
-        keep_alive=-1,
-    )["embedding"]
-    print(f"[Context] Got embedding, length: {len(input_embedding)}")
-
     print("[Context] Querying ChromaDB via subprocess...")
     helper_script = os.path.join(
-        os.path.dirname(os.path.abspath(sys.argv[0] if sys.argv and sys.argv[0] else 'rag_gui.py')),
+        os.path.dirname(os.path.abspath(__file__)),
         'GUI_chromadb_helper.py',
     )
     python_exe = sys.executable
@@ -98,7 +89,8 @@ def get_relevant_context_hybrid(settings, user_input):
     input_data = json.dumps({
         'chromadb_path': settings['chromadb_path'],
         'collection_name': settings['collection_name'],
-        'embedding': input_embedding,
+        'query': rewritten_input,
+        'embedding_model': settings['embedding_model'],
         'n_results': 20,
     })
 
@@ -116,6 +108,9 @@ def get_relevant_context_hybrid(settings, user_input):
     output = json.loads(result.stdout)
     if not output.get('success'):
         raise Exception(f"ChromaDB query failed: {output.get('error')}")
+
+    if not output['documents']:
+        return []
 
     search_result = {
         'documents': [output['documents']],

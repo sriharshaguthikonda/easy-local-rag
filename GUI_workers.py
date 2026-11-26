@@ -13,6 +13,9 @@ from pydub.playback import play
 
 from rag_prompting import CONTEXT_GUARD, build_guarded_context_block
 
+from embedding_contract import validate_embedding_compatibility
+
+
 class ChatWorker(QThread):
     """Generate one answer through the selected provider router.
 
@@ -302,6 +305,10 @@ class ChromaDBSearchWorker(QThread):
 
     def run(self):
         try:
+            if not validate_embedding_compatibility(self.collection, self.embedding_model):
+                self.results_ready.emit([])
+                return
+
             thread_id = threading.get_ident()
             print(
                 "[ChromaDBSearchWorker.run] thread=%s starting embedding call" % thread_id,
@@ -312,12 +319,6 @@ class ChromaDBSearchWorker(QThread):
                 prompt=self.query,
                 keep_alive=-1,
             )["embedding"]
-            print(
-                "[ChromaDBSearchWorker.run] embedding returned len=%s first5=%s thread=%s"
-                % (len(embedding), embedding[:5] if embedding else None, thread_id),
-                flush=True,
-            )
-
             print(
                 "[ChromaDBSearchWorker.run] querying collection=%s n_results=%s thread=%s"
                 % (getattr(self.collection, "name", "<no-name>"), self.n_results, thread_id),

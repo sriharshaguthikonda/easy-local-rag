@@ -25,8 +25,8 @@ from chromadb.config import Settings
 from rag_config import get_optional_path, get_path
 from embedding_contract import (
     DEFAULT_EMBEDDING_MODEL,
-    assert_embedding_model_matches,
-    ensure_collection_embedding_model,
+    open_collection_for_embedding_write,
+    validate_embedding_compatibility,
 )
 
 # Set the NLTK data path to include an optional user-configured directory.
@@ -67,8 +67,7 @@ client = chromadb.PersistentClient(settings=Settings())
 
 
 collection_name = "html_chunks_text_in_documents"  # Ensure the collection name matches
-collection = client.get_or_create_collection(name=collection_name)
-ensure_collection_embedding_model(collection, DEFAULT_EMBEDDING_MODEL)
+collection = open_collection_for_embedding_write(client, collection_name, DEFAULT_EMBEDDING_MODEL)
 
 
 def is_file_in_chromadb(file_path, modification_time):
@@ -190,7 +189,7 @@ class FileChangeHandler(FileSystemEventHandler):
             # Generate embeddings only for new chunks
             embeddings = []
             processed_chunks = []
-            assert_embedding_model_matches(collection, DEFAULT_EMBEDDING_MODEL)
+            validate_embedding_compatibility(collection, DEFAULT_EMBEDDING_MODEL, for_write=True)
 
             for chunk in new_chunks:
                 response = ollama.embeddings(
