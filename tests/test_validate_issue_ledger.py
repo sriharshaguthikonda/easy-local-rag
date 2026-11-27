@@ -258,7 +258,7 @@ def test_real_canonical_corpus_matches_recorded_issue_states():
     root = Path(__file__).parents[1]
     issue_dir = root / "docs" / "issues"
     expected_states = {
-        "2": "OPEN", "5": "OPEN", "6": "CLOSED", "7": "OPEN", "8": "CLOSED", "9": "CLOSED",
+        "2": "OPEN", "5": "CLOSED", "6": "CLOSED", "7": "OPEN", "8": "CLOSED", "9": "CLOSED",
         "10": "CLOSED", "11": "CLOSED", "12": "OPEN", "13": "OPEN", "14": "CLOSED", "15": "CLOSED",
         "16": "OPEN", "17": "OPEN", "18": "OPEN", "19": "OPEN", "20": "OPEN", "21": "OPEN",
         "22": "OPEN", "23": "OPEN", "24": "OPEN", "25": "OPEN", "26": "OPEN", "27": "OPEN",
