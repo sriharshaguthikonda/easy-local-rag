@@ -1,6 +1,6 @@
 # Issue #27 maintained-Chroma structural validation implementation packet
 
-**State** Locked by the packet PR. A separate activation PR must merge before any product or RED-test edits.
+**State** The approved maintained-Chroma structural exception is complete. See the [implementation receipt](#implementation-receipt). Full #27 remains open.
 **Mode** One-time maintained ChromaDB exception, deterministic extractive validation.
 **Target** `GUI-BM25-hyb-kkro-tkn-lmt-synms-mon-chngs-streamlit-chromadb-docs`.
 **Frozen base** `656ae2a905cb4a400e66a9101663de546b2d17e0`.
@@ -62,3 +62,11 @@ py -3.12 "$audit/run_pytest.py" -q -p no:cacheprovider tests/chroma_hybrid_nativ
 py -3.12 "$audit/run_pytest.py" -q -p no:cacheprovider tests
 py -3.12 -m py_compile rag_prompting.py generation_models.py GUI_workers.py GUI_chat.py rag_gui.py streamlit_app.py groq_lama_chromadb_RAG_ETTS.py streamlit_groq_lama_chromadb_RAG_ETTS.py
 ```
+
+## Implementation receipt
+
+- The [owner-approved packet](https://github.com/sriharshaguthikonda/easy-local-rag/pull/70) merged as `df2bc02277f5be5011dea557a80b562a08d23d34`. [Separate activation](https://github.com/sriharshaguthikonda/easy-local-rag/pull/71) merged as `7ae5de3a4a413b5b0452fae9aa65083da5dbac7b` before product work. Tests-only RED commits `f135296573011bceb2c3c3b1fed364c422e64a7d` and `8fd51a39c85c4035dd84bc941c045e43c0db3e65` reproduced 60 structural failures and four pending-stream/export failures on the pinned product code.
+- [PR #72](https://github.com/sriharshaguthikonda/easy-local-rag/pull/72) merged to the maintained GUI branch as `a8926023f8c4ef56ec632137200e6ff9904ca675`. Its parents are the frozen base and reviewed candidate `52b4674b554d768881ef69565cf2ec27547e7004`. The merged tree matches the reviewed candidate tree `319f21438bddd3afe43a6177fffb2807e7b7f7df`.
+- A detached checkout of that candidate passed **99 structural tests**, **140 guarded generation and speech tests**, **102 hybrid retrieval, embedding compatibility and offline search tests**, **11 native synthetic Chroma tests** and **494 full-suite tests**. The 140-test group includes `tests/test_streamlit_tts_worker_config.py`. Python 3.12, ChromaDB 1.0.16 and offscreen Qt ran under the Python TCP/DNS guard. All eight changed application modules compiled. Gitleaks passed.
+- Workers A through D contributed bounded implementation reviews via the existing single-slot Foreman lane. Worker E received line-numbered source pinned to the candidate SHA. Completed reviews covered sent-evidence membership and normalized quotations (27 s), exact outbound evidence and termination (60 s), and all maintained publication paths (57 s and an 89 s follow-up). All four passed through the existing Ornith instance with Foreman exit 0. The root verified that the Qt completion signal carries empty text on every failed result and tied that check to the speech and export regressions. Broader timed-out attempts carry no acceptance credit.
+- On acceptance, all four maintained answer entry points show “Structurally validated excerpts”. On rejection, typed status and available source evidence remain available. Tests used synthetic sources and simulated providers. No live application provider smoke was run. Full #27 retains semantic claim support, contradiction detection, evidence sufficiency and medical-reference profiles. #2 and the canonical migration sequence retain their existing gates.
