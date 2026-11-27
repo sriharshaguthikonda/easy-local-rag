@@ -164,23 +164,9 @@ class ChatFunctionalityMixin:
             self.chat_worker = None
 
         if response and self.tts_enabled:
-            # Split into sentences for TTS and store them
             sentences = re.split(r"[.!?]+", response)
             self._tts_sentences = [s.strip() for s in sentences[:3] if s.strip()]
-            
-            # Start the first TTS worker if there are any sentences
-            if self._tts_sentences:
-                sentence = self._tts_sentences.pop(0)
-                self._start_tts_worker(sentence)
-                
-                # If there's another sentence, prepare it in advance
-                if self._tts_sentences:
-                    next_sentence = self._tts_sentences.pop(0).strip()
-                    if next_sentence:
-                        self._next_tts_worker = TTSWorker(next_sentence, self.settings)
-                        self._next_tts_worker.finished.connect(
-                            lambda w=self._next_tts_worker: self._cleanup_tts_worker(w)
-                        )
+            self._play_next_tts_sentence()
 
         # Add newlines after response
         self.chat_display.append("\n")
@@ -200,20 +186,22 @@ class ChatFunctionalityMixin:
             score = res.get("final_score", 0)
             doc = res.get("document", "")[:500]
 
-            # Highlight keywords
-            keywords = res.get("keywords", [])
-            for kw in keywords:
-                doc = re.sub(
-                    rf"\b({re.escape(kw)})\b",
-                    r'<span style="background-color: #FFD700; color: black;">\1</span>',
-                    doc,
-                    flags=re.IGNORECASE,
+            keywords = [re.escape(word) for word in res.get("keywords", []) if word]
+            if keywords:
+                pattern = rf"\b({'|'.join(keywords)})\b"
+                parts = re.split(pattern, doc, flags=re.IGNORECASE)
+                doc = "".join(
+                    f'<span style="background-color: #FFD700; color: black;">{escape(part)}</span>'
+                    if index % 2 else escape(part)
+                    for index, part in enumerate(parts)
                 )
+            else:
+                doc = escape(doc)
 
             context_html += f"""
             <div style="margin: 10px 0; padding: 10px; border: 1px solid #444; border-radius: 5px;">
                 <b>#{i}</b> - Score: {score:.3f}<br>
-                <b>File:</b> <code>{file_name}</code><br>
+                <b>File:</b> <code>{escape(file_name)}</code><br>
                 <hr style="margin: 5px 0;">
                 <p style="font-size: 11px;">{doc}...</p>
             </div>
@@ -247,42 +235,19 @@ class ChatFunctionalityMixin:
             message = f"Answered with {model_label}"
             if reason:
                 message += f" ({reason})"
-            self.append_message("Model", escape(message), "#9CA3AF")
+            self.append_message("Model", message, "#9CA3AF")
 
     def _cleanup_tts_worker(self, worker):
-        """Clean up finished TTS worker and start the next one if available"""
         if worker in self.tts_workers:
             self.tts_workers.remove(worker)
             worker.deleteLater()
-            
-            # If we have a preprocessed next worker, start it
-            if hasattr(self, '_next_tts_worker') and self._next_tts_worker:
-                self.tts_workers.append(self._next_tts_worker)
-                self._next_tts_worker.start()
-                self._next_tts_worker = None
-                
-                # Preprocess the next sentence if available
-                self._prepare_next_tts()
-    
-    def _start_tts_worker(self, sentence):
-        """Helper method to start a single TTS worker"""
-        tts_worker = TTSWorker(sentence, self.settings)
-        tts_worker.finished.connect(
-            lambda w=tts_worker: self._cleanup_tts_worker(w)
-        )
-        self.tts_workers.append(tts_worker)
-        tts_worker.start()
-        
-        # Prepare the next TTS worker if available
-        self._prepare_next_tts()
-        
-    def _prepare_next_tts(self):
-        """Prepare the next TTS worker in advance if sentences are available"""
-        if hasattr(self, '_tts_sentences') and self._tts_sentences and not hasattr(self, '_next_tts_worker'):
-            sentence = self._tts_sentences.pop(0).strip()
-            if sentence:
-                self._next_tts_worker = TTSWorker(sentence, self.settings)
-                self._next_tts_worker.finished.connect(
-                    lambda w=self._next_tts_worker: self._cleanup_tts_worker(w)
-                )
-                # Don't start it yet, just prepare it
+            if self.tts_enabled:
+                self._play_next_tts_sentence()
+
+    def _play_next_tts_sentence(self):
+        if not self.tts_enabled or self.tts_workers or not self._tts_sentences:
+            return
+        worker = TTSWorker(self._tts_sentences.pop(0), self.settings)
+        worker.finished.connect(lambda: self._cleanup_tts_worker(worker))
+        self.tts_workers.append(worker)
+        worker.start()

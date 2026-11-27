@@ -355,3 +355,41 @@ def test_direct_search_retains_modes_and_scopes_optional_rewrite(
         assert statuses == ["Rewrite used groq: replacement (saved model unavailable)"]
     else:
         assert statuses == []
+
+@pytest.mark.parametrize("provider", ["groq", "ollama"])
+@pytest.mark.parametrize("check", ["role", "replay"])
+def test_chat_worker_keeps_guard_and_synthetic_evidence_in_the_correct_turn(qapp, provider, check):
+    from rag_prompting import CONTEXT_GUARD
+
+    calls = []
+    history = []
+
+    class Router:
+        def generate(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                text="answer", preferred_model="model", actual_model="model", reason=""
+            )
+
+    settings = dict(GUI_settings.DEFAULT_SETTINGS)
+    settings.update(generation_provider=provider, groq_model="model", ollama_model="model")
+    for index in (1, 2):
+        evidence = [{"document": f"unique evidence {index}", "meta": {"file_name": "doc"}}]
+        ChatWorker(f"question {index}", settings, evidence, history, router=Router()).run()
+
+    assert len(calls) == 2
+    if check == "role":
+        for call in calls:
+            messages = call["messages"]
+            assert messages[0]["role"] == "system"
+            assert CONTEXT_GUARD in messages[0]["content"]
+            assert all(CONTEXT_GUARD not in item["content"] for item in messages[1:])
+            assert call["text_only"] is True
+    else:
+        messages = calls[1]["messages"]
+        assert messages[1:3] == [
+            {"role": "user", "content": "question 1"},
+            {"role": "assistant", "content": "answer"},
+        ]
+        assert all("unique evidence 1" not in item["content"] for item in messages)
+        assert "unique evidence 2" in messages[-1]["content"]

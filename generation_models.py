@@ -501,6 +501,29 @@ def _extract_delta(chunk: Any) -> tuple[str, str | None]:
     return _extract_text(_value(chunk, "response")), model
 
 
+def _has_tool_output(response: Any) -> bool:
+    def declares_tool(message):
+        return bool(_value(message, "tool_calls") or _value(message, "function_call"))
+
+    tool_finish = ("tool_calls", "tool_call", "function_call")
+    if (
+        declares_tool(response)
+        or declares_tool(_value(response, "message"))
+        or _value(response, "done_reason") in tool_finish
+    ):
+        return True
+    return any(
+        declares_tool(_value(choice, "delta"))
+        or declares_tool(_value(choice, "message"))
+        or _value(choice, "finish_reason") in tool_finish
+        for choice in _as_sequence(_value(response, "choices"))
+    )
+
+
+def _reject_tool_output():
+    raise GenerationError("unsupported_tool_output", "Unexpected tool output in a text-only request.")
+
+
 def _extract_response_text(response: Any) -> tuple[str, str | None, Any]:
     text, model = _extract_delta(response)
     usage = _value(response, "usage")
@@ -765,6 +788,7 @@ class _GenerationRouter:
         model_id: str,
         cancelled: Any,
         on_chunk: Callable[[str], Any] | None,
+        text_only: bool,
     ) -> tuple[str, str | None, Any]:
         chunks: list[str] = []
         tool_delta_seen = False
@@ -773,10 +797,11 @@ class _GenerationRouter:
         try:
             for chunk in stream:
                 _raise_if_cancelled(cancelled)
+                has_tool_output = _has_tool_output(chunk)
+                if text_only and has_tool_output:
+                    _reject_tool_output()
+                tool_delta_seen |= has_tool_output
                 piece, model = _extract_delta(chunk)
-                choices = _value(chunk, "choices") or []
-                message = _value(choices[0], "delta") if choices else _value(chunk, "message")
-                tool_delta_seen |= bool(_value(message, "tool_calls") or _value(message, "function_call"))
                 actual_model = model or actual_model
                 usage = _value(chunk, "usage", usage)
                 if piece:
@@ -810,6 +835,7 @@ class _GenerationRouter:
         options: Mapping[str, Any],
         cancelled: Any,
         on_chunk: Callable[[str], Any] | None,
+        text_only: bool,
     ) -> tuple[str, str | None, Any]:
         _raise_if_cancelled(cancelled)
         try:
@@ -823,9 +849,12 @@ class _GenerationRouter:
             raise GenerationError(category, "Model request failed.", provider=self.provider) from None
         if stream:
             return self._consume_stream(
-                response, model_id=profile.id, cancelled=cancelled, on_chunk=on_chunk
+                response, model_id=profile.id, cancelled=cancelled, on_chunk=on_chunk,
+                text_only=text_only,
             )
         _raise_if_cancelled(cancelled)
+        if text_only and _has_tool_output(response):
+            _reject_tool_output()
         text, actual_model, usage = _extract_response_text(response)
         if text and on_chunk is not None:
             try:
@@ -843,6 +872,8 @@ class _GenerationRouter:
         max_output_tokens: int = 1024,
         cancelled: Any = None,
         on_chunk: Callable[[str], Any] | None = None,
+        *,
+        text_only: bool = False,
         **provider_options: Any,
     ) -> GenerationResult:
         """Generate with bounded same-provider/model-class fallback.
@@ -862,6 +893,12 @@ class _GenerationRouter:
         if max_output_tokens <= 0:
             raise GenerationError("invalid_request", "max_output_tokens must be positive")
         prepared_messages = list(messages or [])
+        tool_options = {"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"}
+        if text_only and tool_options.intersection(provider_options):
+            raise GenerationError(
+                "unsupported_tool_request", "Tool options are prohibited in text-only requests.",
+                provider=self.provider,
+            )
         options = _policy_options(provider_options, stream=bool(stream))
         requested_provider = provider_options.get("provider")
         if requested_provider is not None and str(requested_provider).lower() != self.provider:
@@ -977,6 +1014,7 @@ class _GenerationRouter:
                     options=options,
                     cancelled=cancelled,
                     on_chunk=on_chunk,
+                    text_only=text_only,
                 )
                 actual_id = _safe_model_id(actual_model) or candidate.id
                 reason = fallback_reason

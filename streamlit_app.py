@@ -3,10 +3,10 @@ import inspect
 import json
 import os
 import queue
-import tempfile
 import threading
 import webbrowser
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from typing import NamedTuple
 
@@ -17,8 +17,7 @@ from conversation_import import apply_uploaded_conversation
 from generation_models import GenerationError, groq_router, ollama_router
 from offline_search import open_local_collection, search_documents
 from rag_prompting import (
-    CONTEXT_GUARD,
-    build_guarded_context_block,
+    build_guarded_request,
     build_numbered_sources,
     context_from_sources,
     validate_response_citations,
@@ -82,7 +81,7 @@ def _initialize_session():
         "conversation_history": [],
         "chat_input_key": 0,
         "message_timestamps": [],
-        "tts_enabled": True,
+        "allow_cloud_speech": False,
         "current_sources": [],
         "current_citations": [],
         "favorite_responses": [],
@@ -216,22 +215,15 @@ def retrieve_numbered_sources(prompt, *, retrieve=None, **kwargs):
     return structured_context, numbered_sources
 
 
-def build_citation_prompt(prefix, prompt, numbered_sources):
-    citation_instruction = (
-        "Use [N] citations for every factual claim that comes from context. "
-        "If context does not support a claim, say so."
-    )
-    formatted_context = build_guarded_context_block(numbered_sources)
-    return (
-        f"{prefix}\n\n{CONTEXT_GUARD}\n{citation_instruction}\n\n"
-        f"{formatted_context}\n\nQuery: {prompt}"
-    )
+CITATION_INSTRUCTION = (
+    "Use [N] citations for every factual claim that comes from context. "
+    "If context does not support a claim, say so."
+)
 
 
 def process_chat_mode(
     prompt,
     mode,
-    context_window,
     *,
     retrieve=None,
     rewrite=True,
@@ -239,7 +231,7 @@ def process_chat_mode(
     strict=False,
     cancelled=None,
 ):
-    """Build one current prompt and evidence set for the chosen retrieval mode."""
+    """Choose retrieval settings and a trusted task instruction for the current mode."""
     prefixes = {
         "Focused Search": "Focusing on most relevant sources:",
         "Brain Dump": "Drawing from multiple sources:",
@@ -265,8 +257,7 @@ def process_chat_mode(
     context, sources = retrieve_numbered_sources(
         prompt, retrieve=retrieve, **retrieval_options
     )
-    processed = build_citation_prompt(prefixes.get(mode, ""), prompt, sources)
-    return context, processed, sources
+    return context, prefixes.get(mode, ""), sources
 
 
 class _PreparedGeneration(NamedTuple):
@@ -295,26 +286,26 @@ def _prepare_generation(
     """Retrieve evidence and build the bounded request exactly once."""
 
     selected = preferred if preferred is not None else DEFAULT_MODELS[provider]
-    context, processed_input, metadata = process_chat_mode(
+    context, task_instruction, metadata = process_chat_mode(
         user_input,
         mode,
-        context_window,
         retrieve=retrieve,
         rewrite=provider == "groq",
         router=router,
         strict=strict,
         cancelled=cancelled,
     )
-    messages = [
-        {"role": "system", "content": system_message},
-        *list(conversation_history)[-context_window:],
-        {"role": "user", "content": processed_input},
-    ]
+    history = list(conversation_history)[-context_window:] if context_window else []
+    prepared = build_guarded_request(
+        system_message, user_input, metadata, history,
+        task_instruction=task_instruction, citation_instruction=CITATION_INSTRUCTION,
+    )
+    system_turn, current_turn = dict(prepared[0]), dict(prepared[-1])
     messages, was_trimmed = trim_messages_to_budget(
-        messages, max_input_tokens=5000, model_name=selected
+        prepared, max_input_tokens=5000, model_name=selected
     )
     error = None
-    if not messages or messages[-1].get("content") != processed_input:
+    if len(messages) < 2 or messages[0] != system_turn or messages[-1] != current_turn:
         error = GenerationError(
             "input_budget", "The full evidence does not fit the input budget."
         )
@@ -323,6 +314,7 @@ def _prepare_generation(
         "messages": messages,
         "strict": strict,
         "stream": True,
+        "text_only": True,
         "temperature": temperature,
     }
     return _PreparedGeneration(context, metadata, was_trimmed, error, request)
@@ -346,12 +338,12 @@ def _accept_answer(placeholder, result, metadata, user_input, provider):
         "No citations returned in response." if result.text and not cited_ids else None
     )
     st.caption(status)
-    placeholder.markdown(result.text)
+    placeholder.text(result.text)
     state.conversation_history.extend([
         {"role": "user", "content": user_input},
         {"role": "assistant", "content": result.text},
     ])
-    if provider == "groq" and state.tts_enabled:
+    if provider == "groq" and state.get("allow_cloud_speech") is True:
         ensure_tts_worker()["queue"].put(result.text)
     return None
 
@@ -396,7 +388,7 @@ def chat_with_model(
 
     def display_chunk(chunk):
         chunks.append(chunk)
-        placeholder.markdown("".join(chunks) + "▌")
+        placeholder.text("".join(chunks) + "▌")
 
     try:
         result = selected_router.generate(
@@ -404,7 +396,7 @@ def chat_with_model(
         )
     except GenerationError as error:
         if chunks:
-            placeholder.markdown("".join(chunks))
+            placeholder.text("".join(chunks))
         st.error(str(error))
         return context, None, metadata
 
@@ -532,7 +524,7 @@ def _generation_observer_impl():
     placeholder = st.empty()
     if outcome is None:
         if chunks and not job.cancel_event.is_set():
-            placeholder.markdown(chunks + "▌")
+            placeholder.text(chunks + "▌")
         st.button(
             "Cancel generation",
             key="cancel_active_generation",
@@ -585,15 +577,6 @@ def _offline_sources(query):
     ])
 
 
-def create_source_network(sources):
-    """Create interactive network visualization of source relationships"""
-    from pyvis.network import Network
-
-    net = Network(height="500px", bgcolor="#ffffff")
-    # ...network creation logic...
-    return net
-
-
 def generate_word_cloud(text):
     """Generate word cloud from text"""
     from wordcloud import WordCloud
@@ -621,7 +604,7 @@ def open_file(path):
         # Convert path to proper URI format
         file_path = Path(path).resolve()
         if not file_path.exists():
-            st.error(f"File not found: {file_path}")
+            st.error("The selected file was not found.")
             return False
 
         if os.name == "nt":  # Windows
@@ -630,7 +613,8 @@ def open_file(path):
             webbrowser.open(f"file://{file_path}")
         return True
     except Exception as e:
-        st.error(f"Error opening file: {e}")
+        st.error("The selected file could not be opened.")
+        st.text(str(e))
         return False
 
 
@@ -644,7 +628,7 @@ def render_source_documents(metadata, cited_ids):
             if not meta:
                 continue
             file_path = Path(meta.get("file_path") or meta["file_name"])
-            st.markdown(f"### [{citation_id}] {file_path.name}")
+            st.text(f"[{citation_id}] {file_path.name}")
 
             col1, col2 = st.columns([1, 1])
             with col1:
@@ -661,7 +645,7 @@ def render_source_documents(metadata, cited_ids):
                     st.clipboard.write(str(file_path))
 
             st.markdown("**Excerpt:**")
-            st.markdown(meta["document"])
+            st.text(meta["document"])
             st.markdown("---")
 
 
@@ -716,8 +700,9 @@ def main():
 
         if provider == "groq":
             st.subheader("Text-to-Speech Settings")
-            st.session_state.tts_enabled = st.toggle(
-                "Enable Text-to-Speech", value=st.session_state.tts_enabled
+            st.session_state.allow_cloud_speech = st.toggle(
+                "Allow cloud speech (Google)", value=st.session_state.allow_cloud_speech,
+                help="Send accepted assistant answers to Google Text-to-Speech for playback.",
             )
 
     # Now handle the column content
@@ -745,8 +730,9 @@ def main():
                     # ... existing source display ...
                     with st.expander("Source Actions"):
                         # Add tags
+                        st.text(source["file_name"])
                         tags = st.text_input(
-                            f"Tags for {source['file_name']}",
+                            "Tags",
                             key=f"source_tags_{source.get('collection_id')}_{source.get('chunk_id')}_{source['citation_id']}",
                         )
                         if st.button("Save Tags"):
@@ -765,7 +751,7 @@ def main():
 
         for message in st.session_state.conversation_history:
             with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+                st.text(message["content"])
         if active_job is None and provider != "offline":
             if warning := st.session_state.get("last_generation_warning"):
                 st.warning(warning)
@@ -781,7 +767,7 @@ def main():
         cited_ids = []
         if prompt:
             with st.chat_message("user"):
-                st.markdown(prompt)
+                st.text(prompt)
                 st.session_state.message_timestamps.append(datetime.now())
 
             if provider == "offline":
@@ -810,7 +796,7 @@ def main():
                     _generation_observer()
         elif active_job is not None:
             with st.chat_message("user"):
-                st.markdown(active_job.question)
+                st.text(active_job.question)
             with st.chat_message("assistant"):
                 _generation_observer()
 
@@ -842,6 +828,7 @@ def main():
 
                     source_data = pd.DataFrame(st.session_state.current_sources)
                     if {"score", "file_name"}.issubset(source_data.columns):
+                        source_data["file_name"] = source_data["file_name"].map(escape)
                         fig = px.pie(source_data, values="score", names="file_name")
                         st.plotly_chart(fig)
 
@@ -854,20 +841,10 @@ def main():
                     wordcloud = generate_word_cloud(all_text)
                     st.image(wordcloud.to_array())
 
-            # Source Network
-            with st.expander("Source Network"):
-                net = create_source_network(st.session_state.current_sources)
-                # Save and display network
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
-                    net.save_graph(tmp.name)
-                    with open(tmp.name, "r", encoding="utf-8") as f:
-                        st.components.v1.html(f.read(), height=500)
-
     # Keyboard Shortcuts Help
     with st.sidebar.expander("Keyboard Shortcuts ⌨️"):
         st.markdown("""
         - `/` : Focus chat input
-        - `Ctrl+T` : Toggle TTS
         - `Ctrl+S` : Save current conversation
         - `Ctrl+F` : Search in conversation
         - `Ctrl+B` : Toggle source sidebar
@@ -914,21 +891,6 @@ def main():
                 }
             });
             focus_input();
-        </script>
-    """,
-        unsafe_allow_html=True,
-    )
-
-    # Add keyboard shortcut to toggle TTS
-    st.markdown(
-        """
-        <script>
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 't' && e.ctrlKey) {
-                    const ttsToggle = document.querySelector('div[data-testid="stToggleButton"]');
-                    if (ttsToggle) ttsToggle.click();
-                }
-            });
         </script>
     """,
         unsafe_allow_html=True,
