@@ -113,3 +113,35 @@ def test_same_provider_fallback_reuses_request_and_rejects_tool_output(provider)
     assert calls[0]["messages"] == calls[1]["messages"] == messages
     assert all("tools" not in request for request in calls)
     assert emitted == []
+
+@pytest.mark.parametrize("provider", ["groq", "ollama"])
+@pytest.mark.parametrize("stream", [False, True])
+def test_text_only_generation_rejects_tool_only_completion(provider, stream):
+    import generation_models as gm
+    from test_generation_models import FakeGroq, _groq_rows
+
+    tool_event = {"tool_calls": [{"id": "synthetic", "function": {"name": "inert"}}]}
+    if provider == "groq":
+        model = "llama-3.3-70b-versatile"
+        client = FakeGroq(_groq_rows())
+        event = {"choices": [{("delta" if stream else "message"): tool_event}]}
+        client.chat.completions.create = lambda **_: iter([event]) if stream else event
+        router = gm.groq_router(client=client)
+    else:
+        model = "phi-3"
+        event = {"message": tool_event}
+        client = SimpleNamespace(
+            list=lambda: {"models": [{"model": model}]},
+            show=lambda _: {"capabilities": ["completion"]},
+            chat=lambda **_: iter([event]) if stream else event,
+        )
+        router = gm.ollama_router(client=client, host="http://127.0.0.1:11434")
+
+    emitted = []
+    with pytest.raises(gm.GenerationError, match="tool") as rejected:
+        router.generate(
+            preferred=model, messages=[{"role": "user", "content": "Synthetic question."}],
+            max_output_tokens=64, text_only=True, stream=stream, on_chunk=emitted.append,
+        )
+    assert rejected.value.code == "unsupported_tool_output"
+    assert emitted == []
