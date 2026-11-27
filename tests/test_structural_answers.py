@@ -147,3 +147,98 @@ def test_only_validated_source_rendering_reaches_normal_sinks(surface, request, 
     assert spoken in ([], [visible[-1]])
     assert result.status == "structurally_validated"
     assert result.evidence.context_sha256 and result.evidence.package_sha256
+
+@pytest.mark.parametrize("end", ["timeout", "provider-error", "cancelled"])
+def test_pending_background_response_is_never_published(end, load_streamlit_app, monkeypatch):
+    import threading
+
+    app, display = load_streamlit_app
+    display.button = lambda *a, **k: False
+    display.session_state.allow_cloud_speech = True
+    spoken = []
+    monkeypatch.setattr(app, "ensure_tts_worker", lambda: {"queue": SimpleNamespace(put=spoken.append)})
+    pending, release = threading.Event(), threading.Event()
+    payload = packet(1, SOURCE)
+
+    def chunks():
+        yield delta(payload)
+        pending.set()
+        assert release.wait(5)
+        if end == "timeout":
+            raise TimeoutError("private provider fixture")
+        if end == "provider-error":
+            raise RuntimeError("private provider fixture")
+        yield delta(finish="stop")
+
+    job = app.start_generation_job(
+        QUESTION, "Use fixture evidence.", preferred=MODEL, router=groq(chunks, []),
+        retrieve=lambda *a, **k: (SOURCE, sources()[:1]),
+    )
+    try:
+        assert pending.wait(5)
+        app._generation_observer_impl()
+        if end == "cancelled":
+            assert app.request_generation_cancel(job)
+    finally:
+        release.set()
+        job.thread.join(timeout=5)
+    assert not job.thread.is_alive()
+    app._generation_observer_impl()
+    assert not display.plain_text
+    assert not display.session_state.conversation_history
+    assert not spoken
+    assert display.session_state.current_sources
+    assert all("private provider fixture" not in item for item in display.errors)
+    assert display.session_state.last_answer_result.status == {
+        "timeout": "timeout", "provider-error": "provider_failed", "cancelled": "cancelled",
+    }[end]
+
+
+def test_rejected_qt_response_never_enters_export_or_speech(qapp, monkeypatch, tmp_path):
+    import sys
+
+    import nest_asyncio
+    from PyQt5.QtWidgets import QTextEdit
+    from GUI_chat import ChatFunctionalityMixin
+    from GUI_workers import ChatWorker
+
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(nest_asyncio, "apply", lambda: None)
+    import rag_gui
+
+    speech = []
+    payload = packet(1, "Synthetic fabricated quotation canary.")
+
+    class Chat(ChatFunctionalityMixin):
+        def __init__(self):
+            button = SimpleNamespace(setEnabled=lambda enabled: None)
+            self.chat_display = QTextEdit()
+            self.conversation_history = []
+            self.send_btn = self.search_only_btn = self.stop_btn = button
+            self.statusBar = SimpleNamespace(showMessage=lambda *a: None)
+            self.chat_worker = None
+            self.tts_enabled = True
+
+        def set_progress_stage(self, stage):
+            pass
+
+        def _play_next_tts_sentence(self):
+            speech.extend(self._tts_sentences)
+
+    chat = Chat()
+    worker = ChatWorker(
+        QUESTION, {"system_message": "Use fixture evidence.", "groq_model": MODEL},
+        sources()[:1], chat.conversation_history,
+        router=groq(lambda: iter((delta(payload), delta(finish="stop"))), []),
+    )
+    worker.response_chunk.connect(chat.on_response_chunk)
+    worker.response_complete.connect(chat.on_response_complete)
+    worker.run()
+
+    for ext in ("txt", "html", "json"):
+        path = tmp_path / f"export.{ext}"
+        monkeypatch.setattr(rag_gui.QFileDialog, "getSaveFileName", lambda *a: (str(path), ""))
+        rag_gui.RAGChatGUI.export_chat(chat)
+        assert "Synthetic fabricated quotation canary" not in path.read_text(encoding="utf-8")
+    assert not speech
+    assert chat.conversation_history == []
