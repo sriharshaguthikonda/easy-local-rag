@@ -40,6 +40,16 @@ Search-only remains fully usable without any model.
 It must pass before #25 cutover. Future GUI work renders its typed result rather
 than reimplementing validation.
 
+## Maintained ChromaDB structural exception
+
+The owner approved a one-time structural-validation slice on 2026-11-27
+while #2 remains open. See the [pinned audit](../Research/issue-027/README.md)
+and [canonical implementation packet](../superpowers/plans/2026-11-27-issue-027-structural-validation-implementation.md).
+The packet requires a separate activation merge before tests or product changes.
+The full issue and its existing dependencies remain open. Semantic support,
+contradiction detection, evidence sufficiency and the medical profile keep
+their existing gates.
+
 ## Required answer contract
 
 The structured result contains:
