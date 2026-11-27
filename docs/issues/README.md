@@ -40,7 +40,8 @@ closed after independent verification of the maintained GUI implementation.
 The [owner separately approved #5](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5#issuecomment-7213652317)
 for the maintained ChromaDB request boundary at the verified #10/#11 GUI tip.
 The #5 [locked packet](https://github.com/sriharshaguthikonda/easy-local-rag/pull/64) merged before separate activation.
-The exception leaves #2, full #27, complete #22, #25 and migration gated.
+#5 closed after independent verification and the approved LM Studio smoke.
+#2, full #27, complete #22, #25 and migration retain their gates.
 
 ## JIT packet policy
 
@@ -71,8 +72,8 @@ unresolved placeholder, implementer choice, or speculative dependency.
 | #38 | closed | Streamlit evidence contract completed through [PR #42](https://github.com/sriharshaguthikonda/easy-local-rag/pull/42) on the GUI lineage. |
 | #11 | closed | Completed through [PR #58](https://github.com/sriharshaguthikonda/easy-local-rag/pull/58) at GUI merge `0be9ebe688ffd795960b6761422087105d26e63d`. The verified head `6f878bfeff993ff9e78c23595d40943cf53eeaa7` passed 88 focused and 333 full offline tests. See the [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/11#issuecomment-7200752206). |
 | #10 | closed | Completed through [PR #62](https://github.com/sriharshaguthikonda/easy-local-rag/pull/62) at GUI merge `89514bf502a39776b2261ff1657146f530364765`. The reviewed head `55a915433e44f5cf0be66453d57a4e9670784021` passed 344 full-suite tests. See the [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/10#issuecomment-7201734064). |
-| #5 | active | [Locked packet](../superpowers/plans/2026-11-27-issue-005-guarded-requests-implementation.md). |
-| Active issue | #5 | One-time maintained-path exception. #2 remains open under its existing gate. |
+| #5 | closed | Completed through [PR #66](https://github.com/sriharshaguthikonda/easy-local-rag/pull/66) at GUI merge `656ae2a905cb4a400e66a9101663de546b2d17e0`. The reviewed head `27959f498b95ca1095f8fff4ec93d50c7c0b2e81` passed 395 network-denied tests and the [amended behavioral smoke](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5#issuecomment-7218099584). See the [closure evidence](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5#issuecomment-7218274040). |
+| Active issue | none | The one-time #5 exception is complete. #2 remains open under its existing gate. |
 
 Workers use this lifecycle exactly: `planner packet -> ChatGPT review -> GSD checker ->
 corrector -> docs merge -> separate activation PR merge -> implementer initial TDD commit -> code-review agent ->
@@ -146,7 +147,7 @@ approval, rollback, or scope means a separate packet.
 | Issue | Priority and type | Status | Canonical plan | Dependencies and sequence | GitHub |
 |---|---|---|---|---|---|
 | #2 | P0 security | Open — awaiting GitHub Support disposition | [Rotate Groq keys](ISSUE-002-rotate-groq-keys.md) | Containment/rotation unlocks #18; early #26B alone rewrites history; #2 closes on its post-rewrite evidence before #19. | [Issue #2](https://github.com/sriharshaguthikonda/easy-local-rag/issues/2) |
-| #5 | P1 security | Open — active | [Prompt-injection defense](ISSUE-005-prompt-injection.md) | One-time exception after #10/#11. Full semantic validation remains with #27. | [Issue #5](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5) |
+| #5 | P1 security | **Closed — independently verified through PR #66** | [Prompt-injection defense](ISSUE-005-prompt-injection.md) | One-time exception after #10/#11. Full semantic validation remains with #27. | [Issue #5](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5) |
 | #6 | P0 bug | **Closed — completed through PR #29 at GUI merge `daecce8a27f50da39284f5519d77b835905209f6`** | [MMR embedding fix](ISSUE-006-mmr-embedding-keyerror.md) | Fix commit `de7465902e00e363993f9ea9eb2190ce940e1bed`; preserve #11's embedding contract. | [Issue #6](https://github.com/sriharshaguthikonda/easy-local-rag/issues/6) |
 | #7 | P1 bug | Open — partial implementation | [Lazy Chroma initialization](ISSUE-007-lazy-chromadb-init.md) | Depends on #11 creation metadata; required only while the Chroma path remains supported. | [Issue #7](https://github.com/sriharshaguthikonda/easy-local-rag/issues/7) |
 | #8 | P1 bug | **Closed — completed** | [Config-driven paths](ISSUE-008-config-driven-paths.md) | Completed independently; #16 retains its documentation scope. | [Issue #8](https://github.com/sriharshaguthikonda/easy-local-rag/issues/8) |
