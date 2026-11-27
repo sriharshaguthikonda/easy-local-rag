@@ -682,12 +682,9 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         
     def stop_generation(self):
         if self.chat_worker and self.chat_worker.isRunning():
-            if hasattr(self.chat_worker, "request_cancel"):
-                self.chat_worker.request_cancel()
-            self.chat_worker.wait()
-            self.on_response_complete("")
-            self.append_message("System", "Generation stopped.", "#F39C12")
-            self.set_progress_stage("done")
+            if self.chat_worker.request_cancel():
+                self.stop_btn.setEnabled(False)
+                self.statusBar.showMessage("Cancellation requested.")
             
     def append_message(self, sender, message, color, start_only=False):
         timestamp = datetime.now().strftime("%H:%M")

@@ -9,6 +9,8 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from structural_answer_fixtures import completed_excerpt, displayed_excerpt, excerpt_payload
+
 
 class Session(dict):
     def __getattr__(self, name):
@@ -92,9 +94,14 @@ def test_streamlit_requires_explicit_cloud_speech_consent(load_streamlit_app, mo
     monkeypatch.setattr(
         app, "ensure_tts_worker", lambda: {"queue": SimpleNamespace(put=spoken.append)}
     )
-    result = SimpleNamespace(text="Synthetic answer.", actual_model="selected", reason="")
+    evidence = "Synthetic evidence."
+    _, answer, _ = app.chat_with_model(
+        "Original question", "System",
+        router=SimpleNamespace(generate=lambda **_: completed_excerpt(evidence)),
+        retrieve=lambda *_a, **_k: (evidence, [{"document": evidence}]),
+    )
 
-    assert app._accept_answer(display, result, [], "Original question", "groq") is None
+    assert answer == displayed_excerpt(evidence)
     assert spoken == []
 
 
@@ -114,7 +121,8 @@ def test_streamlit_guarded_requests_keep_history_and_current_sources_separate(
 
     def generate(**request):
         requests.append(request)
-        return SimpleNamespace(text="Accepted [1].", actual_model="selected", reason="")
+        cue = ("first cue", "second cue")[len(requests) - 1]
+        return completed_excerpt(f"Synthetic evidence for {cue} only.")
 
     for question in ("first cue", "second cue"):
         options = dict(provider=provider, router=SimpleNamespace(generate=generate), retrieve=retrieve)
@@ -125,12 +133,12 @@ def test_streamlit_guarded_requests_keep_history_and_current_sources_separate(
             app._generation_observer_impl()
         else:
             _context, answer, _sources = app.chat_with_model(question, "Trusted policy.", **options)
-            assert answer == "Accepted [1]."
+            assert answer == displayed_excerpt(f"Synthetic evidence for {question} only.")
 
     first, second = [request["messages"] for request in requests]
     assert second[1:3] == [
         {"role": "user", "content": "first cue"},
-        {"role": "assistant", "content": "Accepted [1]."},
+        {"role": "assistant", "content": "A previous turn displayed quotations from its sources."},
     ]
     assert "Synthetic evidence for first cue only." not in str(second)
     assert "Synthetic evidence for second cue only." in second[-1]["content"]
@@ -152,7 +160,7 @@ def test_reported_404_recovers_with_exact_numbered_evidence(
     evidence = "Synthetic evidence [alpha], right here."
     preferred = "llama-3.3-70b-versatile"
     replacement = "openai/gpt-oss-120b"
-    answer_text = "The evidence supports this [1]."
+    answer_text = displayed_excerpt(evidence)
     events = []
     requests = []
 
@@ -172,10 +180,11 @@ def test_reported_404_recovers_with_exact_numbered_evidence(
             return httpx.Response(404, json={"error": {
                 "message": "Model not found", "code": "model_not_found",
             }})
-        chunk = {"model": model, "choices": [{"delta": {"content": answer_text}}]}
+        chunk = {"model": model, "choices": [{"index": 0, "delta": {"content": excerpt_payload(evidence)}}]}
+        finished = {"model": model, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
         return httpx.Response(
             200, headers={"content-type": "text/event-stream"},
-            text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n",
+            text=f"data: {json.dumps(chunk)}\n\ndata: {json.dumps(finished)}\n\ndata: [DONE]\n\n",
         )
 
     def deny_socket(*args, **kwargs):
@@ -237,7 +246,8 @@ def test_local_generation_failure_preserves_sources_and_skips_cloud_rewrite(load
 
     assert (context, answer) == (evidence, None)
     assert sources[0]["document"] == evidence
-    assert display.errors == ["No compatible model is available."]
+    assert display.errors == ["Generation failed."]
+    assert display.session_state.last_answer_result.status == "provider_failed"
     assert not display.session_state.conversation_history
 
 
@@ -294,7 +304,7 @@ def test_partial_stream_keeps_evidence_and_never_commits_chat_or_speech(
     def generate(**request):
         assert request["strict"] is True
         assert request["cancelled"]() is False
-        request["on_chunk"]("Partial response")
+        assert "on_chunk" not in request
         raise app.GenerationError("cancelled", "Generation cancelled.")
 
     context, answer, sources = app.chat_with_model(
@@ -330,7 +340,7 @@ def test_background_generation_cancel_reaches_blocked_provider_without_commit(
         started.set()
         while not request["cancelled"]():
             wake.wait(0.01)
-        return SimpleNamespace(text="Late answer [1].", actual_model="selected", reason=None)
+        return completed_excerpt("evidence")
 
     router = SimpleNamespace(generate=generate)
     job = app.start_generation_job(
@@ -365,11 +375,7 @@ def test_selected_router_and_strict_policy_cross_retrieval_boundary(
 ):
     app, _display = load_streamlit_app
     retrieval_calls = []
-    router = SimpleNamespace(
-        generate=lambda **request: SimpleNamespace(
-            text="Answer [1].", actual_model="selected", reason=None
-        )
-    )
+    router = SimpleNamespace(generate=lambda **request: completed_excerpt("evidence"))
 
     def retrieve(prompt, **options):
         retrieval_calls.append((prompt, options))
@@ -387,25 +393,24 @@ def test_selected_router_and_strict_policy_cross_retrieval_boundary(
     assert retrieval_calls[0][1]["router"] is router
     assert retrieval_calls[0][1]["strict"] is True
 
-@pytest.mark.parametrize("answer, expected_citations", [
-    ("![synthetic](https://example.invalid/answer-marker) [1].", [1]),
-    ("No citations.", []),
+@pytest.mark.parametrize("quote", [
+    "![synthetic](https://example.invalid/answer-marker) [77].",
+    "A quotation with no embedded citation.",
 ])
 def test_accepted_background_answer_and_sources_survive_full_rerun(
-    load_streamlit_app, monkeypatch, answer, expected_citations
+    load_streamlit_app, monkeypatch, quote
 ):
     app, display = load_streamlit_app
     app._initialize_session()
     reruns = []
     display.rerun = lambda: reruns.append(True)
-    router = SimpleNamespace(generate=lambda **request: SimpleNamespace(
-        text=answer, actual_model="local-model", preferred_model="local-model", reason=""
+    answer = displayed_excerpt(quote)
+    router = SimpleNamespace(generate=lambda **request: completed_excerpt(
+        quote, actual_model="local-model",
     ))
     job = app.start_generation_job(
         "Question", "System", provider="ollama", preferred="local-model", router=router,
-        retrieve=lambda *args, **options: (
-            "evidence", [{"file_name": "source.txt", "document": "evidence"}]
-        ),
+        retrieve=lambda *args, **options: (quote, [{"file_name": "source.txt", "document": quote}]),
     )
     job.thread.join(timeout=3)
     assert not job.thread.is_alive()
@@ -438,8 +443,8 @@ def test_accepted_background_answer_and_sources_survive_full_rerun(
     assert "Question" in display.plain_text
     assert answer in display.plain_text
     assert answer not in display.markdowns
-    assert rendered == [(["evidence"], expected_citations)]
-    assert display.warnings == ([] if expected_citations else ["No citations returned in response."])
+    assert rendered == [([quote], [1])]
+    assert display.warnings == []
 
 
 def test_streamlit_offline_entry_runs_local_search_without_provider_or_speech(

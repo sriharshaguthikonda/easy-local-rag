@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from structural_answer_fixtures import completed_excerpt, displayed_excerpt
 from test_generation_streamlit import load_streamlit_app
 
 
@@ -15,16 +16,14 @@ def test_streamlit_queues_completed_answer_only_for_cloud_speech(
     monkeypatch.setattr(app, "ensure_tts_worker", lambda: {"queue": SimpleNamespace(put=spoken.append)})
 
     def generate(**request):
-        request["on_chunk"]("Answer ")
-        assert spoken == []
-        request["on_chunk"]("[1].")
-        assert spoken == []
-        return SimpleNamespace(text="Answer [1].", actual_model="selected", reason=None)
+        assert request.get("on_chunk") is None
+        assert spoken == [] and display.plain_text == []
+        return completed_excerpt("evidence")
 
     _context, answer, _sources = app.chat_with_model(
         "question", "system", provider=provider, router=SimpleNamespace(generate=generate),
         retrieve=lambda *args, **options: ("evidence", [{"document": "evidence"}]),
     )
 
-    assert answer == "Answer [1]."
-    assert spoken == (["Answer [1]."] if should_speak else [])
+    assert answer == displayed_excerpt("evidence")
+    assert spoken == ([answer] if should_speak else [])

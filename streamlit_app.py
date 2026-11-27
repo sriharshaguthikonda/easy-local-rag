@@ -14,13 +14,17 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from conversation_import import apply_uploaded_conversation
-from generation_models import GenerationError, groq_router, ollama_router
+from generation_models import GenerationError, _cancel_requested, groq_router, ollama_router
 from offline_search import open_local_collection, search_documents
 from rag_prompting import (
-    build_guarded_request,
+    AnswerPreparationError,
+    AnswerResult,
+    AnswerStatus,
+    PreparedAnswer,
     build_numbered_sources,
     context_from_sources,
-    validate_response_citations,
+    generate_structural_answer,
+    prepare_structural_answer,
 )
 from token_budget import trim_messages_to_budget
 
@@ -93,6 +97,7 @@ def _initialize_session():
         "last_generation_error": None,
         "last_generation_warning": None,
         "last_model_status": None,
+        "last_answer_result": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -215,12 +220,6 @@ def retrieve_numbered_sources(prompt, *, retrieve=None, **kwargs):
     return structured_context, numbered_sources
 
 
-CITATION_INSTRUCTION = (
-    "Use [N] citations for every factual claim that comes from context. "
-    "If context does not support a claim, say so."
-)
-
-
 def process_chat_mode(
     prompt,
     mode,
@@ -264,7 +263,8 @@ class _PreparedGeneration(NamedTuple):
     context: str
     metadata: list
     was_trimmed: bool
-    error: GenerationError | None
+    answer: PreparedAnswer | None
+    error: AnswerResult | None
     request: dict
 
 
@@ -296,56 +296,69 @@ def _prepare_generation(
         cancelled=cancelled,
     )
     history = list(conversation_history)[-context_window:] if context_window else []
-    prepared = build_guarded_request(
-        system_message, user_input, metadata, history,
-        task_instruction=task_instruction, citation_instruction=CITATION_INSTRUCTION,
-    )
-    system_turn, current_turn = dict(prepared[0]), dict(prepared[-1])
+    try:
+        answer = prepare_structural_answer(
+            system_message, user_input, metadata, history, task_instruction=task_instruction,
+        )
+    except AnswerPreparationError as error:
+        return _PreparedGeneration(
+            context, metadata, False, None, AnswerResult(error.status, provider=provider), {},
+        )
+    original = answer.messages()
     messages, was_trimmed = trim_messages_to_budget(
-        prepared, max_input_tokens=5000, model_name=selected
+        answer.messages(), max_input_tokens=5000, model_name=selected
     )
     error = None
-    if len(messages) < 2 or messages[0] != system_turn or messages[-1] != current_turn:
-        error = GenerationError(
-            "input_budget", "The full evidence does not fit the input budget."
-        )
+    if len(messages) < 2 or messages[0] != original[0] or messages[-1] != original[-1]:
+        error = AnswerResult(AnswerStatus.INPUT_BUDGET, answer.evidence, provider=provider)
     request = {
         "preferred": selected,
         "messages": messages,
         "strict": strict,
-        "stream": True,
-        "text_only": True,
         "temperature": temperature,
     }
-    return _PreparedGeneration(context, metadata, was_trimmed, error, request)
+    return _PreparedGeneration(context, answer.evidence.sources, was_trimmed, answer, error, request)
 
 
-def _accept_answer(placeholder, result, metadata, user_input, provider):
-    """Validate citations before adding the answer to the chat or speech queue."""
-    try:
-        cited_ids = validate_response_citations(result.text, metadata)
-    except ValueError:
-        placeholder.empty()
-        return "The answer cited an unknown source."
+def _publish_answer(result, metadata, user_input, provider):
+    state = st.session_state
+    state.last_answer_result = result
+    state.current_sources = metadata
+    state.current_citations = []
+    state.last_generation_error = None
+    state.last_generation_warning = None
+    if not result.accepted:
+        state.last_model_status = None
+        state.last_generation_error = result.message
+        st.error(result.message)
+        return
 
     status = f"{provider.capitalize()} · Used {result.actual_model}"
     if result.reason:
         status += f" · Preferred {result.preferred_model} · {result.reason}"
-    state = st.session_state
     state.last_model_status = status
-    state.current_citations = cited_ids
-    state.last_generation_warning = (
-        "No citations returned in response." if result.text and not cited_ids else None
-    )
+    state.current_citations = sorted({excerpt.alias for excerpt in result.excerpts})
     st.caption(status)
-    placeholder.text(result.text)
+    st.empty().text(result.text)
     state.conversation_history.extend([
         {"role": "user", "content": user_input},
-        {"role": "assistant", "content": result.text},
+        result.assistant_turn(),
     ])
     if provider == "groq" and state.get("allow_cloud_speech") is True:
         ensure_tts_worker()["queue"].put(result.text)
-    return None
+
+
+def _generate_prepared(router, prepared, provider, cancelled):
+    if _cancel_requested(cancelled):
+        return AnswerResult(
+            AnswerStatus.CANCELLED, prepared.answer.evidence if prepared.answer else None,
+            provider=provider,
+        )
+    if prepared.error is not None:
+        return prepared.error
+    return generate_structural_answer(
+        router, prepared.answer, provider=provider, cancelled=cancelled, **prepared.request,
+    )
 
 
 def chat_with_model(
@@ -353,10 +366,12 @@ def chat_with_model(
     *, provider="groq", preferred=None, router=None, strict=False, retrieve=None,
     cancelled=None,
 ):
-    st.session_state.current_sources = []
-    st.session_state.current_citations = []
-    selected_router = router if router is not None else _session_router(provider)
     try:
+        if _cancel_requested(cancelled):
+            result = AnswerResult(AnswerStatus.CANCELLED, provider=provider)
+            _publish_answer(result, [], user_input, provider)
+            return None, None, None
+        selected_router = router if router is not None else _session_router(provider)
         prepared = _prepare_generation(
             user_input,
             system_message,
@@ -372,100 +387,60 @@ def chat_with_model(
             cancelled=cancelled,
         )
     except Exception:
-        st.error("No usable sources were retrieved for this request.")
+        status = AnswerStatus.CANCELLED if _cancel_requested(cancelled) else AnswerStatus.INSUFFICIENT_EVIDENCE
+        _publish_answer(AnswerResult(status, provider=provider), [], user_input, provider)
         return None, None, None
 
-    context, metadata = prepared.context, prepared.metadata
-    st.session_state.current_sources = metadata
-    if prepared.error is not None:
-        st.error("The full evidence does not fit the input budget.")
-        return context, None, metadata
-    if prepared.was_trimmed:
+    if prepared.was_trimmed and prepared.error is None:
         st.info("Earlier messages were trimmed to fit the input budget.")
-
-    placeholder = st.empty()
-    chunks = []
-
-    def display_chunk(chunk):
-        chunks.append(chunk)
-        placeholder.text("".join(chunks) + "▌")
-
-    try:
-        result = selected_router.generate(
-            **prepared.request, cancelled=cancelled, on_chunk=display_chunk
-        )
-    except GenerationError as error:
-        if chunks:
-            placeholder.text("".join(chunks))
-        st.error(str(error))
-        return context, None, metadata
-
-    error = _accept_answer(placeholder, result, metadata, user_input, provider)
-    if error:
-        st.error(error)
-        return context, None, metadata
-    if st.session_state.last_generation_warning:
-        st.warning(st.session_state.last_generation_warning)
-    return context, result.text, metadata
+    result = _generate_prepared(selected_router, prepared, provider, cancelled)
+    if _cancel_requested(cancelled):
+        result = AnswerResult(AnswerStatus.CANCELLED, result.evidence, provider=provider)
+    _publish_answer(result, prepared.metadata, user_input, provider)
+    if not prepared.metadata and result.status is AnswerStatus.INSUFFICIENT_EVIDENCE:
+        return None, None, None
+    return prepared.context, result.text if result.accepted else None, prepared.metadata
 
 
 class GenerationJob:
-    """One Streamlit turn. The worker publishes chunks and its outcome only."""
+    """One worker outcome, claimed once by the Streamlit session."""
 
     def __init__(self, question, provider):
         self.question = question
         self.provider = provider
         self.cancel_event = threading.Event()
         self.lock = threading.Lock()
-        self.chunks = []
         self.outcome = None
+        self.published = False
         self.thread = None
 
-    def append_chunk(self, chunk):
+    def take_outcome(self):
         with self.lock:
-            self.chunks.append(chunk)
-
-    def snapshot(self):
-        with self.lock:
-            return "".join(self.chunks), self.outcome
-
-
-def _cancelled_error():
-    return GenerationError("cancelled", "Generation cancelled.")
+            if self.outcome is None or self.published:
+                return None
+            self.published = True
+            prepared, result = self.outcome
+            if self.cancel_event.is_set():
+                result = AnswerResult(AnswerStatus.CANCELLED, result.evidence, provider=self.provider)
+            return prepared, result
 
 
 def _run_generation_job(job, router, **request):
-    """Run retrieval and generation off the Streamlit thread."""
     prepared = None
-    result = None
-    error = None
     try:
         if job.cancel_event.is_set():
-            raise _cancelled_error()
-        prepared = _prepare_generation(
-            job.question, provider=job.provider, router=router,
-            cancelled=job.cancel_event.is_set, **request,
-        )
-        if prepared.error:
-            raise prepared.error
-        if job.cancel_event.is_set():
-            raise _cancelled_error()
-        result = router.generate(
-            **prepared.request, cancelled=job.cancel_event.is_set, on_chunk=job.append_chunk
-        )
-    except GenerationError as exc:
-        error = exc
+            result = AnswerResult(AnswerStatus.CANCELLED, provider=job.provider)
+        else:
+            prepared = _prepare_generation(
+                job.question, provider=job.provider, router=router,
+                cancelled=job.cancel_event.is_set, **request,
+            )
+            result = _generate_prepared(router, prepared, job.provider, job.cancel_event.is_set)
     except Exception:
-        message = (
-            "No usable sources were retrieved for this request."
-            if prepared is None else "Generation failed."
-        )
-        error = GenerationError("generation_error", message)
-    finally:
-        with job.lock:
-            if job.cancel_event.is_set():
-                error = _cancelled_error()
-            job.outcome = prepared, result, error
+        status = AnswerStatus.PROVIDER_FAILED if prepared else AnswerStatus.INSUFFICIENT_EVIDENCE
+        result = AnswerResult(status, provider=job.provider)
+    with job.lock:
+        job.outcome = prepared, result
 
 
 def _active_generation_job():
@@ -510,7 +485,7 @@ def request_generation_cancel(job=None):
     if job is None:
         return False
     with job.lock:
-        if job.outcome is not None:
+        if job.published:
             return False
         job.cancel_event.set()
         return True
@@ -520,11 +495,8 @@ def _generation_observer_impl():
     job = _active_generation_job()
     if job is None:
         return
-    chunks, outcome = job.snapshot()
-    placeholder = st.empty()
+    outcome = job.take_outcome()
     if outcome is None:
-        if chunks and not job.cancel_event.is_set():
-            placeholder.text(chunks + "▌")
         st.button(
             "Cancel generation",
             key="cancel_active_generation",
@@ -534,21 +506,12 @@ def _generation_observer_impl():
         st.caption("Cancellation requested." if job.cancel_event.is_set() else "Generation in progress…")
         return
 
-    prepared, result, error = outcome
-    state = st.session_state
-    state.generation_job = None
-    state.current_sources = prepared.metadata if prepared is not None else []
-    state.current_citations = []
+    prepared, result = outcome
+    st.session_state.generation_job = None
     try:
-        state.last_generation_error = (
-            str(error) if error else _accept_answer(
-                placeholder, result, state.current_sources, job.question, job.provider
-            )
-        )
-        if state.last_generation_error:
-            st.error(state.last_generation_error)
+        sources = prepared.metadata if prepared is not None else []
+        _publish_answer(result, sources, job.question, job.provider)
     finally:
-        # Restore the input and render the accepted chat and cited sources together.
         rerun = getattr(st, "rerun", None)
         if callable(rerun):
             rerun()
@@ -855,7 +818,11 @@ def main():
     with st.sidebar.expander("Conversation Management"):
         if st.button("Export Conversation"):
             conversation_data = {
-                "history": st.session_state.conversation_history,
+                # Keep the fixed two-field conversation import format.
+                "history": [
+                    {"role": turn["role"], "content": turn["content"]}
+                    for turn in st.session_state.conversation_history
+                ],
                 "sources": st.session_state.current_sources,
                 "tags": st.session_state.tags,
                 "favorites": st.session_state.favorite_responses,
