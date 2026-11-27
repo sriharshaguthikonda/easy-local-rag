@@ -6,6 +6,7 @@
 **GitHub** https://github.com/sriharshaguthikonda/easy-local-rag/issues/5
 **Labels** `priority:P1`, `type:security`
 **Authority** [Owner approval](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5#issuecomment-7213652317).
+**LM Studio smoke activation** The reviewed [packet amendment PR #67](https://github.com/sriharshaguthikonda/easy-local-rag/pull/67) merged as `44fc82647cb2f6d0651240106c1e24257c03154b`. This separate docs-only activation authorizes the synthetic smoke at PR #66 head `27959f498b95ca1095f8fff4ec93d50c7c0b2e81` under the amended packet.
 **Frozen GUI base** `89514bf502a39776b2261ff1657146f530364765`, which includes the verified #10 and #11 implementations.
 
 ## Scope and invariants
