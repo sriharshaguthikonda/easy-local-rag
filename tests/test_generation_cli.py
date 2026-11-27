@@ -8,6 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
+# Load the real Chroma contract before installing inert entry-point stubs.
+import chroma_hybrid_retrieval
+import offline_search
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -138,6 +142,57 @@ def _router_fixture(provider, calls):
     return Router()
 
 
+@pytest.mark.parametrize("filename", [
+    "groq_lama_chromadb_RAG_ETTS.py",
+    "streamlit_groq_lama_chromadb_RAG_ETTS.py",
+])
+@pytest.mark.parametrize("provider", ["groq", "ollama"])
+@pytest.mark.parametrize("boundary", ["request", "history", "speech"])
+def test_cli_rag_boundaries(monkeypatch, filename, provider, boundary):
+    from rag_prompting import CONTEXT_GUARD
+
+    backend = _load_module(monkeypatch, filename, "guarded_cli_under_test")
+    calls = []
+    spoken = []
+    questions = iter(["first cue", "second cue", "exit"])
+
+    def retrieve(question, **options):
+        doc = f"Synthetic evidence for {question} only."
+        return doc, [{
+            "file_name": "fixture.txt",
+            "document": doc,
+            "collection_id": "fixture-collection",
+            "chunk_id": question,
+        }]
+
+    monkeypatch.setattr(backend, "get_relevant_context_hybrid", retrieve)
+    monkeypatch.setattr(backend, "_accepted_speech", spoken.append)
+    assert backend.main(
+        ["--provider", provider],
+        router_factory=lambda selected: _router_fixture(selected, calls),
+        collection_opener=lambda *_: object(),
+        input_fn=lambda _: next(questions),
+        stdout=io.StringIO(),
+    ) == 0
+
+    first, second = [request for _, action, request in calls if action == "generate"]
+    if boundary == "request":
+        assert first["messages"][-1]["content"].count("<retrieved_context>") == 1
+        assert "Synthetic evidence for first cue only." in first["messages"][-1]["content"]
+        assert first["messages"][0]["role"] == "system"
+        assert CONTEXT_GUARD in first["messages"][0]["content"]
+        assert CONTEXT_GUARD not in first["messages"][-1]["content"]
+        assert first["text_only"] is True
+    elif boundary == "history":
+        assert "Synthetic evidence for first cue only." not in str(second["messages"])
+        assert second["messages"][1:3] == [
+            {"role": "user", "content": "first cue"},
+            {"role": "assistant", "content": "Synthetic answer."},
+        ]
+    else:
+        assert spoken == []
+
+
 def test_explicit_ollama_mode_does_not_construct_groq_and_lists_models(monkeypatch):
     backend = _load_module(
         monkeypatch, "groq_lama_chromadb_RAG_ETTS.py", "legacy_cli_under_test"
@@ -168,19 +223,18 @@ def test_default_mode_uses_groq_without_ollama_generation_client(monkeypatch):
     )
     calls = []
     output = io.StringIO()
+    evidence = "Evidence from local document."
     monkeypatch.setattr(
         backend,
         "get_relevant_context_hybrid",
-        lambda query, **options: "Evidence from local document.",
+        lambda query, **options: (evidence, [{"file_name": "fixture.txt", "document": evidence}]),
     )
 
     def factory(provider):
         calls.append((provider, "factory"))
         return _router_fixture(provider, calls)
 
-    # The speech-suppression marker keeps this network-free CLI test from
-    # starting the downstream audio worker; production answers still queue
-    # speech only after the router accepts a result.
+    # Keep the frozen revision's speech path inert as well.
     answers = iter(["ssssquestion", "exit"])
     assert (
         backend.main(

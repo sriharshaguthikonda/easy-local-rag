@@ -25,12 +25,16 @@ class Display:
         self.warnings = []
         self.captions = []
         self.markdowns = []
+        self.plain_text = []
 
     def empty(self):
         return self
 
     def markdown(self, text, **options):
         self.markdowns.append(text)
+
+    def text(self, text):
+        self.plain_text.append(text)
 
     def set_page_config(self, **options):
         pass
@@ -75,6 +79,66 @@ def load_streamlit_app(monkeypatch):
     app = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(app)
     return app, display
+
+
+@pytest.mark.parametrize("legacy_default", [False, True])
+def test_streamlit_requires_explicit_cloud_speech_consent(load_streamlit_app, monkeypatch, legacy_default):
+    app, display = load_streamlit_app
+    display.session_state.pop("tts_enabled")
+    if legacy_default:
+        display.session_state.tts_enabled = True
+    app._initialize_session()
+    spoken = []
+    monkeypatch.setattr(
+        app, "ensure_tts_worker", lambda: {"queue": SimpleNamespace(put=spoken.append)}
+    )
+    result = SimpleNamespace(text="Synthetic answer.", actual_model="selected", reason="")
+
+    assert app._accept_answer(display, result, [], "Original question", "groq") is None
+    assert spoken == []
+
+
+@pytest.mark.parametrize("provider", ["groq", "ollama"])
+@pytest.mark.parametrize("background", [False, True])
+def test_streamlit_guarded_requests_keep_history_and_current_sources_separate(
+    load_streamlit_app, provider, background
+):
+    from rag_prompting import CONTEXT_GUARD
+
+    app, display = load_streamlit_app
+    requests = []
+
+    def retrieve(question, **options):
+        doc = f"Synthetic evidence for {question} only."
+        return doc, [{"file_name": "fixture.txt", "document": doc}]
+
+    def generate(**request):
+        requests.append(request)
+        return SimpleNamespace(text="Accepted [1].", actual_model="selected", reason="")
+
+    for question in ("first cue", "second cue"):
+        options = dict(provider=provider, router=SimpleNamespace(generate=generate), retrieve=retrieve)
+        if background:
+            job = app.start_generation_job(question, "Trusted policy.", **options)
+            job.thread.join(timeout=5)
+            assert not job.thread.is_alive()
+            app._generation_observer_impl()
+        else:
+            _context, answer, _sources = app.chat_with_model(question, "Trusted policy.", **options)
+            assert answer == "Accepted [1]."
+
+    first, second = [request["messages"] for request in requests]
+    assert second[1:3] == [
+        {"role": "user", "content": "first cue"},
+        {"role": "assistant", "content": "Accepted [1]."},
+    ]
+    assert "Synthetic evidence for first cue only." not in str(second)
+    assert "Synthetic evidence for second cue only." in second[-1]["content"]
+    assert first[0]["role"] == second[0]["role"] == "system"
+    assert first[0]["content"].startswith("Trusted policy.")
+    assert CONTEXT_GUARD in first[0]["content"]
+    assert CONTEXT_GUARD not in first[-1]["content"]
+    assert all(request["text_only"] for request in requests)
 
 
 @pytest.mark.parametrize("listed_preference", [True, False])

@@ -29,6 +29,7 @@ class _DisplayContext:
 class _DisplayStreamlit:
     def __init__(self):
         self.markdowns = []
+        self.plain_text = []
         self.buttons = []
 
     def expander(self, *_args, **_kwargs):
@@ -36,6 +37,9 @@ class _DisplayStreamlit:
 
     def markdown(self, text):
         self.markdowns.append(text)
+
+    def text(self, text):
+        self.plain_text.append(text)
 
     def columns(self, _widths):
         return _DisplayContext(), _DisplayContext()
@@ -45,30 +49,59 @@ class _DisplayStreamlit:
         return False
 
 
+def test_source_preview_never_renders_evidence_as_markdown(load_streamlit_app):
+    app, _display = load_streamlit_app
+    display = _DisplayStreamlit()
+    app.st = display
+    filename = "synthetic[sample].txt"
+    excerpt = "![synthetic image](https://example.invalid/evidence-marker)"
+
+    app.render_source_documents(
+        [{"citation_id": 1, "file_name": filename, "document": excerpt}], [1]
+    )
+
+    assert filename in "\n".join(display.plain_text)
+    assert excerpt in display.plain_text
+    assert excerpt not in "\n".join(display.markdowns)
+
+
 @pytest.mark.parametrize("mode", ["Standard", "Focused Search", "Brain Dump", "Summary"])
 def test_every_streamlit_mode_sends_retrieved_text_with_stable_citations(
     mode, load_streamlit_app
 ):
     sentinel = "SENTINEL evidence reaches the model prompt."
     retrieved = [
-        {"file_name": "one.txt", "document": sentinel, "score": 0.9},
-        {"file_name": "two.txt", "document": "second source", "score": 0.8},
+        {
+            "file_name": "one.txt", "document": sentinel, "score": 0.9,
+            "collection_id": "first", "chunk_id": "shared-chunk",
+        },
+        {
+            "file_name": "two.txt", "document": "second source", "score": 0.8,
+            "collection_id": "second", "chunk_id": "shared-chunk",
+        },
     ]
     app, _display = load_streamlit_app
     retrieve, calls = _record_retrieval((f"{sentinel}\n\nsecond source", retrieved))
 
-    context, model_prompt, sources = app.process_chat_mode(
-        "question", mode, context_window=5, retrieve=retrieve
+    prepared = app._prepare_generation(
+        "question", "Trusted application policy.", 0.7, mode, 5,
+        provider="ollama", preferred=None, router=None, strict=False,
+        retrieve=retrieve, conversation_history=[],
     )
+    model_prompt = prepared.request["messages"][-1]["content"]
 
     assert len(calls) == 1
-    assert context == f"{sentinel}\n\nsecond source"
+    assert prepared.context == f"{sentinel}\n\nsecond source"
+    assert prepared.error is None
     assert model_prompt.count(sentinel) == 1
-    assert '<source id="1" file="one.txt">' in model_prompt
-    assert '<source id="2" file="two.txt">' in model_prompt
-    assert [(source["citation_id"], source["document"]) for source in sources] == [
-        (1, sentinel),
-        (2, "second source"),
+    assert '<source id="1">' in model_prompt
+    assert '<source id="2">' in model_prompt
+    assert [
+        (source["citation_id"], source["document"], source["collection_id"], source["chunk_id"])
+        for source in prepared.metadata
+    ] == [
+        (1, sentinel, "first", "shared-chunk"),
+        (2, "second source", "second", "shared-chunk"),
     ]
 
 
