@@ -1,41 +1,30 @@
-# Issue #5: Treat retrieved documents as untrusted prompt context
+# Issue #5 — Treat retrieved documents as untrusted prompt context
 
-[Roadmap ledger](README.md)
+[Roadmap ledger](README.md) · [Implementation packet](../superpowers/plans/2026-11-27-issue-005-guarded-requests-implementation.md)
 
-**Status:** OPEN — guard helper and Streamlit integration exist in the live tree, but every Groq/Ollama retrieval path must be audited before closure.
-**GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/5
-**Labels / priority:** `priority:P1`, `type:security`
-**Dependencies:** Resolve through #27's maintained request boundary; #25 retires unsafe legacy builders. Reuse the issue #14 source-numbering path where available; do not depend on ingest-time destructive sanitization.
+**Status:** OPEN — The owner approved the one-time maintained-path exception. Separate activation is pending.
+**GitHub** https://github.com/sriharshaguthikonda/easy-local-rag/issues/5
+**Labels** `priority:P1`, `type:security`
+**Authority** [Owner approval](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5#issuecomment-7213652317).
+**Frozen GUI base** `89514bf502a39776b2261ff1657146f530364765`, which includes the verified #10 and #11 implementations.
 
-## Implementation slices
+## Scope and invariants
 
-1. Centralize a context guard and escaped, delimited source-block formatter in `rag_prompting.py`.
-2. Route Streamlit, `GUI_workers.py`, and direct legacy Groq/Ollama paths through it; place the guard in the system/prompt layer.
-3. Add pure formatter tests and a manual malicious-chunk smoke test.
+- The exception covers the PyQt answer worker, Streamlit web synchronous and background paths, and both maintained ChromaDB CLIs for Groq and Ollama. These entry points share the guarded request helper in `rag_prompting.py`.
+- Keep application policy and the evidence-handling guard in the system role. Treat retrieved strings and metadata as evidence. Serialize them reversibly inside source wrappers, with trusted roles and wrapper syntax controlled by application code. Keep exact source text, order, citation numbering, and the `(collection_id, chunk_id)` pair. Preserve the canonical Streamlit citation and single-evidence-source contract.
+- Keep evidence in the current request. Persist the original question and accepted assistant answer as the durable turns. Preserve provider selection and bounded fallback with an identical prepared message sequence.
+- RAG answer generation accepts text only. Document text and provider tool events have no action authority. Cloud speech requires separate explicit opt-in, including with local model selection. Untrusted rich text must not cause automatic resource loads. Explicit user actions and transfers to the selected generation provider retain their existing authority.
+- Retain ChromaDB, offline lexical search and all verified #10 and #11 guarantees. Use synthetic data and keep corpus storage, credentials, historical refs and #2's existing gate outside the exception.
+- Full #27 claim validation, #22's complete provider abstraction, #25 retirement, PostgreSQL migration and MCP integration retain their own scope and sequence.
 
-## Affected interfaces, files, and artifacts
+## Execution and closure
 
-- `rag_prompting.py`, `streamlit_app.py`, `GUI_workers.py`, `streamlit_groq_lama_chromadb_RAG_ETTS.py`, and tests.
-- Prompt contract: retrieved text is evidence only; embedded instructions, role changes, tool requests, and secret requests are ignored.
+1. Merge the independently reviewed locked packet, then merge a separate activation PR before any product edit.
+2. On the frozen tree, commit and record tests-only RED evidence for raw CLI text, wrapper serialization, misplaced policy, evidence replay, handled tool output and automatic egress. Use harmless data and fake providers and actions. Existing safe behavior is recorded as a passing control.
+3. Verify focused tests, the complete regression suite and the native synthetic Chroma #10/#11 cases with provider networking denied. Preserve both retrieval identities and unchanged trusted roles. Review the exact candidate independently and repeat verification from a separate clean checkout before merge. Any change to the candidate or frozen GUI base invalidates the corresponding evidence.
+4. Run the synthetic model smoke in the packet only under the applicable provider and credential gates. Record the actual local model and observed behavior with inert synthetic evidence. Request captures prove structure and host-side permissions. Model refusal remains model-dependent. If a permitted smoke cannot run or does not pass, keep #5 open.
+5. Publish the RED, focused, full, native, independent review and model-smoke receipts with the exact reviewed and merged SHAs. Close #5 after its amended criteria pass and reconcile the ledger.
 
-## Concrete actions
+## Rollback constraint
 
-- Preserve normal document text; neutralize only closing wrapper tags so source text cannot escape its container.
-- Format stable source IDs and include the guard on every model request with retrieval context.
-- Trace every caller that concatenates `relevant_context` with user input; replace direct concatenation rather than fixing one UI only.
-
-## Verification
-
-```powershell
-python -m pytest tests -q
-python -m py_compile rag_prompting.py streamlit_app.py GUI_workers.py streamlit_groq_lama_chromadb_RAG_ETTS.py
-```
-
-Manual: use a chunk containing an instruction override and a literal closing source tag; confirm it is still fenced and the answer does not comply with it.
-
-## Closure gate, rollback, and commit boundary
-
-- **Maintained-path closure:** all maintained retrieval-backed model paths use guarded blocks, wrapper escaping and source order are tested, and the malicious-chunk smoke succeeds.
-- **Retirement closure (mutually exclusive):** every unguarded legacy model path is removed from supported entry points and setup docs, cannot be invoked, and points to a guarded replacement with regression evidence. Retirement never permits an unguarded maintained path; #27 extends answer validation and does not replace this boundary.
-- **Rollback constraint:** do not remove the guard or revert to raw concatenation; compatibility rollback may retain the formatter while disabling only optional display features.
-- **Commit:** `fix(#5): fence retrieved context against prompt injection`.
+Use a reviewed GUI follow-up that preserves the guard and app-controlled action permissions. Raw concatenation, unreviewed disclosure and ingest-time text rewriting are outside the rollback path.
