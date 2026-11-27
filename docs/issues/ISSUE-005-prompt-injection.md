@@ -2,7 +2,7 @@
 
 [Roadmap ledger](README.md) · [Implementation packet](../superpowers/plans/2026-11-27-issue-005-guarded-requests-implementation.md)
 
-**Status:** OPEN — The owner approved the one-time maintained-path exception. Separate activation is pending.
+**Status:** OPEN — Activated under the one-time maintained-path exception after locked packet PR #64.
 **GitHub** https://github.com/sriharshaguthikonda/easy-local-rag/issues/5
 **Labels** `priority:P1`, `type:security`
 **Authority** [Owner approval](https://github.com/sriharshaguthikonda/easy-local-rag/issues/5#issuecomment-7213652317).
