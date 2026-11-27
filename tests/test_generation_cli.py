@@ -11,6 +11,7 @@ import pytest
 # Load the real Chroma contract before installing inert entry-point stubs.
 import chroma_hybrid_retrieval
 import offline_search
+from structural_answer_fixtures import completed_excerpt, displayed_excerpt
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -132,11 +133,10 @@ def _router_fixture(provider, calls):
 
         def generate(self, **request):
             calls.append((provider, "generate", request))
-            return SimpleNamespace(
-                text="Synthetic answer.",
-                preferred_model=request.get("preferred"),
-                actual_model=request.get("preferred"),
-                reason="preferred model",
+            current = request["messages"][-1]["content"]
+            evidence = json.loads(next(line for line in current.splitlines() if line.startswith("{")))
+            return completed_excerpt(
+                evidence["document"], actual_model=request.get("preferred"), reason="preferred model",
             )
 
     return Router()
@@ -190,10 +190,14 @@ def test_cli_rag_boundaries(monkeypatch, filename, provider, boundary):
         assert "Synthetic evidence for first cue only." not in str(second["messages"])
         assert second["messages"][1:3] == [
             {"role": "user", "content": "first cue"},
-            {"role": "assistant", "content": "Synthetic answer."},
+            {"role": "assistant", "content": "A previous turn displayed quotations from its sources."},
         ]
     else:
-        assert spoken == (["Synthetic answer."] * 2 if boundary == "speech-opt-in" else [])
+        expected = [
+            displayed_excerpt(f"Synthetic evidence for {question} only.")
+            for question in ("first cue", "second cue")
+        ]
+        assert spoken == (expected if boundary == "speech-opt-in" else [])
 
 
 def test_explicit_ollama_mode_does_not_construct_groq_and_lists_models(monkeypatch):
@@ -250,7 +254,7 @@ def test_default_mode_uses_groq_without_ollama_generation_client(monkeypatch):
     )
 
     assert [entry for entry in calls if entry[1] == "factory"] == [("groq", "factory")]
-    assert "Synthetic answer." in output.getvalue()
+    assert displayed_excerpt(evidence) in output.getvalue()
     assert "actual_model" in output.getvalue()
     generation_calls = [entry[2] for entry in calls if entry[1] == "generate"]
     assert "Evidence from local document." in generation_calls[0]["messages"][-1]["content"]
@@ -364,12 +368,13 @@ def test_cli_public_wrappers_use_only_explicit_speech_consent(monkeypatch, filen
     for allow in (False, True):
         question = f"  synthetic question {allow}  "
         assert wrapper(question, "Trusted", "model", history, router=router,
-                       allow_cloud_speech=allow) == "Synthetic answer."
-        assert history[-2:] == [
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": "Synthetic answer."},
-        ]
-    assert spoken == ["Synthetic answer."]
+                       allow_cloud_speech=allow) == displayed_excerpt(evidence)
+        assert history[-2] == {"role": "user", "content": question}
+        assert history[-1]["role"] == "assistant"
+        assert history[-1]["content"] == displayed_excerpt(evidence)
+        assert history[-1]["answer_evidence"]["context_sha256"]
+        assert "document" not in history[-1]["answer_evidence"]["sources"][0]
+    assert spoken == [displayed_excerpt(evidence)]
     for _, action, request in calls:
         if action == "generate":
             assert request["text_only"] is True

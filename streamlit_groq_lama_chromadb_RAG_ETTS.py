@@ -4,7 +4,11 @@ import sys
 import ollama
 
 from embedding_contract import EmbeddingContractError
-from rag_prompting import build_guarded_request, build_numbered_sources
+from rag_prompting import (
+    AnswerPreparationError, AnswerResult, AnswerStatus, build_numbered_sources,
+    generate_structural_answer, prepare_structural_answer,
+)
+from generation_models import _cancel_requested
 from groq import Groq
 
 import io
@@ -370,49 +374,43 @@ def _generate_chat_result(
     allow_cloud_speech=False,
     **provider_options,
 ):
-    retrieved = _retrieval_for_generation(
-        user_input, provider, router=router, strict=strict, cancelled=cancelled
-    )
-    if not isinstance(retrieved, tuple) or len(retrieved) != 2:
-        raise ValueError("Generation requires structured retrieved sources")
-    sources = build_numbered_sources(retrieved[1])
-    messages = build_guarded_request(system_message, user_input, sources, conversation_history)
+    if _cancel_requested(cancelled):
+        return AnswerResult(AnswerStatus.CANCELLED, provider=provider)
+    try:
+        retrieved = _retrieval_for_generation(
+            user_input, provider, router=router, strict=strict, cancelled=cancelled,
+        )
+        if not isinstance(retrieved, tuple) or len(retrieved) != 2:
+            raise AnswerPreparationError(AnswerStatus.INSUFFICIENT_EVIDENCE)
+        sources = build_numbered_sources(retrieved[1])
+        prepared = prepare_structural_answer(system_message, user_input, sources, conversation_history)
+    except TimeoutError:
+        status = AnswerStatus.CANCELLED if _cancel_requested(cancelled) else AnswerStatus.TIMEOUT
+        return AnswerResult(status, provider=provider)
+    except Exception:
+        status = AnswerStatus.CANCELLED if _cancel_requested(cancelled) else AnswerStatus.INSUFFICIENT_EVIDENCE
+        return AnswerResult(status, provider=provider)
 
-    emitted = []
-
-    def emit(chunk):
-        if not chunk:
-            return
-        chunk = str(chunk)
-        emitted.append(chunk)
-        if on_chunk is None:
-            print(NEON_GREEN + chunk, end="", flush=True)
-        if on_chunk is not None:
-            on_chunk(chunk)
-
-    result = _router_for(provider, router=router).generate(
-        preferred=model_name,
-        messages=messages,
-        strict=strict,
-        stream=True,
+    result = generate_structural_answer(
+        _router_for(provider, router=router), prepared,
+        provider=provider, preferred=model_name, strict=strict, cancelled=cancelled,
         max_output_tokens=provider_options.pop("max_output_tokens", 1024),
-        cancelled=cancelled,
-        on_chunk=emit,
-        text_only=True,
         **provider_options,
     )
-    text = _result_value(result, "text", "") or "".join(emitted)
-    try:
-        if not _result_value(result, "text", None):
-            result.text = text
-    except Exception:
-        pass
-    conversation_history.append({"role": "user", "content": user_input})
-    conversation_history.append({"role": "assistant", "content": text})
+    if _cancel_requested(cancelled):
+        return AnswerResult(AnswerStatus.CANCELLED, result.evidence, provider=provider)
+    if not result.accepted:
+        return result
+    conversation_history.extend([
+        {"role": "user", "content": user_input},
+        result.assistant_turn(),
+    ])
+    if on_chunk is None:
+        print(NEON_GREEN + result.text + RESET_COLOR, flush=True)
+    else:
+        on_chunk(result.text)
     if allow_cloud_speech is True:
-        _accepted_speech(text)
-    if text and on_chunk is None:
-        print(RESET_COLOR + "\n")
+        _accepted_speech(result.text)
     return result
 
 
@@ -1025,6 +1023,11 @@ def main(
                 on_chunk=emit_chunk,
                 allow_cloud_speech=args.allow_cloud_speech,
             )
+            if not result.accepted:
+                stdout.write(f"{result.status}: {result.message}\n")
+                if result.evidence is not None:
+                    stdout.write(json.dumps({"evidence": result.evidence.sources}) + "\n")
+                continue
             stdout.write(
                 "provider="
                 f"{provider} "

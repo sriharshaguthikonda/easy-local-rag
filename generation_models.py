@@ -133,6 +133,7 @@ class GenerationResult:
     provider: str | None = None
     attempted_models: list[str] = field(default_factory=list)
     usage: Any = None
+    finish_reason: str | None = None
 
 
 def _value(obj: Any, key: str, default: Any = None) -> Any:
@@ -439,6 +440,8 @@ def _classify_provider_error(exc: BaseException, provider: str, model: str) -> s
     status = _extract_error_status(exc)
     body_code = _error_code(_extract_error_body(exc))
     name = type(exc).__name__.lower()
+    if isinstance(exc, TimeoutError) or "timeout" in name or status in {408, 504}:
+        return "timeout"
     if status in {401, 403} or "authentication" in name or "invalid_api_key" in body_code:
         return "authentication"
     if provider == "groq":
@@ -499,6 +502,34 @@ def _extract_delta(chunk: Any) -> tuple[str, str | None]:
     if message is not None:
         return _extract_text(message), model
     return _extract_text(_value(chunk, "response")), model
+
+
+def _answer_stream_event(chunk: Any, provider: str) -> tuple[str, str | None, bool]:
+    """Decode one provider event, retaining the terminal signal separately."""
+    if _value(chunk, "error") is not None:
+        raise GenerationError("provider_error", "Provider reported a stream failure.")
+    if provider == "groq":
+        choices = _value(chunk, "choices")
+        if isinstance(choices, (list, tuple)) and not choices and _value(chunk, "usage") is not None:
+            return "", None, True
+        if not isinstance(choices, (list, tuple)) or len(choices) != 1:
+            raise GenerationError("invalid_response", "Invalid generation stream event.")
+        choice = choices[0]
+        if _value(choice, "index", 0) != 0:
+            raise GenerationError("invalid_response", "Invalid generation stream choice.")
+        content = _value(_value(choice, "delta"), "content")
+        finish = _value(choice, "finish_reason")
+    else:
+        done = _value(chunk, "done")
+        finish = _value(chunk, "done_reason")
+        if finish == "":
+            finish = None
+        if type(done) is not bool or done != (finish is not None):
+            raise GenerationError("incomplete", "Missing or inconsistent generation terminal event.")
+        content = _value(_value(chunk, "message"), "content")
+    if content is not None and not isinstance(content, str):
+        raise GenerationError("invalid_response", "Invalid generation stream text.")
+    return content or "", finish, False
 
 
 def _has_tool_output(response: Any) -> bool:
@@ -679,7 +710,9 @@ class _GenerationRouter:
                 profiles = _catalogue_sort(self._discover(self._ensure_client()))
             except GenerationError:
                 raise
-            except Exception:
+            except Exception as error:
+                if _classify_provider_error(error, self.provider, "") == "timeout":
+                    raise GenerationError("timeout", "Provider catalogue timed out.", provider=self.provider) from None
                 raise GenerationError("catalogue_error", "Provider catalogue is unavailable.", provider=self.provider) from None
             self._catalogue = profiles
             self._catalogue_at = now
@@ -789,9 +822,12 @@ class _GenerationRouter:
         cancelled: Any,
         on_chunk: Callable[[str], Any] | None,
         text_only: bool,
-    ) -> tuple[str, str | None, Any]:
+        answer_buffer_bytes: int | None,
+    ) -> tuple[str, str | None, Any, str | None]:
         chunks: list[str] = []
         tool_delta_seen = False
+        finished = False
+        payload_bytes = 0
         actual_model: str | None = None
         usage: Any = None
         try:
@@ -801,7 +837,23 @@ class _GenerationRouter:
                 if text_only and has_tool_output:
                     _reject_tool_output()
                 tool_delta_seen |= has_tool_output
-                piece, model = _extract_delta(chunk)
+                if answer_buffer_bytes is None:
+                    piece, model = _extract_delta(chunk)
+                else:
+                    piece, finish, usage_only = _answer_stream_event(chunk, self.provider)
+                    if finished and not usage_only:
+                        raise GenerationError("incomplete", "Unexpected data after generation stopped.")
+                    if finish is not None:
+                        if finish != "stop":
+                            raise GenerationError("incomplete", "The provider did not stop normally.")
+                        finished = True
+                    try:
+                        payload_bytes += len(piece.encode("utf-8"))
+                    except UnicodeError:
+                        raise GenerationError("invalid_response", "Invalid generation stream text.") from None
+                    if payload_bytes > answer_buffer_bytes:
+                        raise GenerationError("incomplete", "The answer exceeded its buffer limit.")
+                    model = _safe_model_id(_value(chunk, "model"))
                 actual_model = model or actual_model
                 usage = _value(chunk, "usage", usage)
                 if piece:
@@ -812,12 +864,15 @@ class _GenerationRouter:
                         except Exception as exc:
                             raise GenerationError("stream_error", "generation stream callback failed") from exc
                     _raise_if_cancelled(cancelled)
-            return "".join(chunks), actual_model, usage
+            _raise_if_cancelled(cancelled)
+            if answer_buffer_bytes is not None and not finished:
+                raise GenerationError("incomplete", "The provider sent no normal stop marker.")
+            return "".join(chunks), actual_model, usage, "stop" if finished else None
         except GenerationError:
             raise
         except Exception as exc:
             category = _classify_provider_error(exc, self.provider, model_id)
-            if (chunks or tool_delta_seen) and category == "model_unavailable":
+            if (chunks or tool_delta_seen or finished) and category == "model_unavailable":
                 category = "stream_error"
             raise GenerationError(category, "Generation stream failed.", provider=self.provider) from None
         finally:
@@ -836,7 +891,8 @@ class _GenerationRouter:
         cancelled: Any,
         on_chunk: Callable[[str], Any] | None,
         text_only: bool,
-    ) -> tuple[str, str | None, Any]:
+        answer_buffer_bytes: int | None,
+    ) -> tuple[str, str | None, Any, str | None]:
         _raise_if_cancelled(cancelled)
         try:
             response = self._request(
@@ -850,7 +906,7 @@ class _GenerationRouter:
         if stream:
             return self._consume_stream(
                 response, model_id=profile.id, cancelled=cancelled, on_chunk=on_chunk,
-                text_only=text_only,
+                text_only=text_only, answer_buffer_bytes=answer_buffer_bytes,
             )
         _raise_if_cancelled(cancelled)
         if text_only and _has_tool_output(response):
@@ -861,7 +917,7 @@ class _GenerationRouter:
                 on_chunk(text)
             except Exception:
                 raise GenerationError("stream_error", "Generation output callback failed.") from None
-        return text, actual_model, usage
+        return text, actual_model, usage, None
 
     def generate(
         self,
@@ -874,6 +930,7 @@ class _GenerationRouter:
         on_chunk: Callable[[str], Any] | None = None,
         *,
         text_only: bool = False,
+        answer_buffer_bytes: int | None = None,
         **provider_options: Any,
     ) -> GenerationResult:
         """Generate with bounded same-provider/model-class fallback.
@@ -884,6 +941,11 @@ class _GenerationRouter:
         """
 
         _raise_if_cancelled(cancelled)
+        if answer_buffer_bytes is not None and (
+            type(answer_buffer_bytes) is not int or answer_buffer_bytes <= 0
+            or not stream or not text_only or on_chunk is not None
+        ):
+            raise GenerationError("invalid_request", "Buffered answers require a text-only stream.")
         if max_output_tokens is None:
             max_output_tokens = 1024
         try:
@@ -1006,7 +1068,7 @@ class _GenerationRouter:
                 break
             attempted.append(candidate.id)
             try:
-                text, actual_model, usage = self._dispatch(
+                text, actual_model, usage, finish_reason = self._dispatch(
                     candidate,
                     messages=prepared_messages,
                     stream=bool(stream),
@@ -1015,6 +1077,7 @@ class _GenerationRouter:
                     cancelled=cancelled,
                     on_chunk=on_chunk,
                     text_only=text_only,
+                    answer_buffer_bytes=answer_buffer_bytes,
                 )
                 actual_id = _safe_model_id(actual_model) or candidate.id
                 reason = fallback_reason
@@ -1029,6 +1092,7 @@ class _GenerationRouter:
                     provider=self.provider,
                     attempted_models=list(attempted),
                     usage=usage,
+                    finish_reason=finish_reason,
                 )
             except GenerationError as exc:
                 if exc.code == "cancelled":

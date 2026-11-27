@@ -12,6 +12,7 @@ import GUI_settings
 from GUI_chat import ChatFunctionalityMixin
 from GUI_models import ModelLoadingMixin
 from GUI_workers import ChatWorker
+from structural_answer_fixtures import completed_excerpt, displayed_excerpt
 
 
 @pytest.fixture(scope="session")
@@ -123,11 +124,9 @@ def test_chat_worker_emits_fallback_model_status_and_stream(qapp):
         def generate(self, **kwargs):
             assert kwargs["preferred"] == "saved-model"
             assert kwargs["strict"] is False
-            kwargs["on_chunk"]("answer from fallback")
-            return SimpleNamespace(
-                text="answer from fallback",
-                preferred_model="saved-model",
-                actual_model="replacement-model",
+            assert "on_chunk" not in kwargs
+            return completed_excerpt(
+                "evidence", preferred_model="saved-model", actual_model="replacement-model",
                 reason="preferred unavailable",
             )
 
@@ -153,9 +152,9 @@ def test_chat_worker_emits_fallback_model_status_and_stream(qapp):
 
     worker.run()
 
-    assert ("chunk", "answer from fallback") in events
+    assert ("chunk", displayed_excerpt("evidence")) in events
     assert any("replacement-model" in value for kind, value in events if kind == "status")
-    assert ("complete", "answer from fallback") in events
+    assert ("complete", displayed_excerpt("evidence")) in events
 
 
 def test_chat_worker_cancels_between_stream_chunks_without_committing_history(qapp):
@@ -164,14 +163,9 @@ def test_chat_worker_cancels_between_stream_chunks_without_committing_history(qa
 
     class Router:
         def generate(self, **kwargs):
-            kwargs["on_chunk"]("first chunk")
-            holder["worker"].request_cancel()
-            return SimpleNamespace(
-                text="must not commit",
-                preferred_model="saved-model",
-                actual_model="saved-model",
-                reason="",
-            )
+            assert "on_chunk" not in kwargs
+            assert holder["worker"].request_cancel()
+            return completed_excerpt("evidence", actual_model="saved-model")
 
     settings = dict(GUI_settings.DEFAULT_SETTINGS)
     settings.update(
@@ -195,7 +189,7 @@ def test_chat_worker_cancels_between_stream_chunks_without_committing_history(qa
 
     worker.run()
 
-    assert any(value == "Generation cancelled" for kind, value in events if kind == "status")
+    assert ("status", "Generation cancelled.") in events
     assert ("complete", "") in events
     assert history == []
 
@@ -367,9 +361,7 @@ def test_chat_worker_keeps_guard_and_synthetic_evidence_in_the_correct_turn(qapp
     class Router:
         def generate(self, **kwargs):
             calls.append(kwargs)
-            return SimpleNamespace(
-                text="answer", preferred_model="model", actual_model="model", reason=""
-            )
+            return completed_excerpt(f"unique evidence {len(calls)}", actual_model="model")
 
     settings = dict(GUI_settings.DEFAULT_SETTINGS)
     settings.update(generation_provider=provider, groq_model="model", ollama_model="model")
@@ -389,7 +381,7 @@ def test_chat_worker_keeps_guard_and_synthetic_evidence_in_the_correct_turn(qapp
         messages = calls[1]["messages"]
         assert messages[1:3] == [
             {"role": "user", "content": "question 1"},
-            {"role": "assistant", "content": "answer"},
+            {"role": "assistant", "content": "A previous turn displayed quotations from its sources."},
         ]
         assert all("unique evidence 1" not in item["content"] for item in messages)
         assert "unique evidence 2" in messages[-1]["content"]

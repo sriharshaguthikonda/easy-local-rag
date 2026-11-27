@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from structural_answer_fixtures import completed_excerpt, displayed_excerpt
+
 from test_generation_streamlit import load_streamlit_app
 
 
@@ -125,14 +127,14 @@ def test_retrieved_sentinel_reaches_model_request_exactly_once(load_streamlit_ap
 
     def generate(**request):
         model_calls.append(request)
-        return SimpleNamespace(text="Answer [1].", actual_model="test-model", reason=None)
+        return completed_excerpt(sentinel, actual_model="test-model")
 
     _context, response, sources = app.chat_with_model(
         "question", "system", preferred="test-model",
         router=SimpleNamespace(generate=generate), retrieve=retrieve,
     )
 
-    assert response == "Answer [1]."
+    assert response == displayed_excerpt(sentinel)
     assert len(model_calls) == 1
     assert model_calls[0]["messages"][-1]["content"].count(sentinel) == 1
     assert [(source["citation_id"], source["document"]) for source in sources] == [

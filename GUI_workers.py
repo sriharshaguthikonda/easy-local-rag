@@ -11,7 +11,10 @@ from gtts import gTTS
 from pydub import AudioSegment
 from pydub.playback import play
 
-from rag_prompting import build_guarded_request, build_numbered_sources
+from rag_prompting import (
+    AnswerPreparationError, AnswerResult, AnswerStatus, build_numbered_sources,
+    generate_structural_answer, prepare_structural_answer,
+)
 
 from embedding_contract import validate_embedding_compatibility
 
@@ -47,7 +50,8 @@ class ChatWorker(QThread):
             f"generation_router_{settings.get('generation_provider', 'groq')}"
         ) or settings.get("generation_router")
         self._cancel_event = threading.Event()
-        self._streamed_text = ""
+        self._publication_lock = threading.Lock()
+        self._published = False
         self.groq_client = settings.get("groq_client")
         print(
             "[ChatWorker.__init__] created worker id=%s, thread=%s"
@@ -56,21 +60,15 @@ class ChatWorker(QThread):
 
     def request_cancel(self):
         """Request cooperative cancellation at the next router boundary."""
-        self._cancel_event.set()
-        self.requestInterruption()
+        with self._publication_lock:
+            if self._published:
+                return False
+            self._cancel_event.set()
+            self.requestInterruption()
+            return True
 
     def is_cancelled(self):
         return self._cancel_event.is_set() or self.isInterruptionRequested()
-
-    @staticmethod
-    def _safe_error(error):
-        code = getattr(error, "code", None) or "generation_failed"
-        message = getattr(error, "safe_message", None)
-        if not message:
-            # GenerationError implementations expose a safe ``message``;
-            # ordinary legacy exceptions get only their short class name.
-            message = getattr(error, "message", None) or error.__class__.__name__
-        return f"{code}: {message}"
 
     def _router_from_settings(self):
         if self.router is not None:
@@ -98,16 +96,13 @@ class ChatWorker(QThread):
             "ollama_model" if provider == "ollama" else "groq_model"
         )
 
-    def _router_generate(self, messages):
+    def _router_generate(self, prepared):
         router = self._router_from_settings()
-        if router is None or not hasattr(router, "generate"):
-            raise RuntimeError("generation router is unavailable")
-
         provider = self.settings.get("generation_provider", "groq")
         preferred = self._preferred_model()
         max_output = int(self.settings.get("generation_max_output_tokens", 1024))
         options = dict(self.settings.get("generation_options", {}) or {})
-        options["text_only"] = True
+        options.pop("text_only", None)
         options.setdefault("temperature", 1)
         options.setdefault("top_p", 1)
         if provider == "groq":
@@ -115,102 +110,63 @@ class ChatWorker(QThread):
         else:
             options.setdefault("keep_alive", -1)
 
-        def on_chunk(chunk):
-            if self.is_cancelled():
-                return
-            if isinstance(chunk, dict):
-                chunk = (chunk.get("message") or {}).get("content", chunk.get("content", ""))
-            elif hasattr(chunk, "choices"):
-                choices = getattr(chunk, "choices", None) or []
-                delta = getattr(choices[0], "delta", None) if choices else None
-                chunk = getattr(delta, "content", "") if delta else ""
-            chunk = str(chunk or "")
-            if chunk:
-                self._streamed_text += chunk
-                self.response_chunk.emit(chunk)
-
-        return router.generate(
-            preferred=preferred,
-            messages=messages,
+        return generate_structural_answer(
+            router, prepared, provider=provider, preferred=preferred,
             strict=bool(self.settings.get("strict_generation_model", False)),
-            stream=True,
-            max_output_tokens=max_output,
-            cancelled=self.is_cancelled,
-            on_chunk=on_chunk,
-            **options,
+            max_output_tokens=max_output, cancelled=self.is_cancelled, **options,
         )
 
     def run(self):
+        if self.settings.get("just_search", False):
+            self.response_complete.emit("")
+            return
+
+        provider = self.settings.get("generation_provider", "groq")
+        prepared = None
         try:
-            print(
-                "[ChatWorker.run] starting worker id=%s on thread=%s"
-                % (id(self), threading.get_ident())
-            )
-            self.status_update.emit("Generating response...")
-
-            if self.settings.get("just_search", False):
-                print("[ChatWorker.run] just_search=True, returning early")
-                self.response_complete.emit("")
-                return
             if self.is_cancelled():
-                self.status_update.emit("Generation cancelled")
-                self.response_complete.emit("")
-                return
-
-            sources = build_numbered_sources(self.context_results)
-            messages = build_guarded_request(
-                self.settings["system_message"], self.user_input, sources, self.conversation_history
-            )
-
-            result = self._router_generate(messages)
-            if isinstance(result, str):
-                response = result
-                actual_model = self._preferred_model()
-                reason = ""
+                result = AnswerResult(AnswerStatus.CANCELLED, provider=provider)
             else:
-                response = str(getattr(result, "text", "") or "")
-                actual_model = getattr(result, "actual_model", None) or self._preferred_model()
-                reason = getattr(result, "reason", None) or ""
+                self.status_update.emit("Generating response...")
+                sources = build_numbered_sources(self.context_results)
+                prepared = prepare_structural_answer(
+                    self.settings["system_message"], self.user_input, sources,
+                    self.conversation_history,
+                )
+                result = self._router_generate(prepared)
+        except AnswerPreparationError as error:
+            result = AnswerResult(error.status, provider=provider)
+        except ValueError:
+            status = AnswerStatus.INSUFFICIENT_EVIDENCE if prepared is None else AnswerStatus.PROVIDER_FAILED
+            result = AnswerResult(status, prepared.evidence if prepared else None, provider=provider)
+        except Exception:
+            result = AnswerResult(
+                AnswerStatus.PROVIDER_FAILED, prepared.evidence if prepared else None, provider=provider,
+            )
 
+        with self._publication_lock:
             if self.is_cancelled():
-                self.status_update.emit("Generation cancelled")
-                self.response_complete.emit("")
-                return
-
-            # Commit conversation state only after a complete answer. This is
-            # what keeps a pre-output fallback from duplicating evidence/history.
-            self.conversation_history.extend(
-                [
+                result = AnswerResult(AnswerStatus.CANCELLED, result.evidence, provider=provider)
+            if result.accepted:
+                self.conversation_history.extend([
                     {"role": "user", "content": self.user_input},
-                    {"role": "assistant", "content": response},
-                ]
-            )
-            status = f"Answered with {actual_model}"
-            if reason:
-                status += f" ({reason})"
-            self.status_update.emit(status)
-            if not self._streamed_text and response:
-                self.response_chunk.emit(response)
-            self.generation_result.emit(result)
-            self.response_complete.emit(response)
-            print(
-                "[ChatWorker.run] finished worker id=%s on thread=%s"
-                % (id(self), threading.get_ident())
-            )
+                    result.assistant_turn(),
+                ])
+            self._published = True
 
-        except Exception as error:
-            if getattr(error, "code", None) == "cancelled" or self.is_cancelled():
-                self.status_update.emit("Generation cancelled")
-                self.response_complete.emit("")
-                return
-            print(f"[ChatWorker.run] ERROR: {self._safe_error(error)}")
-            self.status_update.emit("Error during generation")
-            self.error_occurred.emit(self._safe_error(error))
-        finally:
-            print(
-                "[ChatWorker.run] exiting run() worker id=%s, isRunning=%s, isFinished=%s"
-                % (id(self), self.isRunning(), self.isFinished())
-            )
+        if result.accepted:
+            status = f"Answered with {result.actual_model}"
+            if result.reason:
+                status += f" ({result.reason})"
+            self.status_update.emit(status)
+            self.response_chunk.emit(result.text)
+        self.generation_result.emit(result)
+        self.response_complete.emit(result.text)
+        if result.status is AnswerStatus.CANCELLED:
+            self.status_update.emit(result.message)
+        elif not result.accepted:
+            self.error_occurred.emit(result.message)
+
 
 class TTSWorker(QThread):
     """Worker thread for TTS playback"""

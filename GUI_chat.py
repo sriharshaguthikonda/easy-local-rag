@@ -225,9 +225,10 @@ class ChatFunctionalityMixin:
 
     def on_generation_result(self, result):
         """Display the safe selected/actual model status from the router."""
-        if result is None:
+        self._last_answer_result = result
+        if result is None or not result.accepted:
             return
-        actual = getattr(result, "actual_model", None)
+        actual = result.actual_model
         reason = getattr(result, "reason", None)
         if actual:
             provider = getattr(result, "provider", None)
