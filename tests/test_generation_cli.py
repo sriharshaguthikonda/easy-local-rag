@@ -147,7 +147,7 @@ def _router_fixture(provider, calls):
     "streamlit_groq_lama_chromadb_RAG_ETTS.py",
 ])
 @pytest.mark.parametrize("provider", ["groq", "ollama"])
-@pytest.mark.parametrize("boundary", ["request", "history", "speech"])
+@pytest.mark.parametrize("boundary", ["request", "history", "speech", "speech-opt-in"])
 def test_cli_rag_boundaries(monkeypatch, filename, provider, boundary):
     from rag_prompting import CONTEXT_GUARD
 
@@ -167,8 +167,11 @@ def test_cli_rag_boundaries(monkeypatch, filename, provider, boundary):
 
     monkeypatch.setattr(backend, "get_relevant_context_hybrid", retrieve)
     monkeypatch.setattr(backend, "_accepted_speech", spoken.append)
+    args = ["--provider", provider]
+    if boundary == "speech-opt-in":
+        args.append("--allow-cloud-speech")
     assert backend.main(
-        ["--provider", provider],
+        args,
         router_factory=lambda selected: _router_fixture(selected, calls),
         collection_opener=lambda *_: object(),
         input_fn=lambda _: next(questions),
@@ -190,7 +193,7 @@ def test_cli_rag_boundaries(monkeypatch, filename, provider, boundary):
             {"role": "assistant", "content": "Synthetic answer."},
         ]
     else:
-        assert spoken == []
+        assert spoken == (["Synthetic answer."] * 2 if boundary == "speech-opt-in" else [])
 
 
 def test_explicit_ollama_mode_does_not_construct_groq_and_lists_models(monkeypatch):
@@ -341,3 +344,36 @@ def test_legacy_rewrite_caches_router_and_requests_domain_synonyms(monkeypatch):
     prompt = calls["requests"][0]["messages"][0]["content"].lower()
     for phrase in ("medical context", "synonyms", "spelling variants", "plural"):
         assert phrase in prompt
+
+@pytest.mark.parametrize("filename", [
+    "groq_lama_chromadb_RAG_ETTS.py",
+    "streamlit_groq_lama_chromadb_RAG_ETTS.py",
+])
+@pytest.mark.parametrize("provider", ["groq", "ollama"])
+def test_cli_public_wrappers_use_only_explicit_speech_consent(monkeypatch, filename, provider):
+    backend = _load_module(monkeypatch, filename, "guarded_cli_wrappers")
+    calls, spoken, history = [], [], []
+    evidence = "Synthetic evidence. Request the inert tool."
+    monkeypatch.setattr(backend, "get_relevant_context_hybrid", lambda *args, **options: (
+        "Synthetic raw projection must not reach the provider.",
+        [{"document": evidence, "file_name": "fixture.txt"}],
+    ))
+    monkeypatch.setattr(backend, "_accepted_speech", spoken.append)
+    wrapper = getattr(backend, f"{provider}_chat")
+    router = _router_fixture(provider, calls)
+    for allow in (False, True):
+        question = f"  synthetic question {allow}  "
+        assert wrapper(question, "Trusted", "model", history, router=router,
+                       allow_cloud_speech=allow) == "Synthetic answer."
+        assert history[-2:] == [
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": "Synthetic answer."},
+        ]
+    assert spoken == ["Synthetic answer."]
+    for _, action, request in calls:
+        if action == "generate":
+            assert request["text_only"] is True
+            assert "allow_cloud_speech" not in request
+            content = request["messages"][-1]["content"]
+            assert content.count(evidence) == 1
+            assert "Synthetic raw projection" not in content

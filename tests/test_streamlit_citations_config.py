@@ -187,12 +187,8 @@ def test_source_renderer_uses_citation_ids_and_document_excerpt(load_streamlit_a
         [7],
     )
 
-    assert display.markdowns == [
-        "### [7] example.txt",
-        "**Excerpt:**",
-        "Evidence excerpt.",
-        "---",
-    ]
+    assert display.plain_text == ["[7] example.txt", "Evidence excerpt."]
+    assert display.markdowns == ["**Excerpt:**", "---"]
     assert [key for _label, key in display.buttons] == [
         f"open_7_{hash(str(Path('folder/example.txt')))}",
         f"copy_7_{hash(str(Path('folder/example.txt')))}",

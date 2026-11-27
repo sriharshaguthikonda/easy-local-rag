@@ -288,7 +288,7 @@ def test_partial_stream_keeps_evidence_and_never_commits_chat_or_speech(
     load_streamlit_app, monkeypatch
 ):
     app, display = load_streamlit_app
-    display.session_state.tts_enabled = True
+    display.session_state.allow_cloud_speech = True
     monkeypatch.setattr(app, "ensure_tts_worker", lambda: pytest.fail("Speech started"))
 
     def generate(**request):
@@ -314,7 +314,7 @@ def test_background_generation_cancel_reaches_blocked_provider_without_commit(
 ):
     app, display = load_streamlit_app
     app._initialize_session()
-    display.session_state.tts_enabled = True
+    display.session_state.allow_cloud_speech = True
     started = threading.Event()
     wake = threading.Event()
     calls = []
@@ -387,9 +387,12 @@ def test_selected_router_and_strict_policy_cross_retrieval_boundary(
     assert retrieval_calls[0][1]["router"] is router
     assert retrieval_calls[0][1]["strict"] is True
 
-@pytest.mark.parametrize("answer, expected_citations", [("Answer [1].", [1]), ("No citations.", [])])
+@pytest.mark.parametrize("answer, expected_citations", [
+    ("![synthetic](https://example.invalid/answer-marker) [1].", [1]),
+    ("No citations.", []),
+])
 def test_accepted_background_answer_and_sources_survive_full_rerun(
-    load_streamlit_app, monkeypatch, tmp_path, answer, expected_citations
+    load_streamlit_app, monkeypatch, answer, expected_citations
 ):
     app, display = load_streamlit_app
     app._initialize_session()
@@ -411,6 +414,7 @@ def test_accepted_background_answer_and_sources_survive_full_rerun(
     assert display.session_state.generation_job is None
 
     display.markdowns.clear()
+    display.plain_text.clear()
     display.setup_main("ollama")
     monkeypatch.setattr(app, "_generation_settings", lambda **kwargs: (
         "ollama", router, "local-model", True
@@ -420,14 +424,10 @@ def test_accepted_background_answer_and_sources_survive_full_rerun(
     plotly.express = ModuleType("plotly.express")
     monkeypatch.setitem(sys.modules, "plotly", plotly)
     monkeypatch.setitem(sys.modules, "plotly.express", plotly.express)
-    scratch_html = tmp_path / "graph.html"
-    monkeypatch.setattr(app, "tempfile", SimpleNamespace(
-        NamedTemporaryFile=lambda **kwargs: nullcontext(SimpleNamespace(name=scratch_html))
-    ))
-    monkeypatch.setattr(app, "create_source_network", lambda sources: SimpleNamespace(
-        save_graph=lambda path: path.write_text("", encoding="utf-8")
-    ))
-    display.components = SimpleNamespace(v1=SimpleNamespace(html=lambda *args, **kwargs: None))
+    def unexpected_html(*args, **kwargs):
+        pytest.fail("A completed chat rerun embedded third-party HTML")
+
+    display.components = SimpleNamespace(v1=SimpleNamespace(html=unexpected_html))
     rendered = []
     monkeypatch.setattr(app, "render_source_documents", lambda sources, ids: rendered.append((
         [source["document"] for source in sources], ids
@@ -435,8 +435,9 @@ def test_accepted_background_answer_and_sources_survive_full_rerun(
 
     app.main()
 
-    assert "Question" in display.markdowns
-    assert answer in display.markdowns
+    assert "Question" in display.plain_text
+    assert answer in display.plain_text
+    assert answer not in display.markdowns
     assert rendered == [(["evidence"], expected_citations)]
     assert display.warnings == ([] if expected_citations else ["No citations returned in response."])
 
@@ -465,9 +466,32 @@ def test_streamlit_offline_entry_runs_local_search_without_provider_or_speech(
 
     app.main()
 
-    assert evidence in display.markdowns
+    assert evidence in display.plain_text
     assert display.session_state.current_sources[0]["document"] == evidence
     assert display.session_state.current_sources[0]["collection_id"] == "synthetic-collection-id"
     assert display.session_state.current_sources[0]["chunk_id"] == "one"
     assert display.session_state.conversation_history == []
     assert not display.errors
+
+@pytest.mark.parametrize("turn_index", [0, -1])
+def test_streamlit_stops_if_budget_would_change_system_or_current_evidence(
+    load_streamlit_app, monkeypatch, turn_index,
+):
+    app, display = load_streamlit_app
+
+    def truncate(messages, **options):
+        messages[turn_index]["content"] = "Truncated synthetic request."
+        return messages, True
+
+    def fail_generate(**request):
+        pytest.fail("A truncated request reached generation")
+
+    monkeypatch.setattr(app, "trim_messages_to_budget", truncate)
+    context, answer, sources = app.chat_with_model(
+        "Question", "System", provider="ollama", router=SimpleNamespace(generate=fail_generate),
+        retrieve=lambda *args, **options: ("evidence", [{"document": "evidence"}]),
+    )
+    assert context == "evidence"
+    assert answer is None
+    assert sources[0]["document"] == "evidence"
+    assert display.errors == ["The full evidence does not fit the input budget."]

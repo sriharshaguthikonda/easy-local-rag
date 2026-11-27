@@ -11,7 +11,7 @@ from gtts import gTTS
 from pydub import AudioSegment
 from pydub.playback import play
 
-from rag_prompting import CONTEXT_GUARD, build_guarded_context_block
+from rag_prompting import build_guarded_request, build_numbered_sources
 
 from embedding_contract import validate_embedding_compatibility
 
@@ -107,6 +107,7 @@ class ChatWorker(QThread):
         preferred = self._preferred_model()
         max_output = int(self.settings.get("generation_max_output_tokens", 1024))
         options = dict(self.settings.get("generation_options", {}) or {})
+        options["text_only"] = True
         options.setdefault("temperature", 1)
         options.setdefault("top_p", 1)
         if provider == "groq":
@@ -156,42 +157,10 @@ class ChatWorker(QThread):
                 self.response_complete.emit("")
                 return
 
-            guarded_sources = []
-            for idx, result in enumerate(self.context_results or [], start=1):
-                meta = result.get("meta")
-                if not isinstance(meta, dict):
-                    meta = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
-                guarded_sources.append(
-                    {
-                        "citation_id": idx,
-                        "collection_id": result.get("collection_id"),
-                        "chunk_id": result.get("chunk_id"),
-                        "file_name": meta.get("file_name", "unknown"),
-                        "document": result.get("document", ""),
-                    }
-                )
-
-            relevant_context = build_guarded_context_block(guarded_sources)
-            print(
-                "[ChatWorker.run] Context docs: %s; length=%s"
-                % (len(self.context_results or []), len(relevant_context))
+            sources = build_numbered_sources(self.context_results)
+            messages = build_guarded_request(
+                self.settings["system_message"], self.user_input, sources, self.conversation_history
             )
-
-            if relevant_context:
-                user_input_with_context = (
-                    f"{CONTEXT_GUARD}\n\n{relevant_context}\n\nQuery: {self.user_input}"
-                )
-            else:
-                user_input_with_context = self.user_input
-
-            request_history = [
-                *self.conversation_history,
-                {"role": "user", "content": user_input_with_context},
-            ]
-            messages = [
-                {"role": "system", "content": self.settings["system_message"]},
-                *request_history,
-            ]
 
             result = self._router_generate(messages)
             if isinstance(result, str):
@@ -212,7 +181,7 @@ class ChatWorker(QThread):
             # what keeps a pre-output fallback from duplicating evidence/history.
             self.conversation_history.extend(
                 [
-                    {"role": "user", "content": user_input_with_context},
+                    {"role": "user", "content": self.user_input},
                     {"role": "assistant", "content": response},
                 ]
             )

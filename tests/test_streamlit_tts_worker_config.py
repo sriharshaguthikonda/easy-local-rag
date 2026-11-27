@@ -10,7 +10,7 @@ def test_streamlit_queues_completed_answer_only_for_cloud_speech(
     load_streamlit_app, monkeypatch, provider, should_speak
 ):
     app, display = load_streamlit_app
-    display.session_state.tts_enabled = True
+    display.session_state.allow_cloud_speech = True
     spoken = []
     monkeypatch.setattr(app, "ensure_tts_worker", lambda: {"queue": SimpleNamespace(put=spoken.append)})
 

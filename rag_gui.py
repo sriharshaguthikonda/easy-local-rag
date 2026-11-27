@@ -7,6 +7,7 @@ import threading
 import queue
 import asyncio
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -26,7 +27,6 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 import subprocess
 
-from GUI_workers import TTSWorker
 from GUI_chat import ChatFunctionalityMixin
 from GUI_models import ModelLoadingMixin
 from GUI_chromadb import ChromaDBMixin
@@ -83,7 +83,8 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         self.chat_worker = None
         self.tts_workers = []  # Track all TTS workers
         self.is_dark_theme = True
-        self.tts_enabled = True
+        self.tts_enabled = False
+        self._tts_sentences = []
         self.qsettings = QSettings("easy-local-rag", "RAGChatGUI")
         # Self-test controls
         self.self_test_enabled = os.getenv("DIRECT_SEARCH_SELF_TEST", "0") == "1"
@@ -162,8 +163,10 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         toolbar.addAction(theme_action)
         
         # TTS toggle
-        self.tts_action = QAction("🔊 TTS On", self)
-        self.tts_action.triggered.connect(self.toggle_tts)
+        self.tts_action = QAction("Allow cloud speech (Google)", self)
+        self.tts_action.setCheckable(True)
+        self.tts_action.setToolTip("Send accepted assistant answers to Google Text-to-Speech for playback")
+        self.tts_action.toggled.connect(self.toggle_tts)
         toolbar.addAction(self.tts_action)
         
         toolbar.addSeparator()
@@ -409,6 +412,7 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         quick_layout.addWidget(self.stop_btn)
         
         self.read_btn = QPushButton("🔊 Read Last")
+        self.read_btn.setEnabled(False)
         self.read_btn.clicked.connect(self.read_last_response)
         quick_layout.addWidget(self.read_btn)
         
@@ -663,6 +667,8 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
                 self.chat_worker.request_cancel()
             self.chat_worker.wait(2000)
         
+        self.tts_enabled = False
+        self._tts_sentences.clear()
         # Wait for TTS workers
         for worker in self.tts_workers[:]:  # Copy list to avoid modification during iteration
             if worker.isRunning():
@@ -686,6 +692,9 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
     def append_message(self, sender, message, color, start_only=False):
         timestamp = datetime.now().strftime("%H:%M")
         
+        sender = escape(sender)
+        message = escape(message).replace("\n", "<br>")
+
         if start_only:
             html = f'<p style="margin: 5px 0;"><span style="color: {color}; font-weight: bold;">[{timestamp}] {sender}:</span> '
         else:
@@ -729,13 +738,14 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
                 QMessageBox.warning(self, "Export Error", f"Failed to export: {e}")
                 
     def read_last_response(self):
-        if self.conversation_history:
-            for msg in reversed(self.conversation_history):
-                if msg['role'] == 'assistant':
-                    self.tts_worker = TTSWorker(msg['content'][:500], self.settings)
-                    self.tts_worker.start()
-                    break
-    
+        if not self.tts_enabled:
+            return
+        for msg in reversed(self.conversation_history):
+            if msg["role"] == "assistant" and msg["content"].strip():
+                self._tts_sentences = [msg["content"][:500]]
+                self._play_next_tts_sentence()
+                break
+
     # =========================================================================
     # COLLECTION BROWSER
     # =========================================================================
@@ -810,13 +820,12 @@ ID: {data['id']}
     def apply_light_theme(self):
         GUI_theme.apply_light_theme(self)
         
-    def toggle_tts(self):
-        self.tts_enabled = not self.tts_enabled
-        if self.tts_enabled:
-            self.tts_action.setText("🔊 TTS On")
-        else:
-            self.tts_action.setText("🔇 TTS Off")
-            
+    def toggle_tts(self, checked):
+        self.tts_enabled = checked
+        self.read_btn.setEnabled(checked)
+        if not checked:
+            self._tts_sentences.clear()
+
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter) and self.chat_input.hasFocus():
             mods = event.modifiers()

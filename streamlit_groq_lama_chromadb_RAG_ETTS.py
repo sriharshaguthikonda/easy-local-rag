@@ -4,6 +4,7 @@ import sys
 import ollama
 
 from embedding_contract import EmbeddingContractError
+from rag_prompting import build_guarded_request, build_numbered_sources
 from groq import Groq
 
 import io
@@ -366,20 +367,17 @@ def _generate_chat_result(
     strict=False,
     cancelled=None,
     on_chunk=None,
+    allow_cloud_speech=False,
     **provider_options,
 ):
     retrieved = _retrieval_for_generation(
         user_input, provider, router=router, strict=strict, cancelled=cancelled
     )
-    relevant_context = retrieved[0] if isinstance(retrieved, tuple) else (retrieved or "")
-    user_content = (
-        f"{relevant_context}\n\n{user_input}" if relevant_context else user_input
-    )
-    messages = [
-        {"role": "system", "content": system_message},
-        *conversation_history,
-        {"role": "user", "content": user_content},
-    ]
+    if not isinstance(retrieved, tuple) or len(retrieved) != 2:
+        raise ValueError("Generation requires structured retrieved sources")
+    sources = build_numbered_sources(retrieved[1])
+    messages = build_guarded_request(system_message, user_input, sources, conversation_history)
+
     emitted = []
 
     def emit(chunk):
@@ -400,6 +398,7 @@ def _generate_chat_result(
         max_output_tokens=provider_options.pop("max_output_tokens", 1024),
         cancelled=cancelled,
         on_chunk=emit,
+        text_only=True,
         **provider_options,
     )
     text = _result_value(result, "text", "") or "".join(emitted)
@@ -408,9 +407,10 @@ def _generate_chat_result(
             result.text = text
     except Exception:
         pass
-    conversation_history.append({"role": "user", "content": user_content})
+    conversation_history.append({"role": "user", "content": user_input})
     conversation_history.append({"role": "assistant", "content": text})
-    _accepted_speech(text)
+    if allow_cloud_speech is True:
+        _accepted_speech(text)
     if text and on_chunk is None:
         print(RESET_COLOR + "\n")
     return result
@@ -860,6 +860,10 @@ def build_parser():
     parser.add_argument("--refresh-models", action="store_true")
     parser.add_argument("--strict-model", action="store_true")
     parser.add_argument("--offline-search", metavar="QUERY")
+    parser.add_argument(
+        "--allow-cloud-speech", action="store_true",
+        help="send accepted answers to Google Text-to-Speech for playback",
+    )
     return parser
 
 
@@ -964,9 +968,7 @@ def main(
     if collection_opener is None:
         collection_opener = lambda _path, _name: _open_backend_collection()
     collection = collection_opener(None, collection_name)
-    conversation_history = [
-        {"role": "system", "content": "Welcome to Easy Local RAG."}
-    ]
+    conversation_history = []
     dont_read_tts = False
     just_query_file_search = False
     if router is None:
@@ -989,11 +991,11 @@ def main(
         if user_input is None or user_input.strip().lower() in {"exit", "quit"}:
             break
         stripped_input = re.sub(r"s{4,}", "", user_input, flags=re.IGNORECASE)
-        stripped_input = re.sub(r"q{4,}", "", stripped_input, flags=re.IGNORECASE).strip()
+        stripped_input = re.sub(r"q{4,}", "", stripped_input, flags=re.IGNORECASE)
         lowered_input = user_input.lower()
         dont_read_tts = bool(re.search(r"s{4,}", lowered_input))
         just_query_file_search = bool(re.search(r"q{4,}", lowered_input))
-        if not stripped_input:
+        if not stripped_input.strip():
             continue
 
         if just_query_file_search:
@@ -1001,7 +1003,7 @@ def main(
                 from offline_search import search_documents
 
                 searcher = search_documents
-            _write_offline_results(collection, stripped_input, searcher, stdout)
+            _write_offline_results(collection, stripped_input.strip(), searcher, stdout)
             continue
 
         try:
@@ -1021,6 +1023,7 @@ def main(
                 router=router,
                 strict=args.strict_model,
                 on_chunk=emit_chunk,
+                allow_cloud_speech=args.allow_cloud_speech,
             )
             stdout.write(
                 "provider="

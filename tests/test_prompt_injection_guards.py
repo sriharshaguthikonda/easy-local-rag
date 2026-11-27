@@ -112,6 +112,12 @@ def test_same_provider_fallback_reuses_request_and_rejects_tool_output(provider)
     assert [request["model"] for request in calls] == [model, replacement]
     assert calls[0]["messages"] == calls[1]["messages"] == messages
     assert all("tools" not in request for request in calls)
+    if provider == "groq":
+        assert [request["service_tier"] for request in calls] == ["on_demand", "on_demand"]
+        assert [request["temperature"] for request in calls] == [0, 0]
+    else:
+        assert router._host == "http://127.0.0.1:11434"
+        assert [request["options"]["temperature"] for request in calls] == [0, 0]
     assert emitted == []
 
 @pytest.mark.parametrize("provider", ["groq", "ollama"])
@@ -145,3 +151,18 @@ def test_text_only_generation_rejects_tool_only_completion(provider, stream):
         )
     assert rejected.value.code == "unsupported_tool_output"
     assert emitted == []
+
+@pytest.mark.parametrize("tool_option", ["tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"])
+def test_text_only_request_rejects_tool_options_before_provider_work(tool_option):
+    import generation_models as gm
+
+    def unexpected():
+        pytest.fail("A rejected tool option reached provider discovery")
+
+    router = gm.groq_router(client=SimpleNamespace(models=SimpleNamespace(list=unexpected)))
+    with pytest.raises(gm.GenerationError) as rejected:
+        router.generate(
+            messages=[{"role": "user", "content": "Synthetic question."}],
+            text_only=True, **{tool_option: "inert"},
+        )
+    assert rejected.value.code == "unsupported_tool_request"
