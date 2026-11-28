@@ -90,7 +90,7 @@ def test_every_streamlit_mode_sends_retrieved_text_with_stable_citations(
         provider="ollama", preferred=None, router=None, strict=False,
         retrieve=retrieve, conversation_history=[],
     )
-    model_prompt = prepared.request["messages"][-1]["content"]
+    model_prompt = prepared.answer.messages()[-1]["content"]
 
     assert len(calls) == 1
     assert prepared.context == f"{sentinel}\n\nsecond source"
@@ -157,15 +157,34 @@ def test_missing_evidence_is_visible_and_skips_model_providers(
 
 
 def test_oversized_evidence_prompt_is_visible_and_skips_model_providers(load_streamlit_app):
+    from generation_models import OllamaRouter
+    from token_budget import TokenCount
+
     app, display = load_streamlit_app
     document = "evidence " * 6000
     retrieve, _calls = _record_retrieval(
         (document, [{"file_name": "oversized.txt", "document": document}])
     )
-    router = SimpleNamespace(generate=lambda **kwargs: pytest.fail("Unexpected model request"))
 
+    class Local:
+        def list(self):
+            return {"models": [{"model": "phi-3"}]}
+
+        def show(self, model):
+            return {"capabilities": ["completion"], "context_length": 4096}
+
+        def chat(self, **kwargs):
+            pytest.fail("Unexpected model request")
+
+    class VerifiedSyntheticRouter(OllamaRouter):
+        def _admission_inputs(self, profile, messages, options):
+            rendered = "".join(message["content"] for message in messages)
+            count = TokenCount(len(rendered.encode("utf-8")), "exact", "synthetic UTF-8 tokenizer")
+            return count, profile.context_tokens, "synthetic runner"
+
+    router = VerifiedSyntheticRouter(client=Local())
     context, answer, sources = app.chat_with_model(
-        "question", "system", retrieve=retrieve, router=router
+        "question", "system", provider="ollama", retrieve=retrieve, router=router
     )
 
     assert (context, answer) == (document, None)

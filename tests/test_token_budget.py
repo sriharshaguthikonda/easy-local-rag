@@ -1,9 +1,22 @@
-from token_budget import count_message_tokens, trim_messages_to_budget
+import hashlib
+
+from token_budget import count_rendered, oldest_turn_removed
 
 
-def test_count_message_tokens_returns_positive_count():
-    messages = [{"role": "user", "content": "hello world"}]
-    assert count_message_tokens(messages, "llama-3.3-70b-versatile") > 0
+def test_count_message_tokens_returns_positive_count(tmp_path):
+    from tokenizers import Tokenizer, models, pre_tokenizers
+
+    tokenizer = Tokenizer(models.WordLevel({"[UNK]": 0, "hello": 1, "world": 2}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    path = tmp_path / "tokenizer.json"
+    tokenizer.save(str(path))
+    spec = {
+        "provider": "groq", "model": "fixture", "revision": "v1",
+        "tokenizer_path": str(path), "tokenizer_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "max_added_tokens": 0, "add_special_tokens": False,
+    }
+    count = count_rendered(spec, "hello world", provider="groq", model="fixture", template="fixture-v1")
+    assert (count.tokens, count.quality) == (2, "exact")
 
 
 def test_trim_messages_to_budget_removes_old_turns():
@@ -13,11 +26,5 @@ def test_trim_messages_to_budget_removes_old_turns():
         {"role": "assistant", "content": "b " * 2000},
         {"role": "user", "content": "c " * 2000},
     ]
-    trimmed, changed = trim_messages_to_budget(
-        messages,
-        max_input_tokens=200,
-        model_name="llama-3.3-70b-versatile",
-    )
-    assert changed is True
-    assert trimmed[0]["role"] == "system"
-    assert trimmed[-1]["role"] == "user"
+    assert oldest_turn_removed(messages) == [messages[0], messages[-1]]
+    assert oldest_turn_removed([messages[0], messages[2], messages[-1]]) is None

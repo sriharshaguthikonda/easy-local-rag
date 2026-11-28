@@ -564,19 +564,6 @@ def groq_chat(
     )
 
 
-def count_tokens(messages, model="llama-3.3-70b-versatile"):
-    # Replace this with your token counting logic (or simple tokenizer if tiktoken is unavailable)
-    def simple_tokenizer(text):
-        import re
-
-        return re.findall(r"\w+|[^\s\w]", text)
-
-    total_tokens = 0
-    for message in messages:
-        total_tokens += len(simple_tokenizer(message["content"]))
-    return total_tokens
-
-
 """
  ######  ######## ##    ## ######## ######## ##    ##  ######  ########
 ##    ## ##       ###   ##    ##    ##       ###   ## ##    ## ##

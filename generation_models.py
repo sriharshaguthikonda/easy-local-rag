@@ -12,6 +12,7 @@ import copy
 import json
 import os
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 import re
 import threading
@@ -19,10 +20,26 @@ import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from urllib.parse import urlparse
 
+from token_budget import (
+    Admission, TokenCount, count_rendered, oldest_turn_removed, preserves_messages,
+    render_hosted_chat, text_messages, unknown,
+)
+
 
 CATALOGUE_TTL_SECONDS = 300.0
 DISCOVERY_TIMEOUT_SECONDS = 10.0
 MAX_GENERATION_ATTEMPTS = 3
+# Public Groq model limits are capacity, independent of operator caps and TPM.
+_GROQ_PUBLISHED_LIMITS = {
+    "llama-3.3-70b-versatile": (131072, 32768),
+    "llama-3.1-8b-instant": (131072, 131072),
+    "openai/gpt-oss-120b": (131072, 65536),
+    "openai/gpt-oss-20b": (131072, 65536),
+}
+_CAPACITY_CODES = {
+    "context_length_exceeded", "max_context_length_exceeded", "prompt_too_long",
+    "input_too_long", "context_window_exceeded",
+}
 _CAPABILITIES = frozenset(
     {"stream", "tools", "json_object", "json_schema", "reasoning_off"}
 )
@@ -64,6 +81,7 @@ class GenerationError(RuntimeError):
         actual_model: str | None = None,
         provider: str | None = None,
         attempts: Sequence[str] | None = None,
+        admission: Admission | None = None,
     ) -> None:
         normalized = re.sub(r"[^a-z0-9_.-]+", "_", str(code).lower()).strip("_")
         self.code = normalized or "generation_error"
@@ -74,6 +92,7 @@ class GenerationError(RuntimeError):
         self.attempts = tuple(
             item for item in (_safe_model_id(value) for value in (attempts or ())) if item
         )
+        self.admission = admission
         super().__init__(self.message)
 
 
@@ -109,7 +128,7 @@ class GenerationProfile:
     tier: str
     input_usd_per_mtok: float
     output_usd_per_mtok: float
-    context_tokens: int
+    context_tokens: int | None
     output_tokens: int
     priority: int
     capabilities: list[str]
@@ -134,6 +153,7 @@ class GenerationResult:
     attempted_models: list[str] = field(default_factory=list)
     usage: Any = None
     finish_reason: str | None = None
+    admission: Admission | None = None
 
 
 def _value(obj: Any, key: str, default: Any = None) -> Any:
@@ -301,7 +321,8 @@ def _configured_profiles(provider: str) -> dict[str, dict[str, Any]]:
         capabilities = row.get("capabilities")
         quality = row.get("quality")
         prices = [row.get("input_usd_per_mtok"), row.get("output_usd_per_mtok")]
-        sizes = [row.get("context_tokens"), row.get("output_tokens")]
+        context = row.get("context_tokens")
+        output = row.get("output_tokens")
         if (
             not isinstance(classes, list)
             or not classes
@@ -312,7 +333,8 @@ def _configured_profiles(provider: str) -> dict[str, dict[str, Any]]:
             or not quality.strip()
             or row.get("tier") != expected_tier
             or not all(type(price) in (int, float) and 0 <= price < float("inf") for price in prices)
-            or not all(type(size) is int and size > 0 for size in sizes)
+            or (context is not None and (type(context) is not int or context <= 0))
+            or type(output) is not int or output <= 0
             or type(row.get("priority")) is not int
         ):
             continue
@@ -344,7 +366,7 @@ def _profile_from_config(
     row_caps = list(capabilities if capabilities is not None else row.get("capabilities", ["stream"]))
     if not row_classes:
         row_classes = ["chat"]
-    context_limit = _profile_limit(row.get("context_tokens"), context_tokens, 4096)
+    context_limit = _profile_limit(row.get("context_tokens"), context_tokens, None)
     output_limit = _profile_limit(row.get("output_tokens"), output_tokens, 1024)
     return GenerationProfile(
         id=model,
@@ -359,7 +381,7 @@ def _profile_from_config(
         priority=_as_int(row.get("priority"), 1000),
         capabilities=sorted(set(str(value) for value in row_caps if str(value) in _CAPABILITIES)),
         profiled=profiled,
-        available=context_limit > 0 and output_limit > 0,
+        available=(context_limit is None or context_limit > 0) and output_limit > 0,
         remote=remote,
         status=status,
         metadata=dict(metadata or {}),
@@ -434,6 +456,17 @@ def _error_code(body: Any) -> str:
     return str(body or "").lower().strip()
 
 
+def _capacity_reported(code: str) -> bool:
+    return code in _CAPACITY_CODES or any(
+        phrase in code for phrase in (
+            "prompt is longer than the context length",
+            "exceeds the context length",
+            "input length exceeds maximum context",
+            "context window is too small",
+        )
+    )
+
+
 def _classify_provider_error(exc: BaseException, provider: str, model: str) -> str:
     """Map an SDK exception to a safe retry category."""
 
@@ -444,6 +477,8 @@ def _classify_provider_error(exc: BaseException, provider: str, model: str) -> s
         return "timeout"
     if status in {401, 403} or "authentication" in name or "invalid_api_key" in body_code:
         return "authentication"
+    if status in {400, 413, 422, 500} and _capacity_reported(body_code):
+        return "input_budget"
     if provider == "groq":
         # A Groq 404 is retryable only when the structured API body explicitly
         # identifies the missing model.  Other 404s are terminal.
@@ -462,55 +497,23 @@ def _classify_provider_error(exc: BaseException, provider: str, model: str) -> s
     return "provider_error"
 
 
-def _extract_text(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, Mapping):
-        content = value.get("content")
-        if content is not None:
-            return _extract_text(content)
-        text = value.get("text")
-        if text is not None:
-            return _extract_text(text)
-        return ""
-    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
-        return "".join(_extract_text(item) for item in value)
-    content = _value(value, "content")
-    if content is not None:
-        return _extract_text(content)
-    text = _value(value, "text")
-    if text is not None:
-        return _extract_text(text)
-    return ""
-
-
-def _extract_delta(chunk: Any) -> tuple[str, str | None]:
-    model = _safe_model_id(_value(chunk, "model"))
-    choices = _value(chunk, "choices")
-    if choices:
-        first = _as_sequence(choices)[0]
-        delta = _value(first, "delta")
-        if delta is not None:
-            return _extract_text(delta), model
-        message = _value(first, "message")
-        if message is not None:
-            return _extract_text(message), model
-        return _extract_text(_value(first, "text")), model
-    message = _value(chunk, "message")
-    if message is not None:
-        return _extract_text(message), model
-    return _extract_text(_value(chunk, "response")), model
+def _reject_reported_error(event: Any, provider: str) -> None:
+    if provider == "groq":
+        early_stop = _value(_value(event, "x_groq"), "error")
+        if early_stop:
+            category = "input_budget" if _capacity_reported(_error_code(early_stop)) else "incomplete"
+            raise GenerationError(category, "Groq reported an early stop.")
+    if _value(event, "error") is not None:
+        category = "input_budget" if _capacity_reported(_error_code(event)) else "provider_error"
+        raise GenerationError(category, "Provider reported a generation failure.")
 
 
 def _answer_stream_event(chunk: Any, provider: str) -> tuple[str, str | None, bool]:
     """Decode one provider event, retaining the terminal signal separately."""
-    if _value(chunk, "error") is not None:
-        raise GenerationError("provider_error", "Provider reported a stream failure.")
+    _reject_reported_error(chunk, provider)
     if provider == "groq":
         choices = _value(chunk, "choices")
-        if isinstance(choices, (list, tuple)) and not choices and _value(chunk, "usage") is not None:
+        if isinstance(choices, (list, tuple)) and not choices and _provider_usage(provider, chunk) is not None:
             return "", None, True
         if not isinstance(choices, (list, tuple)) or len(choices) != 1:
             raise GenerationError("invalid_response", "Invalid generation stream event.")
@@ -555,12 +558,62 @@ def _reject_tool_output():
     raise GenerationError("unsupported_tool_output", "Unexpected tool output in a text-only request.")
 
 
-def _extract_response_text(response: Any) -> tuple[str, str | None, Any]:
-    text, model = _extract_delta(response)
-    usage = _value(response, "usage")
-    if text:
-        return text, model, usage
-    return _extract_text(response), model, usage
+def _response_truncated(event) -> bool:
+    usage = _groq_usage(event)
+    first = next(iter(_as_sequence(_value(event, "choices"))), None)
+    return any(
+        _value(part, key) is True
+        for part in (event, usage, first)
+        for key in ("truncated", "prompt_truncated", "context_truncated")
+    )
+
+
+def _groq_usage(event):
+    usage = _value(event, "usage")
+    return usage if usage is not None else _value(_value(event, "x_groq"), "usage")
+
+
+def _provider_usage(provider: str, event):
+    if provider == "ollama":
+        prompt = _value(event, "prompt_eval_count")
+        if prompt is not None:
+            # This Ollama runner already includes cached input in prompt_eval_count.
+            return {
+                "prompt_tokens": prompt,
+                "cached_prompt_tokens": _value(event, "prompt_eval_cached_count"),
+                "completion_tokens": _value(event, "eval_count"),
+            }
+    return _groq_usage(event)
+
+
+def _validate_provider_usage(usage, admission: Admission) -> None:
+    prompt = _value(usage, "prompt_tokens")
+    cached = _value(usage, "cached_prompt_tokens")
+    if cached is None:
+        cached = _value(_value(usage, "prompt_tokens_details"), "cached_tokens")
+    completion = _value(usage, "completion_tokens")
+    for value in (prompt, cached, completion):
+        if value is not None and (type(value) is not int or value < 0):
+            raise GenerationError("incomplete", "Provider reported invalid token usage.")
+    if prompt is not None and cached is not None and cached > prompt:
+        raise GenerationError("incomplete", "Provider reported inconsistent cache usage.")
+    if prompt is not None and admission.input_count.quality == "exact":
+        if prompt != admission.input_count.tokens:
+            raise GenerationError("incomplete", "Provider input usage differs from the verified count.")
+    if prompt is not None and prompt + admission.output_tokens > admission.context_tokens:
+        raise GenerationError("input_budget", "Provider input and output reserve exceed context.")
+    if (prompt is not None and admission.input_count.quality == "conservative"
+        and prompt > admission.input_count.tokens):
+        raise GenerationError("incomplete", "Provider input exceeded the verified upper bound.")
+    if completion is not None and completion > admission.output_tokens:
+        raise GenerationError("incomplete", "Provider output exceeded its reservation.")
+
+
+def _same_reported_model(provider: str, selected: str, reported: str | None) -> bool:
+    if reported is None or reported == selected:
+        return True
+    return (provider == "ollama" and isinstance(reported, str)
+            and selected.removesuffix(":latest") == reported.removesuffix(":latest"))
 
 
 def _is_embedding_id(model: str) -> bool:
@@ -573,15 +626,6 @@ def _is_non_generation_id(model: str) -> bool:
     return _is_embedding_id(lower) or any(
         token in lower for token in ("whisper", "guard", "moderation", "tts", "speech")
     )
-
-
-def _estimate_tokens(messages, options) -> int:
-    """Bound request size without assuming an unfamiliar model's tokenizer."""
-    payload = list(messages) + [
-        options[key] for key in ("tools", "response_format", "format") if key in options
-    ]
-    size = len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"))
-    return size + 12 * len(messages) + 32
 
 
 def _response_format_kind(value: Any) -> str | None:
@@ -654,11 +698,16 @@ def _budget_value(options: Mapping[str, Any], name: str) -> float | None:
     return value if value >= 0 else -1.0
 
 
+def _unverified_prompt_options(options: Mapping) -> bool:
+    return bool({"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call",
+                 "response_format", "format", "json_schema", "json_object"} & options.keys())
+
+
 def _ollama_context(options):
     request_options = options.get("options")
-    if not isinstance(request_options, Mapping):
-        return 4096
-    return _as_int(request_options.get("num_ctx", 4096))
+    if not isinstance(request_options, Mapping) or "num_ctx" not in request_options:
+        return None
+    return _as_int(request_options["num_ctx"])
 
 
 class _GenerationRouter:
@@ -723,7 +772,6 @@ class _GenerationRouter:
         profiles: Sequence[GenerationProfile],
         *,
         preferred: str | None,
-        messages: Sequence[Any],
         max_output_tokens: int,
         options: Mapping[str, Any],
         preferred_profile: GenerationProfile | None,
@@ -742,17 +790,6 @@ class _GenerationRouter:
             tier = str(tier)
         if self.provider == "groq" and tier in {"flex", "performance", "cloud"}:
             return []
-        input_tokens = max(
-            _as_int(options.get("input_tokens")),
-            _as_int(options.get("max_input_tokens")),
-            _estimate_tokens(messages, options),
-        )
-        explicit_context = _as_int(options.get("context_tokens"), 0)
-        if self.provider == "ollama":
-            ollama_context = _ollama_context(options)
-            if ollama_context <= 0:
-                return []
-            explicit_context = min(explicit_context or ollama_context, ollama_context)
         input_budget = _budget_value(options, "input_usd_per_mtok")
         output_budget = _budget_value(options, "output_usd_per_mtok")
         if input_budget is not None and input_budget < 0:
@@ -787,11 +824,6 @@ class _GenerationRouter:
                 continue
             if profile.output_tokens < max_output_tokens:
                 continue
-            effective_context = profile.context_tokens
-            if explicit_context:
-                effective_context = min(effective_context, explicit_context)
-            if input_tokens + max_output_tokens > effective_context:
-                continue
             if input_budget is not None and profile.input_usd_per_mtok > input_budget:
                 continue
             if output_budget is not None and profile.output_usd_per_mtok > output_budget:
@@ -805,6 +837,52 @@ class _GenerationRouter:
                     continue
             selected.append(profile)
         return _catalogue_sort(selected)
+
+    def _admission_spec(self, profile) -> Mapping:
+        spec = self._profile_rows.get(profile.id, {}).get("admission", {})
+        if (
+            not isinstance(spec, Mapping)
+            or spec.get("provider") != self.provider or spec.get("model") != profile.id
+        ):
+            return {}
+        return spec
+
+    def _admit(self, profile, messages, max_output_tokens, options, *, trim, cancelled):
+        removed = 0
+        while True:
+            _raise_if_cancelled(cancelled)
+            count, context, source = self._admission_inputs(profile, messages, options)
+            _raise_if_cancelled(cancelled)
+            receipt = Admission(count, context, max_output_tokens, source, removed)
+            if count.tokens is None or context is None or context <= 0:
+                raise GenerationError(
+                    "input_budget", "Verified tokenizer or effective context is unavailable.",
+                    actual_model=profile.id, provider=self.provider, admission=receipt,
+                )
+            if count.tokens + max_output_tokens <= context:
+                return profile, messages, receipt
+            shorter = oldest_turn_removed(messages) if trim else None
+            if shorter is None:
+                raise GenerationError(
+                    "input_budget", "The full request and reserved output do not fit.",
+                    actual_model=profile.id, provider=self.provider, admission=receipt,
+                )
+            messages = shorter
+            removed += 1
+
+    def _first_admitted(self, candidates, messages, max_output_tokens, options, *, trim, cancelled):
+        failure = None
+        for candidate in candidates:
+            try:
+                return self._admit(candidate, messages, max_output_tokens, options,
+                                   trim=trim, cancelled=cancelled)
+            except GenerationError as error:
+                if error.code != "input_budget":
+                    raise
+                failure = error
+        if failure is not None:
+            raise failure
+        raise GenerationError("no_candidate", "No eligible generation model.", provider=self.provider)
 
     def _close_stream(self, stream: Any) -> None:
         close = getattr(stream, "close", None)
@@ -823,6 +901,7 @@ class _GenerationRouter:
         on_chunk: Callable[[str], Any] | None,
         text_only: bool,
         answer_buffer_bytes: int | None,
+        admission: Admission,
     ) -> tuple[str, str | None, Any, str | None]:
         chunks: list[str] = []
         tool_delta_seen = False
@@ -833,41 +912,52 @@ class _GenerationRouter:
         try:
             for chunk in stream:
                 _raise_if_cancelled(cancelled)
+                if _response_truncated(chunk):
+                    raise GenerationError("incomplete", "Provider reported truncated context.")
                 has_tool_output = _has_tool_output(chunk)
                 if text_only and has_tool_output:
                     _reject_tool_output()
                 tool_delta_seen |= has_tool_output
-                if answer_buffer_bytes is None:
-                    piece, model = _extract_delta(chunk)
-                else:
-                    piece, finish, usage_only = _answer_stream_event(chunk, self.provider)
-                    if finished and not usage_only:
-                        raise GenerationError("incomplete", "Unexpected data after generation stopped.")
-                    if finish is not None:
-                        if finish != "stop":
-                            raise GenerationError("incomplete", "The provider did not stop normally.")
-                        finished = True
-                    try:
-                        payload_bytes += len(piece.encode("utf-8"))
-                    except UnicodeError:
-                        raise GenerationError("invalid_response", "Invalid generation stream text.") from None
-                    if payload_bytes > answer_buffer_bytes:
-                        raise GenerationError("incomplete", "The answer exceeded its buffer limit.")
-                    model = _safe_model_id(_value(chunk, "model"))
+                piece, finish, usage_only = _answer_stream_event(chunk, self.provider)
+                if finished and not usage_only:
+                    raise GenerationError("incomplete", "Unexpected data after generation stopped.")
+                if finish is not None:
+                    if finish != "stop":
+                        raise GenerationError("incomplete", "The provider did not stop normally.")
+                    finished = True
+                try:
+                    payload_bytes += len(piece.encode("utf-8"))
+                except UnicodeError:
+                    raise GenerationError("invalid_response", "Invalid generation stream text.") from None
+                if answer_buffer_bytes is not None and payload_bytes > answer_buffer_bytes:
+                    raise GenerationError("incomplete", "The answer exceeded its buffer limit.")
+                model = _value(chunk, "model") or None
+                if not _same_reported_model(self.provider, model_id, model):
+                    raise GenerationError("incomplete", "Provider reported a different model.")
                 actual_model = model or actual_model
-                usage = _value(chunk, "usage", usage)
+                reported_usage = _provider_usage(self.provider, chunk)
+                if reported_usage is not None:
+                    _validate_provider_usage(reported_usage, admission)
+                    usage = reported_usage
                 if piece:
                     chunks.append(piece)
-                    if on_chunk is not None:
-                        try:
-                            on_chunk(piece)
-                        except Exception as exc:
-                            raise GenerationError("stream_error", "generation stream callback failed") from exc
                     _raise_if_cancelled(cancelled)
             _raise_if_cancelled(cancelled)
-            if answer_buffer_bytes is not None and not finished:
+            if not finished:
                 raise GenerationError("incomplete", "The provider sent no normal stop marker.")
-            return "".join(chunks), actual_model, usage, "stop" if finished else None
+            text = "".join(chunks)
+            if not text.strip():
+                raise GenerationError("incomplete", "Provider returned no complete text.")
+            if on_chunk is not None:
+                try:
+                    for piece in chunks:
+                        _raise_if_cancelled(cancelled)
+                        on_chunk(piece)
+                except GenerationError:
+                    raise
+                except Exception:
+                    raise GenerationError("stream_error", "Generation output callback failed.") from None
+            return text, actual_model, usage, "stop"
         except GenerationError:
             raise
         except Exception as exc:
@@ -907,17 +997,40 @@ class _GenerationRouter:
             return self._consume_stream(
                 response, model_id=profile.id, cancelled=cancelled, on_chunk=on_chunk,
                 text_only=text_only, answer_buffer_bytes=answer_buffer_bytes,
+                admission=options["_admission"],
             )
         _raise_if_cancelled(cancelled)
+        if _response_truncated(response):
+            raise GenerationError("incomplete", "Provider reported truncated context.")
         if text_only and _has_tool_output(response):
             _reject_tool_output()
-        text, actual_model, usage = _extract_response_text(response)
+        _reject_reported_error(response, self.provider)
+        actual_model = _value(response, "model") or None
+        if not _same_reported_model(self.provider, profile.id, actual_model):
+            raise GenerationError("incomplete", "Provider reported a different model.")
+        if self.provider == "groq":
+            choices = _as_sequence(_value(response, "choices"))
+            if len(choices) != 1 or _value(choices[0], "index", 0) != 0:
+                raise GenerationError("invalid_response", "Invalid generation response choice.")
+            choice = choices[0]
+            finish = _value(choice, "finish_reason")
+            text = _value(_value(choice, "message"), "content")
+        else:
+            finish = _value(response, "done_reason")
+            text = _value(_value(response, "message"), "content")
+        if finish != "stop" or (self.provider == "ollama" and _value(response, "done") is not True):
+            raise GenerationError("incomplete", "Provider did not stop normally.")
+        if not isinstance(text, str) or not text.strip():
+            raise GenerationError("incomplete", "Provider returned no complete text.")
+        usage = _provider_usage(self.provider, response)
+        if usage is not None:
+            _validate_provider_usage(usage, options["_admission"])
         if text and on_chunk is not None:
             try:
                 on_chunk(text)
             except Exception:
                 raise GenerationError("stream_error", "Generation output callback failed.") from None
-        return text, actual_model, usage, None
+        return text, actual_model, usage, finish
 
     def generate(
         self,
@@ -954,7 +1067,7 @@ class _GenerationRouter:
             raise GenerationError("invalid_request", "max_output_tokens must be positive") from exc
         if max_output_tokens <= 0:
             raise GenerationError("invalid_request", "max_output_tokens must be positive")
-        prepared_messages = list(messages or [])
+        prepared_messages = copy.deepcopy(list(messages or []))
         tool_options = {"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"}
         if text_only and tool_options.intersection(provider_options):
             raise GenerationError(
@@ -1022,7 +1135,6 @@ class _GenerationRouter:
         eligible = self._eligible(
             policy_profiles,
             preferred=preferred_id,
-            messages=prepared_messages,
             max_output_tokens=max_output_tokens,
             options=options,
             preferred_profile=preferred_profile,
@@ -1038,23 +1150,17 @@ class _GenerationRouter:
                 preferred_model=preferred_profile.id,
                 provider=self.provider,
             )
-        if preferred_id:
-            candidate = next((row for row in eligible if row.id == preferred_id), None)
-            if candidate is None:
-                if not eligible:
-                    raise GenerationError(
-                        "no_candidate",
-                        "no eligible generation model",
-                        preferred_model=preferred_id,
-                        provider=self.provider,
-                    )
-                candidate = eligible[0]
-        elif eligible:
-            candidate = eligible[0]
+        candidates = [row for row in eligible if row.id == preferred_id]
+        if not candidates and (stale_preference or preferred_id is None):
+            candidates = eligible
+        candidate, prepared_messages, admission = self._first_admitted(
+            candidates, prepared_messages, max_output_tokens, options,
+            trim=not stale_preference, cancelled=cancelled,
+        )
+        if preferred_id is None:
             preferred_id = candidate.id
             preferred_profile = candidate
-        else:
-            raise GenerationError("no_candidate", "no eligible generation model", provider=self.provider)
+        removed_turns = admission.history_turns_removed
 
         attempted: list[str] = []
         failed: set[str] = set()
@@ -1073,7 +1179,7 @@ class _GenerationRouter:
                     messages=prepared_messages,
                     stream=bool(stream),
                     max_output_tokens=max_output_tokens,
-                    options=options,
+                    options={**options, "_admission": admission},
                     cancelled=cancelled,
                     on_chunk=on_chunk,
                     text_only=text_only,
@@ -1093,6 +1199,7 @@ class _GenerationRouter:
                     attempted_models=list(attempted),
                     usage=usage,
                     finish_reason=finish_reason,
+                    admission=admission,
                 )
             except GenerationError as exc:
                 if exc.code == "cancelled":
@@ -1107,6 +1214,7 @@ class _GenerationRouter:
                         actual_model=candidate.id,
                         provider=self.provider,
                         attempts=attempted,
+                        admission=exc.admission or admission,
                     ) from exc
                 failed.add(candidate.id)
                 with self._catalogue_lock:
@@ -1129,7 +1237,6 @@ class _GenerationRouter:
                 eligible = self._eligible(
                     profiles,
                     preferred=preferred_id,
-                    messages=prepared_messages,
                     max_output_tokens=max_output_tokens,
                     options=options,
                     preferred_profile=preferred_profile,
@@ -1144,7 +1251,23 @@ class _GenerationRouter:
                         provider=self.provider,
                         attempts=attempted,
                     ) from exc
-                candidate = replacements[0]
+                try:
+                    candidate, _, replacement = self._first_admitted(
+                        replacements, prepared_messages, max_output_tokens, options,
+                        trim=False, cancelled=cancelled,
+                    )
+                except GenerationError as error:
+                    if error.code != "input_budget":
+                        raise
+                    raise GenerationError(
+                        error.code, error.message, preferred_model=preferred_id,
+                        actual_model=error.actual_model, provider=self.provider,
+                        attempts=attempted, admission=error.admission,
+                    ) from None
+                admission = Admission(
+                    replacement.input_count, replacement.context_tokens, replacement.output_tokens,
+                    replacement.context_source, removed_turns,
+                )
                 fallback_reason = f"fallback from {preferred_id} to {candidate.id} after model_unavailable"
         raise GenerationError(
             "model_unavailable",
@@ -1157,6 +1280,44 @@ class _GenerationRouter:
 
 class GroqRouter(_GenerationRouter):
     provider = "groq"
+
+    def _admission_inputs(self, profile, messages, options) -> tuple[TokenCount, int | None, str]:
+        spec = self._admission_spec(profile)
+        reported = profile.metadata.get("reported_context")
+        published, _ = _GROQ_PUBLISHED_LIMITS.get(profile.id, (None, None))
+        ceiling = options.get("context_tokens")
+        limits = [size for size in (reported, published, profile.context_tokens,
+                                    _as_int(ceiling) if ceiling is not None else None)
+                  if size is not None]
+        context = min(limits) if reported is not None or published is not None else None
+        source = "Groq reported model limit" if reported is not None else "Groq published model limit"
+        if not spec or not text_messages(messages):
+            return unknown("No matching Groq text tokenizer and template"), context, source
+        if _unverified_prompt_options(options):
+            return unknown("Groq prompt options lack a verified rendering"), context, source
+        for field in ("revision", "tokenizer_sha256", "template_sha256"):
+            reported_value = profile.metadata.get(field)
+            if reported_value is not None and spec.get(field) != reported_value:
+                return unknown(f"Groq deployment {field} mismatch"), context, source
+        try:
+            rendered = render_hosted_chat(spec, messages, self._reasoning_options(profile, options))
+            if not preserves_messages(rendered, messages):
+                return unknown("Groq template changes message content"), context, source
+        except Exception:
+            return unknown("Groq chat template unavailable or incompatible"), context, source
+        return count_rendered(
+            spec, rendered, provider=self.provider, model=profile.id,
+            template=f"sha256:{spec.get('template_sha256')}",
+        ), context, source
+
+    @staticmethod
+    def _reasoning_options(profile, options):
+        keys = ("include_reasoning", "reasoning_effort", "reasoning_format")
+        result = {key: options[key] for key in keys if key in options}
+        if profile.id.startswith("openai/gpt-oss") and options.get("_task_class") == "chat":
+            result.setdefault("include_reasoning", False)
+            result.setdefault("reasoning_effort", "low")
+        return result
 
     def __init__(self, client=None, *, clock=None):
         if client is not None and callable(getattr(client, "with_options", None)):
@@ -1188,9 +1349,6 @@ class GroqRouter(_GenerationRouter):
             "tools",
             "tool_choice",
             "response_format",
-            "reasoning_effort",
-            "reasoning_format",
-            "include_reasoning",
             "seed",
             "frequency_penalty",
             "presence_penalty",
@@ -1209,9 +1367,7 @@ class GroqRouter(_GenerationRouter):
                 "service_tier": "on_demand",
             }
         )
-        if profile.id.startswith("openai/gpt-oss") and options.get("_task_class") == "chat":
-            kwargs.setdefault("include_reasoning", False)
-            kwargs.setdefault("reasoning_effort", "low")
+        kwargs.update(self._reasoning_options(profile, options))
         # Never allow a caller's lower-level max token key to weaken the
         # boundary; max_completion_tokens is the authoritative ceiling.
         kwargs.pop("max_tokens", None)
@@ -1238,6 +1394,8 @@ class GroqRouter(_GenerationRouter):
             metadata = {
                 "active": bool(active),
                 "owned_by": str(_value(row, "owned_by", ""))[:120],
+                "reported_context": _context_from_metadata(row),
+                **{key: _value(row, key) for key in ("revision", "tokenizer_sha256", "template_sha256")},
             }
             supported_value = _value(row, "supported_parameters", None)
             supported = supported_value if supported_value is not None else []
@@ -1267,7 +1425,12 @@ class GroqRouter(_GenerationRouter):
                     capabilities=caps,
                     context_tokens=_context_from_metadata(row),
                     output_tokens=_profile_limit(
-                        _value(row, "max_output_tokens"), _value(row, "max_completion_tokens"), None
+                        _value(row, "max_output_tokens"),
+                        _profile_limit(
+                            _value(row, "max_completion_tokens"),
+                            _GROQ_PUBLISHED_LIMITS.get(model, (None, None))[1], None,
+                        ),
+                        None,
                     ),
                     status="active" if active is not False else "inactive",
                 )
@@ -1277,6 +1440,88 @@ class GroqRouter(_GenerationRouter):
 
 class OllamaRouter(_GenerationRouter):
     provider = "ollama"
+
+    def _runner_context(self, client, profile, spec):
+        transport = getattr(client, "_client", None)
+        if transport is None or getattr(transport, "base_url", None) is None:
+            return None
+        version = transport.get("/api/version")
+        version.raise_for_status()
+        if version.json().get("version") != spec.get("server_version") or spec.get("server_version") != "0.34.0":
+            return None
+        digest = spec.get("model_digest")
+        if not isinstance(digest, str) or not re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", digest):
+            return None
+        tags = self._metadata(client)
+        installed = self._matching_ollama_model(tags, profile.id)
+        processes = transport.get("/api/ps")
+        processes.raise_for_status()
+        runner = self._matching_ollama_model(processes.json(), profile.id)
+        for row in (installed, runner):
+            found = _value(row, "digest")
+            if (_contains_remote(row) or not isinstance(found, str)
+                or found.removeprefix("sha256:") != digest.removeprefix("sha256:")):
+                return None
+        limit = _value(runner, "context_length")
+        return limit if type(limit) is int and limit > 0 else None
+
+    @staticmethod
+    def _matching_ollama_model(payload, model):
+        matches = [
+            row for row in _as_sequence(_value(payload, "models"))
+            if isinstance(row, Mapping) and _same_reported_model("ollama", model, _model_id(row))
+        ]
+        return matches[0] if len(matches) == 1 else {}
+
+    def _admission_inputs(self, profile, messages, options) -> tuple[TokenCount, int | None, str]:
+        source = "Ollama runner, model and request limits"
+        spec = self._admission_spec(profile)
+        if not spec or not text_messages(messages) or _unverified_prompt_options(options):
+            return unknown("No matching Ollama text tokenizer and template"), None, source
+        client = self._ensure_client()
+        try:
+            runner_limit = self._runner_context(client, profile, spec)
+            if runner_limit is None:
+                return unknown("Ollama runner identity or allocation unavailable"), None, source
+            manifest = self._metadata(client, profile.id)
+            if not manifest or _contains_remote(manifest):
+                raise GenerationError("remote_provider", "Ollama model must be verified as local.", provider=self.provider)
+            model_limit = _context_from_metadata(manifest)
+            template = _value(manifest, "template")
+            expected = spec.get("template_sha256")
+            if not isinstance(template, str) or sha256(template.encode("utf-8")).hexdigest() != expected:
+                return unknown("Ollama template fingerprint mismatch"), None, source
+            requested = _ollama_context(options)
+            operator = options.get("context_tokens")
+            if model_limit is None:
+                return unknown("Ollama model context unavailable"), None, source
+            context = min(size for size in (runner_limit, model_limit, profile.context_tokens, requested,
+                                            _as_int(operator) if operator is not None else None)
+                          if size is not None)
+            if context <= 0:
+                return unknown("Invalid Ollama context limit"), None, source
+            transport = client._client
+            payload = self._chat_payload(profile, messages, False, 1, options, context=runner_limit)
+            response = transport.post("/api/chat", json={**payload, "_debug_render_only": True})
+            response.raise_for_status()
+            body = response.json()
+            debug = _value(body, "debug_info")
+            rendered = _value(debug, "rendered_template")
+            reported_model = _value(body, "model")
+            if (not isinstance(rendered, str) or _value(debug, "image_count", 0) != 0
+                or not reported_model or not _same_reported_model("ollama", profile.id, reported_model)
+                or not preserves_messages(rendered, messages)):
+                return unknown("Ollama did not return the complete text template"), context, source
+            confirmed = self._runner_context(client, profile, spec)
+            if confirmed != runner_limit:
+                return unknown("Ollama effective context changed during preflight"), None, source
+            return count_rendered(
+                spec, rendered, provider=self.provider, model=profile.id, template=f"sha256:{expected}",
+            ), context, source
+        except GenerationError:
+            raise
+        except Exception:
+            return unknown("Ollama admission metadata unavailable"), None, source
 
     def __init__(
         self,
@@ -1330,18 +1575,8 @@ class OllamaRouter(_GenerationRouter):
             return payload
         return client.list() if model is None else client.show(model)
 
-    def _request(self, profile, messages, stream, max_output_tokens, options):
-        client = self._ensure_client()
-        if not _is_local_host(self._host):
-            raise GenerationError("remote_provider", "Ollama requires a local endpoint", provider=self.provider)
-        transport = getattr(client, "_client", None)
-        if transport is not None and getattr(transport, "base_url", None) is not None:
-            manifest = self._metadata(client, profile.id)
-            if not manifest or _contains_remote(manifest):
-                raise GenerationError("remote_provider", "Ollama model must be verified as local", provider=self.provider)
-        chat = _value(client, "chat")
-        if not callable(chat):
-            raise GenerationError("provider_error", "Ollama generation is unavailable", provider=self.provider)
+    @staticmethod
+    def _chat_payload(profile, messages, stream, max_output_tokens, options, *, context):
         kwargs: dict[str, Any] = {
             "model": profile.id,
             "messages": messages,
@@ -1358,16 +1593,12 @@ class OllamaRouter(_GenerationRouter):
                 kwargs["format"] = format_value.get("json_schema", format_value)
             else:
                 kwargs["format"] = format_value
-        explicit_options = options.get("options")
-        ollama_options = dict(explicit_options) if isinstance(explicit_options, Mapping) else {}
-        requested_context = min(_ollama_context(options), profile.context_tokens)
-        ollama_options["num_ctx"] = requested_context
-        ollama_options["num_predict"] = min(max_output_tokens, profile.output_tokens)
-        # Common Ollama generation knobs live inside ``options`` rather than
-        # Groq's top-level request.  Preserve only documented knobs.
-        for key in ("temperature", "top_p", "top_k", "seed", "repeat_penalty", "stop"):
-            if key in options:
-                ollama_options[key] = options[key]
+        values = options.get("options")
+        explicit = values if isinstance(values, Mapping) else {}
+        keys = ("temperature", "top_p", "top_k", "seed", "repeat_penalty", "stop")
+        ollama_options = {key: explicit[key] for key in keys if key in explicit}
+        ollama_options.update({key: options[key] for key in keys if key in options})
+        ollama_options.update(num_ctx=context, num_predict=max_output_tokens)
         kwargs["options"] = ollama_options
         if "keep_alive" in options:
             kwargs["keep_alive"] = options["keep_alive"]
@@ -1377,7 +1608,47 @@ class OllamaRouter(_GenerationRouter):
             kwargs["think"] = True
         elif options.get("_reasoning_disabled"):
             kwargs["think"] = False
-        return chat(**kwargs)
+        return kwargs | {"truncate": False, "shift": False}
+
+    def _request(self, profile, messages, stream, max_output_tokens, options):
+        client = self._ensure_client()
+        context = options["_admission"].context_tokens
+        payload = self._chat_payload(profile, messages, stream, max_output_tokens, options, context=context)
+        transport = getattr(client, "_client", None)
+        if transport is None or getattr(transport, "base_url", None) is None:
+            chat = _value(client, "chat")
+            if not callable(chat):
+                raise GenerationError("provider_error", "Ollama generation is unavailable.", provider=self.provider)
+            return chat(**payload)
+        spec = self._admission_spec(profile)
+        runner_limit = self._runner_context(client, profile, spec)
+        if runner_limit is None or runner_limit < context:
+            raise GenerationError("input_budget", "Ollama effective context changed.", provider=self.provider)
+        manifest = self._metadata(client, profile.id)
+        if not manifest or _contains_remote(manifest):
+            raise GenerationError("remote_provider", "Ollama model must be verified as local.", provider=self.provider)
+        template = _value(manifest, "template")
+        if not isinstance(template, str) or sha256(template.encode("utf-8")).hexdigest() != spec.get("template_sha256"):
+            raise GenerationError("input_budget", "Ollama chat template changed.", provider=self.provider)
+        model_limit = _context_from_metadata(manifest)
+        if model_limit is None or model_limit < context:
+            raise GenerationError("input_budget", "Ollama model context changed.", provider=self.provider)
+        payload["options"]["num_ctx"] = runner_limit
+        if stream:
+            return self._chat_stream(transport, payload)
+        response = transport.post("/api/chat", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    @staticmethod
+    def _chat_stream(transport, payload):
+        with transport.stream("POST", "/api/chat", json=payload) as response:
+            if response.is_error:
+                response.read()
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if line.strip():
+                    yield json.loads(line)
 
     def _discover(self, client: Any) -> list[GenerationProfile]:
         response = self._metadata(client)

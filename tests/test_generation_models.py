@@ -8,12 +8,14 @@ import groq
 import httpx
 import pytest
 
+pytestmark = pytest.mark.usefixtures("synthetic_provider_admission")
+
 import generation_models as gm
 
 
-def _chunk(text: str, model: str = "") -> SimpleNamespace:
+def _chunk(text: str, model: str = "", finish=None) -> SimpleNamespace:
     delta = SimpleNamespace(content=text)
-    choice = SimpleNamespace(delta=delta, message=SimpleNamespace(content=None))
+    choice = SimpleNamespace(delta=delta, message=SimpleNamespace(content=None), finish_reason=finish)
     return SimpleNamespace(choices=[choice], model=model)
 
 
@@ -44,7 +46,8 @@ class FakeGroq:
             raise groq.NotFoundError(
                 "model not found", response=response, body={"error": {"code": "model_not_found"}}
             )
-        return iter([_chunk("Answer [doc-1]", str(kwargs["model"]))])
+        model = str(kwargs["model"])
+        return iter([_chunk("Answer [doc-1]", model), _chunk("", model, finish="stop")])
 
 
 def _groq_rows(include_replacement: bool = False) -> list[dict[str, object]]:
@@ -170,7 +173,7 @@ def test_no_retry_after_first_output_delta(tool_delta):
         )
 
     assert caught.value.code == "stream_error"
-    assert received == ([] if tool_delta else ["partial"])
+    assert received == []
     assert len(client.calls) == 1
 
 
@@ -256,7 +259,7 @@ def test_saved_known_preference_can_be_refreshed_to_replacement() -> None:
                 response=response,
                 body={"error": {"code": "model_not_found"}},
             )
-        return iter([_chunk("replacement", kwargs["model"])])
+        return iter([_chunk("replacement", kwargs["model"]), _chunk("", kwargs["model"], finish="stop")])
 
     client.chat.completions.create = create
     result = router.generate(preferred="llama-3.3-70b-versatile", messages=[])
@@ -326,7 +329,7 @@ def test_ollama_checks_effective_context_before_dispatch():
                 max_output_tokens=32,
                 options={"num_ctx": effective_context},
             )
-        assert caught.value.code == "no_candidate"
+        assert caught.value.code == "input_budget"
 
 
 def test_policy_denies_capacity_and_strict_json_streaming() -> None:
@@ -411,7 +414,7 @@ def test_missing_local_preference_reports_why_it_fell_back():
 
         def chat(self, *, model, **kwargs):
             assert model == "llama3.2:3b"
-            return {"model": model, "message": {"content": "replacement"}}
+            return {"model": model, "message": {"content": "replacement"}, "done": True, "done_reason": "stop"}
 
     router = gm.ollama_router(client=LocalOllama(), host="http://localhost:11434")
     result = router.generate(preferred="phi-3", messages=[], stream=False)
@@ -436,6 +439,7 @@ def test_local_ollama_never_follows_an_off_host_redirect(monkeypatch):
             return httpx.Response(200, json={
                 "capabilities": ["completion"],
                 "model_info": {"context_length": 4096},
+                "template": "fixture",
             })
         if request.url.host == "localhost":
             return httpx.Response(307, headers={"Location": "https://external.invalid/chat"})
@@ -445,6 +449,10 @@ def test_local_ollama_never_follows_an_off_host_redirect(monkeypatch):
         return actual_client(transport=httpx.MockTransport(handle), **kwargs)
 
     monkeypatch.setattr(ollama, "Client", make_client)
+    monkeypatch.setattr(gm.OllamaRouter, "_runner_context", lambda *args: 4096)
+    monkeypatch.setattr(gm.OllamaRouter, "_admission_spec", lambda *args: {
+        "template_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    })
     router = gm.ollama_router(host="http://localhost:11434")
     with pytest.raises(gm.GenerationError) as exc:
         router.generate(preferred="phi-3", messages=[{"role": "user", "content": "private"}], stream=False)
@@ -503,7 +511,7 @@ def test_ollama_retries_only_a_model_specific_unavailability(error_status, expec
             self.calls.append(model)
             if model == "phi-3":
                 raise ollama.ResponseError("model 'phi-3' not found", status_code=error_status)
-            return {"model": model, "message": {"content": "replacement"}}
+            return {"model": model, "message": {"content": "replacement"}, "done": True, "done_reason": "stop"}
 
     client = LocalOllama()
     router = gm.ollama_router(client=client, host="http://localhost:11434")

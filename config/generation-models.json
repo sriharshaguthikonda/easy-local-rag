@@ -54,7 +54,6 @@
         "tier": "local",
         "input_usd_per_mtok": 0,
         "output_usd_per_mtok": 0,
-        "context_tokens": 4096,
         "output_tokens": 1024,
         "priority": 10,
         "capabilities": ["stream", "json_object", "json_schema"]
@@ -65,7 +64,6 @@
         "tier": "local",
         "input_usd_per_mtok": 0,
         "output_usd_per_mtok": 0,
-        "context_tokens": 4096,
         "output_tokens": 1024,
         "priority": 20,
         "capabilities": ["stream", "json_object", "json_schema"]
@@ -76,7 +74,6 @@
         "tier": "local",
         "input_usd_per_mtok": 0,
         "output_usd_per_mtok": 0,
-        "context_tokens": 4096,
         "output_tokens": 1024,
         "priority": 30,
         "capabilities": ["stream", "json_object", "json_schema"]

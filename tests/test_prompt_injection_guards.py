@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("synthetic_provider_admission")
+
 
 @pytest.mark.parametrize("location", ["document", "file_name"])
 def test_qt_source_preview_renders_untrusted_markup_as_literal_text(location):

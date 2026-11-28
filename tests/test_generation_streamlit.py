@@ -9,6 +9,8 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("synthetic_provider_admission")
+
 from structural_answer_fixtures import completed_excerpt, displayed_excerpt, excerpt_payload
 
 
@@ -484,14 +486,18 @@ def test_streamlit_stops_if_budget_would_change_system_or_current_evidence(
 ):
     app, display = load_streamlit_app
 
-    def truncate(messages, **options):
+    original_prepare = app._prepare_generation
+
+    def prepare_with_truncated_request(*args, **options):
+        prepared = original_prepare(*args, **options)
+        messages = prepared.answer.messages()
         messages[turn_index]["content"] = "Truncated synthetic request."
-        return messages, True
+        return prepared._replace(request={**prepared.request, "messages": messages})
 
     def fail_generate(**request):
         pytest.fail("A truncated request reached generation")
 
-    monkeypatch.setattr(app, "trim_messages_to_budget", truncate)
+    monkeypatch.setattr(app, "_prepare_generation", prepare_with_truncated_request)
     context, answer, sources = app.chat_with_model(
         "Question", "System", provider="ollama", router=SimpleNamespace(generate=fail_generate),
         retrieve=lambda *args, **options: ("evidence", [{"document": "evidence"}]),

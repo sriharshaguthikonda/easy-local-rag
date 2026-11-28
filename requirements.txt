@@ -25,7 +25,8 @@ rank_bm25
 requests
 SpeechRecognition
 streamlit>=1.37
-tiktoken
+tokenizers>=0.22,<1
+Jinja2>=3.1.6,<4
 torch
 tqdm
 watchdog
