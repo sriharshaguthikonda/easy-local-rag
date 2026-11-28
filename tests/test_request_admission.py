@@ -131,6 +131,9 @@ def test_large_request_does_not_hit_streamlit_fixed_ceiling(load_streamlit_app, 
 
 @pytest.mark.parametrize(("terminal", "status"), [
     ({"truncated": True}, "incomplete"),
+    ({"x_groq": {"error": "synthetic upstream early stop"}}, "incomplete"),
+    ({"x_groq": {"error": "prompt is longer than the context length"}}, "input_budget"),
+    ({"x_groq": {"usage": {"prompt_tokens": 10, "completion_tokens": 15}}}, "incomplete"),
     ({"usage": {"prompt_tokens": 10, "completion_tokens": 15}}, "incomplete"),
 ])
 def test_explicit_or_comparable_truncation_blocks_structural_publication(monkeypatch, terminal, status):
