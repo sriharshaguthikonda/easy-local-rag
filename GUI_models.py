@@ -80,6 +80,8 @@ class ModelLoadingMixin:
             router = generation_models.ollama_router(
                 host=getattr(self, "settings", {}).get("ollama_host")
             )
+        elif provider == "lmstudio":
+            router = generation_models.lmstudio_router()
         else:
             raise ValueError(f"Unsupported generation provider: {provider}")
         cache[provider] = router
@@ -322,6 +324,9 @@ class ModelLoadingMixin:
         provider = provider or getattr(self, "settings", {}).get(
             "generation_provider", "groq"
         )
+        if provider == "lmstudio":
+            self._show_status("LM Studio requires a separately verified local deployment.", 6000)
+            return []
         return self._load_generation_models(provider, refresh=refresh)
 
     def on_generation_provider_changed(self, provider=None):
@@ -330,13 +335,15 @@ class ModelLoadingMixin:
             provider = provider.currentData() or provider.currentText()
         elif hasattr(provider, "currentText"):
             provider = provider.currentText()
-        provider = provider if provider in {"groq", "ollama"} else "groq"
+        provider = provider if provider in {"groq", "ollama", "lmstudio"} else "groq"
         if hasattr(self, "settings"):
             self.settings["generation_provider"] = provider
         return self.load_generation_models(provider=provider)
 
     def load_groq_models(self, refresh=False):
         """Load Groq's discovered text-generation models."""
+        if getattr(self, "settings", {}).get("generation_provider") == "lmstudio":
+            return []
         return self._load_generation_models("groq", refresh=refresh)
 
     def load_ollama_models(self, refresh=False):

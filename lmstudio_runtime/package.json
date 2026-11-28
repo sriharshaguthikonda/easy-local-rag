@@ -1,0 +1,7 @@
+{
+  "name": "easy-local-rag-lmstudio-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {"node": ">=22"},
+  "dependencies": {"@lmstudio/sdk": "2.1.0", "ws": "8.23.1"}
+}

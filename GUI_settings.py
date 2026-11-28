@@ -10,6 +10,7 @@ DEFAULT_SETTINGS = {
     'groq_model': 'llama-3.3-70b-versatile',
     'groq_rewrite_model': 'llama-3.1-8b-instant',
     'ollama_model': 'phi-3',
+    'lmstudio_model': '',
     # Generation is deliberately scoped to one provider.  The model menus
     # remain separate so a stale Groq preference can never silently select an
     # Ollama model (or vice versa).
@@ -77,7 +78,7 @@ def update_settings_from_ui(window, settings):
                     if hasattr(provider_combo, 'currentData')
                     else None)
         provider = provider or provider_combo.currentText()
-        if provider in {'groq', 'ollama'}:
+        if provider in {'groq', 'ollama', 'lmstudio'}:
             settings['generation_provider'] = provider
     strict_checkbox = getattr(window, 'strict_generation_model_checkbox', None)
     if strict_checkbox is not None:
@@ -143,7 +144,7 @@ def load_settings(window, settings):
         provider_combo = getattr(window, 'generation_provider_combo', None)
         if provider_combo is not None:
             provider = settings.get('generation_provider', 'groq')
-            if provider not in {'groq', 'ollama'}:
+            if provider not in {'groq', 'ollama', 'lmstudio'}:
                 provider = 'groq'
                 settings['generation_provider'] = provider
             provider_combo.setCurrentText(provider)
