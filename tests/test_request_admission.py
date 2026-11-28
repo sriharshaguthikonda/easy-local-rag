@@ -127,3 +127,63 @@ def test_large_request_does_not_hit_streamlit_fixed_ceiling(load_streamlit_app, 
     result = generate_structural_answer(router, prepared.answer, provider="groq", **prepared.request)
     assert result.status == "structurally_validated"
     assert source["document"] in calls[0]["messages"][-1]["content"]
+
+
+@pytest.mark.parametrize(("terminal", "status"), [
+    ({"truncated": True}, "incomplete"),
+    ({"usage": {"prompt_tokens": 10, "completion_tokens": 15}}, "incomplete"),
+])
+def test_explicit_or_comparable_truncation_blocks_structural_publication(monkeypatch, terminal, status):
+    from rag_prompting import build_numbered_sources, generate_structural_answer, prepare_structural_answer
+
+    prepared = prepare_structural_answer("System", QUESTION, build_numbered_sources(sources()))
+    end_packet = delta(finish="stop")
+    end_packet.update(terminal)
+    router, calls = client([{"id": MODEL, "context_window": 4096}],
+                           lambda request: iter([delta(packet(1, SOURCE)), end_packet]))
+    measured(router, monkeypatch, counting=lambda *_: 350, contexts={MODEL: 4096})
+    result = generate_structural_answer(router, prepared, provider="groq", preferred=MODEL)
+    assert result.status == status
+    assert result.text == ""
+    assert result.evidence == prepared.evidence
+    assert calls[0]["messages"] == prepared.messages()
+
+
+@pytest.mark.parametrize("fallback_limit", [763, 764])
+def test_fallback_admits_identical_evidence_with_its_own_count(monkeypatch, fallback_limit):
+    import groq
+    import httpx
+    from rag_prompting import build_numbered_sources, generate_structural_answer, prepare_structural_answer
+
+    def send(request):
+        if request["model"] == MODEL:
+            response = httpx.Response(404, request=httpx.Request("POST", "https://example.invalid"))
+            raise groq.NotFoundError("fixture", response=response, body={"error": {"code": "model_not_found"}})
+        replacement_delta = delta(packet(1, SOURCE))
+        replacement_stop = delta(finish="stop")
+        for event in (replacement_delta, replacement_stop):
+            event["model"] = FALLBACK
+        return iter([replacement_delta, replacement_stop])
+
+    router, calls = client([
+        {"id": MODEL, "context_window": 8192},
+        {"id": FALLBACK, "context_window": fallback_limit},
+    ], send)
+    evaluations = []
+    measured(router, monkeypatch, counting=lambda model, _: 550 if model == MODEL else 700,
+             contexts={MODEL: 8192, FALLBACK: fallback_limit}, seen=evaluations)
+    prepared = prepare_structural_answer("System", QUESTION, build_numbered_sources(sources()))
+    result = generate_structural_answer(router, prepared, provider="groq", preferred=MODEL,
+                                        max_output_tokens=64)
+
+    assert [call["model"] for call in calls] == ([MODEL, FALLBACK] if fallback_limit == 764 else [MODEL])
+    assert all(call["messages"] == prepared.messages() for call in calls)
+    assert all(call["max_completion_tokens"] == 64 for call in calls)
+    assert (FALLBACK, prepared.messages()) in evaluations
+    assert result.evidence.context_sha256 == prepared.evidence.context_sha256
+    assert result.evidence.package_sha256 == prepared.evidence.package_sha256
+    assert [(row["collection_id"], row["chunk_id"]) for row in result.evidence.sources] == [
+        ("synthetic", "chunk-1"), ("synthetic", "chunk-2"),
+    ]
+    assert result.status == ("structurally_validated" if fallback_limit == 764 else "input_budget")
+    assert bool(result.text) == (fallback_limit == 764)
