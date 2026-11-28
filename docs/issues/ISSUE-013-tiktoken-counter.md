@@ -1,40 +1,9 @@
-# Issue #13: Use tiktoken for request budgeting
+# Issue #13 request admission for maintained ChromaDB
 
-[Roadmap ledger](README.md)
+[Roadmap ledger](README.md) · [GitHub issue](https://github.com/sriharshaguthikonda/easy-local-rag/issues/13)
 
-**Status:** OPEN — `token_budget.py` and basic unit tests exist, but the legacy request path still uses its regex counter and must be routed to the helper.
-**GitHub:** https://github.com/sriharshaguthikonda/easy-local-rag/issues/13
-**Labels / priority:** `priority:P1`, `type:bug`
-**Dependencies:** #22/#27 own maintained request budgeting; #25 retires remaining regex builders. #16 adds `tiktoken` to runtime requirements only while those paths remain supported; retain a conservative fallback when it is unavailable.
+**Status:** OPEN. The owner approved a one-time maintained ChromaDB exception on 28 November 2026 while #2 remains open. The [pinned audit](../Research/issue-013-token-context-audit.md) and [canonical implementation packet](../superpowers/plans/2026-11-28-issue-013-request-admission-implementation.md) define the verification, target and activation gate.
 
-## Implementation slices
+All maintained request entry points use candidate-specific admission. The complete request and reserved output must fit the verified effective context. Counts carry exact, conservative or unknown quality and provenance. Unknown context or unreliable counting refuses dispatch. Separate context capacity and rate accounting. Drop only complete old conversation turns and preserve the original instructions and current evidence/query bytes. Every permitted replacement must independently admit identical prepared messages and evidence. Reject truncation, capacity failure and incomplete output before publication. Provider stops and client evidence hashes do not prove provider-side context consumption.
 
-1. Use `tiktoken` with a documented default encoding for Groq/Llama requests; keep a conservative word-based fallback.
-2. Replace the backend regex counter and budget loop with `count_message_tokens` / `trim_messages_to_budget`.
-3. Preserve the system message and current user question; trim older turns and oversized retrieved context first, with a visible trim warning.
-
-## Affected interfaces, files, and artifacts
-
-- `token_budget.py`, `streamlit_groq_lama_chromadb_RAG_ETTS.py`, `streamlit_app.py`, `requirements.txt`, tests.
-- Request budget contract: explicit context limit, input ceiling, output ceiling, and safety margin.
-
-## Concrete actions
-
-- Audit each API request builder; no live request should use the regex estimate as its primary counter.
-- Do not silently delete the current query; record that context/history was trimmed.
-- Add a code-heavy text test and ordering tests for system/current-message preservation.
-
-## Verification
-
-```powershell
-python -m pytest tests/test_token_budget.py -q
-python -m pytest tests -q
-python -m py_compile token_budget.py streamlit_groq_lama_chromadb_RAG_ETTS.py
-```
-
-## Closure gate, rollback, and commit boundary
-
-- **Maintained-path closure:** every maintained Groq request uses the shared budget helper, regex is not primary, conservative fallback works, and trim ordering is tested.
-- **Retirement closure (mutually exclusive):** remove uncovered Groq request builders from supported entry points and docs, prove they cannot issue requests, and identify the maintained budgeted replacement. Retirement cannot leave an unchecked request route.
-- **Rollback constraint:** retain a conservative fallback; never restore unchecked requests solely to avoid a dependency error.
-- **Commit:** `fix(#13): use tiktoken for Groq budgeting`.
+Close the maintained exception only after separate activation, reproduced tests-only REDs, independent exact-head review, network-denied acceptance, and a verified GUI merge. The #5/#10/#11/#27 structural regressions, ChromaDB, evidence/search-only rollback and canonical migration gates are preserved. Full #27, #2, the unrelated migration and the separate #27 smoke retain their current scope and gates.
