@@ -1,5 +1,7 @@
 # SuperEasy 100% Local RAG with Ollama + Email RAG
 
+For maintained GUI, Streamlit and CLI generation, see [request admission and verified model profiles](docs/request-admission.md).
+
 ### YouTube Tutorials
 - https://www.youtube.com/watch?v=Oe-7dGDyzPM
 - https://www.youtube.com/watch?v=vFGng_3hDRk

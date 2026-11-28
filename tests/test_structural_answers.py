@@ -6,6 +6,8 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("synthetic_provider_admission")
+
 from generation_models import GroqRouter
 from test_generation_cli import _load_module
 from test_generation_qt import qapp

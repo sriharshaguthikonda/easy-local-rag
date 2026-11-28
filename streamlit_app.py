@@ -26,7 +26,6 @@ from rag_prompting import (
     generate_structural_answer,
     prepare_structural_answer,
 )
-from token_budget import trim_messages_to_budget
 
 
 DEFAULT_MODELS = {"groq": "llama-3.3-70b-versatile", "ollama": "phi-3"}
@@ -262,7 +261,6 @@ def process_chat_mode(
 class _PreparedGeneration(NamedTuple):
     context: str
     metadata: list
-    was_trimmed: bool
     answer: PreparedAnswer | None
     error: AnswerResult | None
     request: dict
@@ -295,29 +293,26 @@ def _prepare_generation(
         strict=strict,
         cancelled=cancelled,
     )
-    history = list(conversation_history)[-context_window:] if context_window else []
+    history = list(conversation_history)
+    if context_window is not None and len(history) % 2 == 0 and all(
+        isinstance(turn, dict) and turn.get("role") == ("assistant" if i % 2 else "user")
+        for i, turn in enumerate(history)
+    ):
+        history = history[-2 * context_window:] if context_window > 0 else []
     try:
         answer = prepare_structural_answer(
             system_message, user_input, metadata, history, task_instruction=task_instruction,
         )
     except AnswerPreparationError as error:
         return _PreparedGeneration(
-            context, metadata, False, None, AnswerResult(error.status, provider=provider), {},
+            context, metadata, None, AnswerResult(error.status, provider=provider), {},
         )
-    original = answer.messages()
-    messages, was_trimmed = trim_messages_to_budget(
-        answer.messages(), max_input_tokens=5000, model_name=selected
-    )
-    error = None
-    if len(messages) < 2 or messages[0] != original[0] or messages[-1] != original[-1]:
-        error = AnswerResult(AnswerStatus.INPUT_BUDGET, answer.evidence, provider=provider)
     request = {
         "preferred": selected,
-        "messages": messages,
         "strict": strict,
         "temperature": temperature,
     }
-    return _PreparedGeneration(context, answer.evidence.sources, was_trimmed, answer, error, request)
+    return _PreparedGeneration(context, answer.evidence.sources, answer, None, request)
 
 
 def _publish_answer(result, metadata, user_input, provider):
@@ -339,6 +334,8 @@ def _publish_answer(result, metadata, user_input, provider):
     state.last_model_status = status
     state.current_citations = sorted({excerpt.alias for excerpt in result.excerpts})
     st.caption(status)
+    if result.admission is not None and result.admission.history_turns_removed:
+        st.info("Earlier conversation turns were omitted to fit the input budget.")
     st.empty().text(result.text)
     state.conversation_history.extend([
         {"role": "user", "content": user_input},
@@ -391,8 +388,6 @@ def chat_with_model(
         _publish_answer(AnswerResult(status, provider=provider), [], user_input, provider)
         return None, None, None
 
-    if prepared.was_trimmed and prepared.error is None:
-        st.info("Earlier messages were trimmed to fit the input budget.")
     result = _generate_prepared(selected_router, prepared, provider, cancelled)
     if _cancel_requested(cancelled):
         result = AnswerResult(AnswerStatus.CANCELLED, result.evidence, provider=provider)
@@ -649,7 +644,7 @@ def main():
 
         # Context Window
         context_window = st.slider(
-            "Context Window", 1, 10, 5, help="Number of previous messages to consider"
+            "History turns", 1, 10, 5, help="Maximum previous question and answer pairs to consider"
         )
 
         # Model settings
