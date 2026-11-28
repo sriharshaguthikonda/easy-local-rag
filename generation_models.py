@@ -497,11 +497,20 @@ def _classify_provider_error(exc: BaseException, provider: str, model: str) -> s
     return "provider_error"
 
 
+def _reject_reported_error(event: Any, provider: str) -> None:
+    if provider == "groq":
+        early_stop = _value(_value(event, "x_groq"), "error")
+        if early_stop:
+            category = "input_budget" if _capacity_reported(_error_code(early_stop)) else "incomplete"
+            raise GenerationError(category, "Groq reported an early stop.")
+    if _value(event, "error") is not None:
+        category = "input_budget" if _capacity_reported(_error_code(event)) else "provider_error"
+        raise GenerationError(category, "Provider reported a generation failure.")
+
+
 def _answer_stream_event(chunk: Any, provider: str) -> tuple[str, str | None, bool]:
     """Decode one provider event, retaining the terminal signal separately."""
-    if _value(chunk, "error") is not None:
-        category = "input_budget" if _capacity_reported(_error_code(chunk)) else "provider_error"
-        raise GenerationError(category, "Provider reported a stream failure.")
+    _reject_reported_error(chunk, provider)
     if provider == "groq":
         choices = _value(chunk, "choices")
         if isinstance(choices, (list, tuple)) and not choices and _provider_usage(provider, chunk) is not None:
@@ -995,9 +1004,7 @@ class _GenerationRouter:
             raise GenerationError("incomplete", "Provider reported truncated context.")
         if text_only and _has_tool_output(response):
             _reject_tool_output()
-        if _value(response, "error") is not None:
-            category = "input_budget" if _capacity_reported(_error_code(response)) else "provider_error"
-            raise GenerationError(category, "Provider reported a generation failure.")
+        _reject_reported_error(response, self.provider)
         actual_model = _value(response, "model") or None
         if not _same_reported_model(self.provider, profile.id, actual_model):
             raise GenerationError("incomplete", "Provider reported a different model.")
