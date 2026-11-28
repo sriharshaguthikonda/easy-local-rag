@@ -34,6 +34,15 @@ validation and #25 cutover.
 behavior to #21 ports, but cannot redefine `.memory` #5 retrieval/hydration or
 #27 answer/citation/abstention validation.
 
+## Maintained Chroma LM Studio packet
+
+The owner approved planning and implementation of a narrow native LM Studio
+generation extension for the maintained Chroma PyQt path. The
+[implementation packet](../superpowers/plans/2026-11-28-issue-022-lmstudio-maintained-chroma.md)
+requires separate activation, tests-only RED, independent exact-head verification
+and separate live smoke approval. Full #22A/#22B and their canonical dependencies
+retain their gates.
+
 ## Affected interfaces, files, and artifacts
 
 - Provider adapter interfaces and provider status consumed by #21 `status`/`doctor` and `chat`.

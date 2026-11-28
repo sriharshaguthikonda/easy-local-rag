@@ -38,3 +38,47 @@ issue_010:
     verified: documentation
     recheck_after: 2027-05-27
     decision: Search-pipeline fusion would require another service and index.
+
+# Issue #22 discovery covered loaded-instance identity, native render/tokenize,
+# raw completion, overflow policy, backend/gateway alternatives and local
+# cancellation. GitHub repositories, code, issues and PRs, package listings,
+# ecosyste.ms, Hacker News and the official MCP Registry were checked.
+# The different vocabulary pass yielded existing SDK, engine, server and
+# gateway approaches. One registry alias and one guessed source path failed
+# HTTP verification and were discarded. No live generation is authorized here.
+issue_022_lmstudio:
+  - name: LM Studio TypeScript SDK
+    url: https://github.com/lmstudio-ai/lmstudio-js/blob/0eca19214f508db23c0807598fcba63cb8ba7557/packages/lms-client/src/llm/LLMDynamicHandle.ts
+    verified: source
+    recheck_after: 2027-02-28
+    decision: Reuse the official loaded-instance renderer, tokenizer and raw completion if current-runtime parity and cancellation are proven.
+  - name: LM Studio Python SDK
+    url: https://github.com/lmstudio-ai/lmstudio-python/blob/ae837ac5a55d6364a4c106e362939b1404f9c21d/src/lmstudio/json_api.py
+    verified: source
+    recheck_after: 2027-02-28
+    decision: Released completion uses a passthrough template on the chat prediction path. The handle is addressed by mutable identifier. Recheck if a released SDK gains raw completion with instance binding.
+  - name: llm-lmstudio
+    url: https://github.com/llm-lmstudio/llm-lmstudio/blob/master/src/llm_lmstudio.py
+    verified: source
+    recheck_after: 2027-02-28
+    decision: Useful as a gateway comparison. The REST transport has load operations and lacks the instance-bound SDK render and dispatch contract required here.
+  - name: llama.cpp server
+    url: https://github.com/ggml-org/llama.cpp/tree/master/tools/server
+    verified: documentation
+    recheck_after: 2027-02-28
+    decision: Provides native server completion and tokenization for its own loaded model. Adopting the separate server would require another model load.
+  - name: Ollama
+    url: https://github.com/ollama/ollama/blob/v0.34.0/server/routes.go
+    verified: source
+    recheck_after: 2027-02-28
+    decision: Preserve the maintained Ollama adapter. Ollama render and runner metadata describe an Ollama-owned runner.
+  - name: LangChain OpenAI adapter
+    url: https://github.com/langchain-ai/langchain/tree/master/libs/partners/openai
+    verified: documentation
+    recheck_after: 2027-02-28
+    decision: OpenAI-compatible routing does not expose the native renderer, tokenizer or immutable loaded-instance reference needed by this integration.
+  - name: vLLM server
+    url: https://github.com/vllm-project/vllm/tree/main/vllm/entrypoints
+    verified: documentation
+    recheck_after: 2027-02-28
+    decision: The serving API manages a separate engine. It does not address the resident LM Studio instance.
