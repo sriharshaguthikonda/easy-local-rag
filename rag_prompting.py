@@ -361,7 +361,7 @@ def generate_structural_answer(
 
     evidence = prepared.evidence
     preferred = _safe_model_id(options.get("preferred"))
-    provider = provider if provider in {"groq", "ollama"} else None
+    provider = provider if provider in {"groq", "ollama", "lmstudio"} else None
 
     def failure(status, actual=None, preferred_model=preferred, admission=None):
         return AnswerResult(status, evidence, preferred_model=preferred_model,

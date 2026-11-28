@@ -46,9 +46,12 @@ class ChatWorker(QThread):
         self.settings = settings
         self.context_results = context_results  # Pre-fetched context from main thread
         self.conversation_history = conversation_history
-        self.router = router or settings.get(
-            f"generation_router_{settings.get('generation_provider', 'groq')}"
-        ) or settings.get("generation_router")
+        provider = settings.get("generation_provider", "groq")
+        selected = router or settings.get(f"generation_router_{provider}")
+        if provider == "lmstudio":
+            self.router = selected if getattr(selected, "provider", None) == provider else None
+        else:
+            self.router = selected or settings.get("generation_router")
         self._cancel_event = threading.Event()
         self._publication_lock = threading.Lock()
         self._published = False
@@ -82,7 +85,9 @@ class ChatWorker(QThread):
                     client=self.settings.get("ollama_client"),
                     host=self.settings.get("ollama_host"),
                 )
-            else:
+            elif provider == "lmstudio":
+                self.router = generation_models.lmstudio_router()
+            elif provider == "groq":
                 self.router = generation_models.groq_router(
                     client=self.settings.get("groq_client")
                 )
@@ -92,9 +97,7 @@ class ChatWorker(QThread):
 
     def _preferred_model(self):
         provider = self.settings.get("generation_provider", "groq")
-        return self.settings.get(
-            "ollama_model" if provider == "ollama" else "groq_model"
-        )
+        return self.settings.get(f"{provider}_model")
 
     def _router_generate(self, prepared):
         router = self._router_from_settings()
@@ -103,11 +106,14 @@ class ChatWorker(QThread):
         max_output = int(self.settings.get("generation_max_output_tokens", 1024))
         options = dict(self.settings.get("generation_options", {}) or {})
         options.pop("text_only", None)
-        options.setdefault("temperature", 1)
-        options.setdefault("top_p", 1)
+        if provider == "lmstudio":
+            options.setdefault("mode", "local-chat")
+        else:
+            options.setdefault("temperature", 1)
+            options.setdefault("top_p", 1)
         if provider == "groq":
             options.setdefault("service_tier", "on_demand")
-        else:
+        elif provider == "ollama":
             options.setdefault("keep_alive", -1)
 
         return generate_structural_answer(

@@ -88,7 +88,7 @@ class GenerationError(RuntimeError):
         self.message = _safe_message(message or self.code)
         self.preferred_model = _safe_model_id(preferred_model)
         self.actual_model = _safe_model_id(actual_model)
-        self.provider = provider if provider in {"groq", "ollama"} else None
+        self.provider = provider if provider in {"groq", "ollama", "lmstudio"} else None
         self.attempts = tuple(
             item for item in (_safe_model_id(value) for value in (attempts or ())) if item
         )
@@ -140,7 +140,7 @@ class GenerationProfile:
 
     @property
     def operating_mode(self) -> str:
-        return "local" if self.provider == "ollama" else "cloud"
+        return "local" if self.provider in {"ollama", "lmstudio"} else "cloud"
 
 
 @dataclass
@@ -711,7 +711,7 @@ def _ollama_context(options):
 
 
 class _GenerationRouter:
-    """Base implementation shared by the two single-provider routers."""
+    """Base implementation shared by the single-provider routers."""
 
     provider: str
 
@@ -721,6 +721,7 @@ class _GenerationRouter:
         *,
         host: str | None = None,
         clock: Callable[[], float] | None = None,
+        profile_rows: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self._client = client
         self._host = host
@@ -728,7 +729,7 @@ class _GenerationRouter:
         self._catalogue: list[GenerationProfile] | None = None
         self._catalogue_at = float("-inf")
         self._catalogue_lock = threading.RLock()
-        self._profile_rows = _configured_profiles(self.provider)
+        self._profile_rows = _configured_profiles(self.provider) if profile_rows is None else profile_rows
 
     @property
     def client(self) -> Any:
@@ -1079,7 +1080,7 @@ class _GenerationRouter:
         if requested_provider is not None and str(requested_provider).lower() != self.provider:
             raise GenerationError("provider_policy", "provider switch is not permitted", provider=self.provider)
         requested_mode = provider_options.get("mode")
-        expected_mode = "local" if self.provider == "ollama" else "cloud"
+        expected_mode = "local" if self.provider in {"ollama", "lmstudio"} else "cloud"
         allowed_modes = {expected_mode, f"{expected_mode}-chat", *_TASK_MODES}
         if requested_mode is not None and str(requested_mode).lower() not in allowed_modes:
             raise GenerationError(
@@ -1754,6 +1755,13 @@ def ollama_router(
     return OllamaRouter(client=client, host=host, clock=clock)
 
 
+def lmstudio_router():
+    """Return the maintained Qt local router with deployment enrolment disabled."""
+    from lmstudio_generation import LMStudioRouter
+
+    return LMStudioRouter()
+
+
 __all__ = [
     "CATALOGUE_TTL_SECONDS",
     "DISCOVERY_TIMEOUT_SECONDS",
@@ -1764,4 +1772,5 @@ __all__ = [
     "OllamaRouter",
     "groq_router",
     "ollama_router",
+    "lmstudio_router",
 ]

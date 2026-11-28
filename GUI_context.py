@@ -16,7 +16,7 @@ def rewrite_input_and_generate_synonyms(settings, user_input, *, on_result=None)
     rewrite goes through the shared provider router.
     """
     provider = settings.get("generation_provider", "groq")
-    if provider == "ollama":
+    if provider in {"ollama", "lmstudio"}:
         return user_input, {}
 
     router = settings.get("generation_router_groq") or settings.get("generation_router")
@@ -72,10 +72,7 @@ def rewrite_input_and_generate_synonyms(settings, user_input, *, on_result=None)
 
 def get_relevant_context_hybrid(settings, user_input):
     """Retrieve evidence in the isolated Chroma process used by Qt."""
-    if settings.get("generation_provider") == "ollama":
-        rewritten, synonyms = user_input, {}
-    else:
-        rewritten, synonyms = rewrite_input_and_generate_synonyms(settings, user_input)
+    rewritten, synonyms = rewrite_input_and_generate_synonyms(settings, user_input)
 
     request = {
         "chromadb_path": settings["chromadb_path"],

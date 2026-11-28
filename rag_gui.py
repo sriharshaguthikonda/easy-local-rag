@@ -245,7 +245,7 @@ class RAGChatGUI(ChromaDBMixin, DirectSearchMixin, ModelLoadingMixin, ChatFuncti
         # the same provider scope, so a stale Groq preference cannot trigger a
         # silent Ollama switch.
         self.generation_provider_combo = QComboBox()
-        self.generation_provider_combo.addItems(["groq", "ollama"])
+        self.generation_provider_combo.addItems(["groq", "ollama", "lmstudio"])
         self.generation_provider_combo.setCurrentText(
             self.settings.get("generation_provider", "groq")
         )
